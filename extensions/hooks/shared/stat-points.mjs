@@ -5,7 +5,7 @@
  * 的表逐行是统计点；一条明细是一个指标，缺定义段或点位表的形状缺口随明细一起交给作者与审查。plan 侧从 plan.md 读：表头同时含「统计点」与「责任方法」的表，同一统计点可以有多行结果。
  * 只认这两个列名，不认任何知识文件名、渠道名、结果枚举或编码——那些只在项目知识里。
  */
-import { parseDocument } from '../../skills/story/scripts/core/story/document.mjs';
+import { headingEnd, parseDocument } from '../../skills/story/scripts/core/story/document.mjs';
 import { entityId } from './contracts.mjs';
 
 const clean = (s) => String(s ?? '').replace(/[`*]/g, '').trim();
@@ -15,12 +15,18 @@ const METHOD_REF = /[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*/g;
 /** 统计点名比较用的形态：去空白与标记。 */
 export const pointKey = (name) => clean(name).replace(/\s+/g, '');
 
-/** 一段 Markdown 里表头含 `words` 全部列名的表：逐行 `{ cells, at }`，`at` 是各列名所在的列。 */
+/** 表头各职责列的独立下标：每词须命中独立列且列名本身就是该职责（可带括号注释），拒收单列双命中与历史/示例列名。 */
+export function statTableCols(header, words) {
+  const at = words.map(w => (header ?? []).findIndex(h => new RegExp(`^${w}(?:\\s*[（(][^）)]*[）)])?$`).test(clean(h))));
+  return at.some(i => i < 0) || new Set(at).size !== words.length ? null : at;
+}
+
+/** 一段 Markdown 里表头含 `words` 全部独立职责列的表：逐行 `{ cells, at }`，`at` 是各列名所在的列。 */
 function tableRows(text, words) {
   const out = [];
   for (const t of parseDocument(String(text ?? '')).tables) {
-    const at = words.map(w => t.header.findIndex(h => clean(h).includes(w)));
-    if (at.some(i => i < 0)) continue;
+    const at = statTableCols(t.header, words);
+    if (!at) continue;
     for (const r of t.rows) if (clean(r[at[0]])) out.push({ cells: r, at });
   }
   return out;
@@ -94,8 +100,12 @@ export function statDelivery(design, contracts, acceptance) {
     '', '验收条目（完整字段）：', ...(cases.length ? cases : ['- （没有验收条目）'])];
 }
 
-/** plan.md 里逐点落实的结果行：`[{ point, methods, cells }]`；plan.md 没有这样的表返回空数组。 */
+/** plan.md 里逐点落实的结果行：`[{ point, methods, cells }]`；有「宿主扩展（可选）」或「埋点」节时只在对应埋点段内查，不取它处历史/示例表。 */
 export function planStatRows(planText) {
-  return tableRows(planText, ['统计点', '责任方法']).map(({ cells, at }) => ({
+  const doc = parseDocument(String(planText ?? ''));
+  const host = doc.headings.find(h => h.level === 2 && h.name === '宿主扩展（可选）');
+  const subs = doc.headings.filter(h => h.name.includes('埋点') && (!host || (h.level === 3 && h.at > host.at && h.at < headingEnd(doc, host))));
+  const scope = (host || subs.length) ? subs.map(h => doc.lines.slice(h.at, headingEnd(doc, h)).join('\n')).join('\n') : planText;
+  return tableRows(scope, ['统计点', '责任方法']).map(({ cells, at }) => ({
     point: clean(cells[at[0]]), methods: clean(cells[at[1]]).match(METHOD_REF) ?? [], cells }));
 }

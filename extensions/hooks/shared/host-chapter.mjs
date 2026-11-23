@@ -7,6 +7,7 @@
 import { parseDocument } from '../../skills/story/scripts/core/story/document.mjs';
 import { acceptanceIdRe, acceptanceIds } from './contracts.mjs';
 import { unitDuties } from './knowledge-application.mjs';
+import { statTableCols } from './stat-points.mjs';
 
 //: 规约单元编号的形态（域前缀-序号），只在规约小节表格的第一列认
 const RULE_ID = /\b[A-Z][A-Z0-9]*-\d+\b/g;
@@ -50,7 +51,7 @@ export function hostChapterProblems(text, { file, anchor, judged, acceptance = n
   }
   if (events !== null) {
     const home = subs.find(s => s.name.includes('埋点'));
-    for (const t of doc.tables.filter(x => POINT_TABLE.every(w => x.header.some(h => h.includes(w)))).filter(x => !within(x.line, home))) {
+    for (const t of doc.tables.filter(x => statTableCols(x.header, POINT_TABLE) && !within(x.line, home))) {
       problems.push(`${file}：第 ${t.line + 1} 行的逐点表不在「${anchor}」的「埋点」小节里——埋点按指标在宿主扩展章落实`);
     }
   }

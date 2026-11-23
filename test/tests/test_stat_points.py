@@ -88,6 +88,42 @@ class PlanRowsAreFoundByTheirColumns(unittest.TestCase):
     def test_a_table_without_the_method_column_is_not_the_plan_table(self) -> None:
         self.assertEqual([], run("m.planStatRows(plan)", plan=EVENT))
 
+    def test_s41_distinct_columns_annotated_headers_multi_methods_and_order_swap(self) -> None:
+        swapped = (
+            "# 计划\n\n## 宿主扩展（可选）\n\n### 埋点\n\n"
+            "| 责任方法（接口.方法） | 结果 | 统计点（主点位） |\n|---|---|---|\n"
+            "| Gateway.save、Gateway.flush | 成功 | 保存结果 |\n"
+            "| `Gateway.save` | 失败 | 保存结果 |\n"
+        )
+        rows = run("m.planStatRows(plan)", plan=swapped)
+        self.assertEqual(
+            [["保存结果", ["Gateway.save", "Gateway.flush"]], ["保存结果", ["Gateway.save"]]],
+            [[r["point"], r["methods"]] for r in rows],
+        )
+
+    def test_s41_single_column_and_historical_examples_never_fill_obligations(self) -> None:
+        single_col = "# 计划\n\n| 统计点与责任方法示例 |\n|---|\n| Gateway.save |\n"
+        self.assertEqual([], run("m.planStatRows(plan)", plan=single_col))
+
+        hist_only = "# 计划\n\n| 历史统计点示例 | 原责任方法示例 |\n|---|---|\n| Gateway.save | Gateway.save |\n"
+        self.assertEqual([], run("m.planStatRows(plan)", plan=hist_only))
+
+        hist_outside_empty_events = (
+            "# 计划\n\n## 1. 历史参考\n\n| 统计点 | 责任方法 |\n|---|---|\n| 旧点 | OldService.save |\n\n"
+            "## 宿主扩展（可选）\n\n### 埋点\n\n待补充当前逐点表。\n"
+        )
+        self.assertEqual([], run("m.planStatRows(plan)", plan=hist_outside_empty_events))
+
+    def test_s41_historical_and_current_coexist_reads_only_current_section(self) -> None:
+        coexist = (
+            "# 计划\n\n## 1. 历史方案示例\n\n| 历史统计点示例 | 原责任方法示例 |\n|---|---|\n| 旧点 | OldService.save |\n\n"
+            "| 统计点 | 责任方法 |\n|---|---|\n| 历史对照点 | Legacy.run |\n\n"
+            "## 宿主扩展（可选）\n\n### 埋点\n\n| 统计点 | 结果 | 责任方法 |\n|---|---|---|\n"
+            "| 当前提交 | 成功 | Gateway.save |\n"
+        )
+        rows = run("m.planStatRows(plan)", plan=coexist)
+        self.assertEqual([["当前提交", ["Gateway.save"]]], [[r["point"], r["methods"]] for r in rows])
+
 
 
 #: 一条带附加条件、多种结果的合法埋点明细
