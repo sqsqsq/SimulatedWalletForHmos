@@ -106,6 +106,14 @@ class ErrorsAndDelegationPointAtCurrentBearers(unittest.TestCase):
             self.assertNotIn(prefilled, author, f"hooks/blueprint/author.md 仍残留预填项目结论「{prefilled}」")
         for kept in ("数据的有效期与清理", "story_details:", "data_policy", "evidence_refs"):
             self.assertIn(kept, author)
+        # S42 R3：story_details YAML 示例本身须可被解析且 kind 为单个合法枚举值（不得用竖线拼接）
+        import re, yaml
+        m = re.search(r"```yaml\s*\n(story_details:[\s\S]*?)\n```", author)
+        self.assertIsNotNone(m, "hooks/blueprint/author.md 缺少 story_details YAML 示例")
+        parsed = yaml.safe_load(m.group(1))
+        self.assertIsInstance(parsed, dict)
+        self.assertIn(parsed["story_details"][0]["kind"], {"data_policy", "configuration", "event", "special_design"})
+        self.assertNotIn("|", str(parsed["story_details"][0]["kind"]))
         for rel in ("SKILL.md", "rules/init_analysis.md", "phases/design.md", "phases/update.md"):
             text = read(rel)
             for retired in ("reopen", "范围关卡", "范围定法/承载哪份的关卡"):

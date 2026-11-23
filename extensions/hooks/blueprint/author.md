@@ -89,8 +89,10 @@ nodes:
 
 ```yaml
 story_details:
-  - {id: detail-<稳定标识>, kind: data_policy | configuration | event | special_design, title: <条目标题>, body: "<Markdown：仅按原文或已核事实写精确值、来源、关系与业务语义>", evidence_refs: ["<所属设计对象稳定地址与依据>"]}
+  - {id: detail-<稳定标识>, kind: data_policy, title: <条目标题>, body: "<Markdown：仅按原文或已核事实写精确值、来源、关系与业务语义>", evidence_refs: ["<所属设计对象稳定地址与依据>"]}
 ```
+
+`kind` 按内容取 `data_policy`、`configuration`、`event` 或 `special_design`（上例以 `data_policy` 示范）。
 
 原生字段已经表达的不重复写进 `body`。埋点（`event`）一项明细是一个指标：`title` 写指标名，`body` 按激活的上报知识写起止、分子与分母、观察窗口、谁获知结果、随事件带什么与去重由谁负责，本端拿不到的写由谁统计，再接表头含「统计点」的统计点表；施工单位的 plan 按统计点名逐点落实。没有统计需求、也没有适用的上报义务时不写埋点明细。配置与埋点投进 Story 附录；数据策略与专项设计由成文作者按读者要回答的问题组织进讲它的那一节，精确值、来源、关系与业务语义与这里一致，措辞与组织由成文作者定，这里不预写 Story 正文。还没形成施工值的写明由哪个阶段定。
 
