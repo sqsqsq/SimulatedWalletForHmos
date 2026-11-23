@@ -59,12 +59,44 @@ function latestStored(root, role, ticket) {
   return v ? { dir: v.dir, body: readOr(path.join(root, ...String(v.original?.path ?? '').split('/'))) } : null;
 }
 
-/** 读取必需为合法对象的本地状态 JSON；不存在返回 null，不可读或损坏时在写前报错、保留原件。 */
+/**
+ * 逐级核查 `root` 下相对路径的三态：`absent`（确实不存在且已存在的上级层级都是目录）、
+ * `file`（可用普通文件）、`invalid`（任一已存在上级层级非目录、叶节点非普通文件或状态不可判）。
+ * Windows 上上级路径为普通文件时直接 stat 叶节点会返回 ENOENT，逐级核查避免把损坏目录树误判为缺席。
+ */
+function probeRelativeFile(root, rel) {
+  const parts = String(rel).split(/[\\/]/).filter(Boolean);
+  let cur = path.resolve(root);
+  for (let i = 0; i < parts.length - 1; i += 1) {
+    cur = path.join(cur, parts[i]);
+    const dirRel = parts.slice(0, i + 1).join('/');
+    try {
+      const st = fs.statSync(cur);
+      if (!st.isDirectory()) return { state: 'invalid', at: dirRel, why: '应为目录但实际不是目录' };
+    } catch (e) {
+      if (e && e.code === 'ENOENT') return { state: 'absent' };
+      return { state: 'invalid', at: dirRel, why: `状态无法确认（${e?.code ?? e?.message ?? 'unknown'}）` };
+    }
+  }
+  const target = path.join(cur, parts[parts.length - 1]);
+  try {
+    const st = fs.statSync(target);
+    return st.isFile() ? { state: 'file', file: target } : { state: 'invalid', at: rel, why: '已存在但不是普通文件' };
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { state: 'absent' };
+    return { state: 'invalid', at: rel, why: `状态无法确认（${e?.code ?? e?.message ?? 'unknown'}）` };
+  }
+}
+
+/** 读取必需为合法对象的本地状态 JSON；不存在返回 null，上级目录错型、非普通文件、不可读或损坏时在写前报错、保留原件。 */
 function readJsonStrict(root, rel, reason) {
-  const file = path.join(root, ...rel.split('/'));
-  if (!fs.existsSync(file)) return null;
+  const probe = probeRelativeFile(root, rel);
+  if (probe.state === 'absent') return null;
+  if (probe.state === 'invalid') {
+    throw new Error(`${probe.at} ${probe.why}（检查 ${rel} 时发现）：${reason}；已保留原件且未写本次回执，请先按既有归档/恢复责任核清`);
+  }
   let raw;
-  try { raw = fs.readFileSync(file, 'utf-8'); } catch (e) {
+  try { raw = fs.readFileSync(probe.file, 'utf-8'); } catch (e) {
     throw new Error(`${rel} 读不出来（${e.message}）：${reason}；已保留原件且未写本次回执，请先按既有归档/恢复责任核清`);
   }
   let doc;
@@ -75,17 +107,6 @@ function readJsonStrict(root, rel, reason) {
     throw new Error(`${rel} 顶层不是 JSON 对象：${reason}；已保留原件且未写本次回执，请先按既有归档/恢复责任核清`);
   }
   return doc;
-}
-
-/** 区分路径三态：`absent`（确实不存在）、`file`（可用普通文件）、`invalid`（已存在但非普通文件，或状态无法确认）。 */
-function probeFileState(file) {
-  try {
-    const st = fs.statSync(file);
-    return st.isFile() ? { state: 'file' } : { state: 'invalid', why: '已存在但不是普通文件' };
-  } catch (e) {
-    if (e && e.code === 'ENOENT') return { state: 'absent' };
-    return { state: 'invalid', why: `状态无法确认（${e?.code ?? e?.message ?? 'unknown'}）` };
-  }
 }
 
 /** 核对 body_write.backup 归属：须是本需求 `.backups/cloud/` 备份区内的现存普通文件（不接受目录或无关路径）。 */
@@ -99,18 +120,18 @@ function backupProblem(root, reqNo, rel) {
   if (!inside || inside === '.' || inside.startsWith('..') || path.isAbsolute(inside)) {
     return `指向的备份 ${rel} 不在本需求 .backups/cloud/ 备份区内`;
   }
-  const probe = probeFileState(target);
+  const probe = probeRelativeFile(root, rel);
   if (probe.state === 'file') return null;
   return probe.state === 'absent'
     ? `指向的备份 ${rel} 不存在`
-    : `指向的备份 ${rel} ${probe.why}`;
+    : `指向的备份 ${rel}（${probe.at}）${probe.why}`;
 }
 
 /**
  * 写前核清本单的发布与覆盖身份：
  * - 未发布且无未恢复正文覆盖 → 首次取材（AR 原件）；
  * - 契约 `archived` 与 `.backups/published/story.md` 双证成立，或旧回执 `body_write` 表明已真实覆盖且未记恢复 → 交付回流表面；
- * - 任一状态文件损坏、发布副本状态非法（非普通文件或不可判）、发布双证冲突或覆盖前备份缺失/身份非法 → 在写入任何批次/回执前报错，保留原件并指回既有归档/恢复责任。
+ * - 任一状态文件损坏、发布副本或上级备份目录状态非法（错型或不可判）、发布双证冲突或覆盖前备份缺失/身份非法 → 在写入任何批次/回执前报错，保留原件并指回既有归档/恢复责任。
  */
 function publishedBefore(root, reqNo) {
   const contractRel = 'AR/story-src/story-flow.json';
@@ -118,9 +139,9 @@ function publishedBefore(root, reqNo) {
   const backupRel = '.backups/published/story.md';
   const contract = readJsonStrict(root, contractRel, '无法核清发布身份，不能按首次 AR 取材');
   const prev = readJsonStrict(root, receiptRel, '旧取材回执可能带有正文覆盖与恢复凭据（body_write），不能直接覆盖');
-  const backupProbe = probeFileState(path.join(root, ...backupRel.split('/')));
+  const backupProbe = probeRelativeFile(root, backupRel);
   if (backupProbe.state === 'invalid') {
-    throw new Error(`${backupRel} ${backupProbe.why}：发布副本状态非法，无法核清发布身份；`
+    throw new Error(`${backupProbe.at} ${backupProbe.why}（检查 ${backupRel} 时发现）：发布副本目录或文件状态非法，无法核清发布身份；`
       + '已保留原件且未写本次回执，请先按既有归档/恢复责任核清');
   }
   const hasBackup = backupProbe.state === 'file';

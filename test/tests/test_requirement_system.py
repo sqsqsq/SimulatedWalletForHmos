@@ -690,13 +690,39 @@ class TestPublishIdentityAndReceiptRecovery(SystemCase):
         self.assertEqual(valid_first, self.receipt_file()["body_write"])
 
     def test_published_marker_directory_or_conflict_is_rejected_before_write(self) -> None:
-        """S39 R1：.backups/published/story.md 区分不存在/普通文件/目录等非法状态——未记 archived 时为目录须写前拒绝并保旧回执。"""
+        """S39 R1：核清 .backups、.backups/published 两级上级目录与 story.md 叶节点各自的真缺席与错型，错型须写前拒绝并保旧回执。"""
         src = self.feature / "AR" / "story-src"
         src.mkdir(parents=True, exist_ok=True)
         old_rec = json.dumps({"mode": "fetch", "items": [], "sentinel": "keep-me"}, ensure_ascii=False)
         (src / "fetched.json").write_text(old_rec, encoding="utf-8")
-        # 1. 同名目录（非普通文件）+ 无 archived：写前报错、旧回执字节不动
-        pub_marker = self.feature / ".backups" / "published" / "story.md"
+
+        # 1a. 一级上级 .backups 为普通文件（非目录）+ 无 archived：写前报错、旧回执与目录树零改动、不新建目录
+        backups_root = self.feature / ".backups"
+        backups_root.write_text("corrupt-backups-file", encoding="utf-8")
+        before_l1 = self._snapshot_tree()
+        proc_l1 = self.fetch_into("fetch-pub-l1-file")
+        self.assertEqual(1, proc_l1.returncode, proc_l1.stdout + proc_l1.stderr)
+        self.assertIn(".backups", self.receipt(proc_l1)["error"])
+        self.assertIn("不是目录", self.receipt(proc_l1)["error"])
+        self.assertEqual(before_l1, self._snapshot_tree())
+        self.assertEqual(old_rec, (src / "fetched.json").read_text(encoding="utf-8"))
+        backups_root.unlink()
+
+        # 1b. 二级上级 .backups/published 为普通文件（非目录）+ 无 archived：Windows 下 stat 叶节点返回 ENOENT，逐级检查须仍拒写
+        backups_root.mkdir(parents=True, exist_ok=True)
+        pub_parent = backups_root / "published"
+        pub_parent.write_text("corrupt-published-file", encoding="utf-8")
+        before_l2 = self._snapshot_tree()
+        proc_l2 = self.fetch_into("fetch-pub-l2-file")
+        self.assertEqual(1, proc_l2.returncode, proc_l2.stdout + proc_l2.stderr)
+        self.assertIn(".backups/published", self.receipt(proc_l2)["error"])
+        self.assertIn("不是目录", self.receipt(proc_l2)["error"])
+        self.assertEqual(before_l2, self._snapshot_tree())
+        self.assertEqual(old_rec, (src / "fetched.json").read_text(encoding="utf-8"))
+        pub_parent.unlink()
+
+        # 1c. 叶节点 .backups/published/story.md 为同名目录 + 无 archived：写前报错、旧回执字节不动
+        pub_marker = pub_parent / "story.md"
         pub_marker.mkdir(parents=True, exist_ok=True)
         before = self._snapshot_tree()
         proc_dir = self.fetch_into("fetch-pub-dir")
@@ -707,7 +733,7 @@ class TestPublishIdentityAndReceiptRecovery(SystemCase):
         self.assertEqual(old_rec, (src / "fetched.json").read_text(encoding="utf-8"))
         pub_marker.rmdir()
 
-        # 2. 普通文件 + 无 archived：发布双证冲突、写前报错、旧回执字节不动
+        # 2. 叶节点为普通文件 + 无 archived：发布双证冲突、写前报错、旧回执字节不动
         pub_marker.write_text("# 孤立发布副本\n", encoding="utf-8")
         before_file = self._snapshot_tree()
         proc_file = self.fetch_into("fetch-pub-conflict")
@@ -717,11 +743,20 @@ class TestPublishIdentityAndReceiptRecovery(SystemCase):
         self.assertEqual(old_rec, (src / "fetched.json").read_text(encoding="utf-8"))
         pub_marker.unlink()
 
-        # 3. 确实不存在 + 无 archived：正常首次 AR 取材
+        # 3a. 有效 .backups/published 目录存在但 story.md 确实缺席 + 无 archived：正常首次 AR 取材
+        proc_dir_ok = self.fetch_into("fetch-pub-dir-empty")
+        self.assertEqual(0, proc_dir_ok.returncode, proc_dir_ok.stderr)
+        ar_dir_ok = next(i for i in self.receipt(proc_dir_ok)["items"] if i["name"] == "AR-design.md")
+        self.assertEqual("AR", ar_dir_ok.get("role"))
+
+        # 3b. 尚未创建 .backups 目录树 + 无 archived：正常首次 AR 取材且不创建 .backups
+        pub_parent.rmdir()
+        backups_root.rmdir()
         proc_ok = self.fetch_into("fetch-pub-absent")
         self.assertEqual(0, proc_ok.returncode, proc_ok.stderr)
         ar_ok = next(i for i in self.receipt(proc_ok)["items"] if i["name"] == "AR-design.md")
         self.assertEqual("AR", ar_ok.get("role"))
+        self.assertFalse(backups_root.exists())
 
     def test_upgrade_changes_carries_fetch_write_before_contract(self) -> None:
         text = (DEV_EXT / "skills" / "story-adaptation" / "reference" / "upgrade-changes.md").read_text(encoding="utf-8")
