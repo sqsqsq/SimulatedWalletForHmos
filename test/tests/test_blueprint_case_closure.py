@@ -813,65 +813,149 @@ class TheStoryEndIsTheDeliveryGate(TheStoryIsReviewedRegisteredAndDeliveredCase)
         self.assertEqual({"ok": True, "kind": "local"}, after["delivery"])
 
     def test_submitted_needs_the_current_version_in_the_requirement_system(self) -> None:
-        """送审终点：交付门通过之外，发布记录与已发布副本是当前 Story 与（系统要求时的）设计参考（蓝图的原生评审投影），
-        需求系统上的正文与附件逐字是这两件。"""
+        """送审终点：仅对 AR 系统单成立，交付门通过之外核取材回执布尔交付要求、发布记录与已发布副本、
+        需求系统正文与（必交或可选已交付时的）设计参考附件；本地非 AR 单拒判送审但保留 story:local。"""
+        import design_kit
+        from designed_fixture import designed_copy
+        from test_verifier_report_protocol import READER_TASK, with_reader
+
+        # 1. 本地非 AR 单（REQ-DEMO）：story:local 仍通过；即使全局 system 目录存在同名目录，story:submitted 仍拒判
         self.reviewed("pass")
         self.assertEqual(0, self.register().returncode)
         system = self.root.parent / "system"
+        local_ok = observe(self.root, LOCAL, feature="REQ-DEMO", blueprint=None, story_build=str(DEV_STORY_BUILD))
+        self.assertTrue(local_ok["reached"], local_ok["missing"])
+        (system / "REQ-DEMO").mkdir(parents=True)
+        (system / "REQ-DEMO" / "design.md").write_bytes(self.story.read_bytes())
+        local_sub = observe(self.root, SUBMITTED, feature="REQ-DEMO", blueprint=None,
+                            story_build=str(DEV_STORY_BUILD), system_dir=system)
+        self.assertFalse(local_sub["reached"])
+        self.assertTrue(any("只有 AR 开头" in m for m in local_sub["missing"]), local_sub["missing"])
+
+        # 2. 系统 AR 单（AR-DEMO）：走完整真实审查 → 登记 → 归档 → observe(story:submitted)
+        ar_feat = "AR-DEMO"
+        ar_fixture = Path(self._tmp.name) / "ar-fixture"
+        shutil.copytree(self.FIXTURE, ar_fixture)
+        ar_dir = ar_fixture / "doc" / "features" / ar_feat
+        (ar_fixture / "doc" / "features" / "REQ-DEMO").rename(ar_dir)
+        (ar_dir / "SR").mkdir(parents=True, exist_ok=True)
+        (ar_dir / "SR" / "design.md").write_text("# AR-DEMO 系统设计\n\n本部件承接甲需求。\n", encoding="utf-8")
+        for rel in ("AR/story.md", "AR/story-src/materials.json"):
+            p = ar_dir / rel
+            txt = p.read_text(encoding="utf-8").replace("REQ-DEMO", ar_feat)
+            if rel == "AR/story.md":
+                txt = txt.rstrip() + "\n| 系统设计 [design.md](../SR/design.md) | [design.md](../SR/design.md) | 本部件系统设计分工。 |\n"
+            p.write_text(txt, encoding="utf-8")
+        ar_root = Path(self._tmp.name) / "ar-work"
+        designed_copy(ar_fixture, ar_feat, ar_root)
+        imp_py = DEV_STORY_BUILD.parent / "import_sources.py"
+        imp = subprocess.run(["python", str(imp_py), "--feature", ar_feat, "--project-root", str(ar_root)],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, imp.returncode, imp.stdout + imp.stderr)
+        design_kit.install_review_mechanism(ar_root, DEV_STORY_BUILD.parents[4])
+        ar_story = ar_root / "doc" / "features" / ar_feat / "AR" / "story.md"
+        ar_src = ar_story.parent / "story-src"
+        ar_design = ar_story.parent.parent / "blueprint" / "component-blueprint.review.md"
+
+        def ar_node(*args: str) -> subprocess.CompletedProcess:
+            return subprocess.run(["node", str(DEV_STORY_BUILD), *with_reader(args, READER_TASK),
+                                   "--feature", ar_feat, "--project-root", str(ar_root)],
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
+
+        p1 = ar_node("review", "--action", "prepare")
+        self.assertEqual(0, p1.returncode, p1.stdout + p1.stderr)
+        design_kit.write_review(ar_root, ar_feat, "pass")
+        p2 = ar_node("review", "--action", "prepare")
+        self.assertEqual(0, p2.returncode, p2.stdout + p2.stderr)
+        reg = subprocess.run(["python", str(self.FLOW), "story", "--feature", ar_feat, "--project-root", str(ar_root)],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, reg.returncode, reg.stdout + reg.stderr)
 
         def submitted() -> dict:
-            return observe(self.root, SUBMITTED, feature="REQ-DEMO", blueprint=None,
+            return observe(ar_root, SUBMITTED, feature=ar_feat, blueprint=None,
                            story_build=str(DEV_STORY_BUILD), system_dir=system)
 
         self.assertIn("还没送审", submitted()["missing"][0])
-        # 对接层逐件上传并读回：取材回执里交付的两件记这一版的读回
-        items = [{"name": name, "status": "fetched", "checkedAt": "2099-01-01T00:00:00+00:00",
-                  "digest": "sha256:" + hashlib.sha256((self.story.parent.parent / local).read_bytes()).hexdigest()[:16]}
-                 for name, local in (("AR-design.md", "AR/story.md"),
-                                     ("design-review.md", "blueprint/component-blueprint.review.md"))]
-        # 发布前核对记下的这一次交付集合（本单的交付请求带了设计参考）
-        delivery = {"prepared_at": "2099-01-01T00:00:00+00:00", "items": [
-            {"name": i["name"], "local": local, "digest": i["digest"]}
-            for i, local in zip(items, ("AR/story.md", "blueprint/component-blueprint.review.md"))]}
-        (self.story.parent / "story-src" / "fetched.json").write_text(
-            json.dumps({"fetchedAt": "2099-01-01T00:00:00+00:00", "items": items, "delivery": delivery}), encoding="utf-8")
-        archived = subprocess.run(["python", str(self.FLOW), "archived", "--feature", "REQ-DEMO",
-                                   "--project-root", str(self.root)],
-                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
-        self.assertEqual(0, archived.returncode, archived.stdout + archived.stderr)
-        self.assertIn("正文", submitted()["missing"][0], "只登记了归档、系统上没有正文，不算送审")
-
-        # 对接层上传后的需求系统：正文是 Story，设计参考是附件
-        ticket = system / "REQ-DEMO"
+        ticket = system / ar_feat
         attachment = ticket / "attachments" / "design-review.md"
         attachment.parent.mkdir(parents=True)
-        (ticket / "design.md").write_bytes(self.story.read_bytes())
+        (ticket / "design.md").write_bytes(ar_story.read_bytes())
+
+        def write_receipt(req_flag: object, include_design: bool) -> dict:
+            pairs = (("AR-design.md", "AR/story.md"),
+                     *(("design-review.md", "blueprint/component-blueprint.review.md") for _ in ([1] if include_design else ())))
+            items = [{"name": name, "status": "fetched", "checkedAt": "2099-01-01T00:00:00+00:00",
+                      "digest": "sha256:" + hashlib.sha256((ar_story.parent.parent / local).read_bytes()).hexdigest()[:16]}
+                     for name, local in pairs]
+            delivery = {"prepared_at": "2099-01-01T00:00:00+00:00", "items": [
+                {"name": i["name"], "local": local, "digest": i["digest"]} for i, (_, local) in zip(items, pairs)]}
+            doc = {"fetchedAt": "2099-01-01T00:00:00+00:00", "items": items, "delivery": delivery}
+            if req_flag is not None:
+                doc["delivery_requirements"] = {"design_reference": req_flag}
+            (ar_src / "fetched.json").write_text(json.dumps(doc), encoding="utf-8")
+            return doc
+
+        # 2a. 可选未交（design_reference=False，只交 Story 正文）→ 通过
+        write_receipt(False, include_design=False)
+        arch1 = subprocess.run(["python", str(self.FLOW), "archived", "--feature", ar_feat, "--project-root", str(ar_root)],
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, arch1.returncode, arch1.stdout + arch1.stderr)
+        opt_not_sent = submitted()
+        self.assertTrue(opt_not_sent["reached"], opt_not_sent["missing"])
+
+        # 2b. 系统声明必交（design_reference=True）但发布记录不含附件 → 拒判
+        write_receipt(True, include_design=False)
+        req_missing = submitted()
+        self.assertFalse(req_missing["reached"])
+        self.assertTrue(any("要求设计参考附件" in m for m in req_missing["missing"]), req_missing["missing"])
+
+        # 2c. 缺取材回执 / 损坏回执 / 字符串布尔声明 → 均拒判（不把缺/坏回执当成无附件义务）
+        (ar_src / "fetched.json").unlink()
+        no_rec = submitted()
+        self.assertFalse(no_rec["reached"])
+        self.assertTrue(any("fetched.json" in m for m in no_rec["missing"]), no_rec["missing"])
+
+        (ar_src / "fetched.json").write_text("{bad-json", encoding="utf-8")
+        bad_rec = submitted()
+        self.assertFalse(bad_rec["reached"])
+        self.assertTrue(any("fetched.json" in m for m in bad_rec["missing"]), bad_rec["missing"])
+
+        for bad_flag in ("true", "false", 1, None):
+            write_receipt(bad_flag, include_design=False)
+            bad_decl = submitted()
+            self.assertFalse(bad_decl["reached"], f"非布尔声明 {bad_flag!r} 不应放行")
+            self.assertTrue(any("布尔交付要求声明" in m for m in bad_decl["missing"]), bad_decl["missing"])
+
+        # 2d. 可选选择交付设计参考附件（design_reference=False + delivery 含 design-review.md）：核远端附件空/旧/匹配与幂等
+        write_receipt(False, include_design=True)
+        arch2 = subprocess.run(["python", str(self.FLOW), "archived", "--feature", ar_feat, "--project-root", str(ar_root)],
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, arch2.returncode, arch2.stdout + arch2.stderr)
         for stale, why in ((b"", "空附件"), (b"\xe4\xb8\x8a\xe4\xb8\x80\xe7\x89\x88\n", "旧附件")):
             attachment.write_bytes(stale)
             self.assertTrue(any("设计参考" in m for m in submitted()["missing"]), f"{why}被当成送到了")
-        attachment.write_bytes(
-            (self.story.parent.parent / "blueprint" / "component-blueprint.review.md").read_bytes())
+        attachment.write_bytes(ar_design.read_bytes())
 
-        def snapshot() -> dict[str, bytes]:
-            return {**self.tree(), **{f"system/{p.relative_to(system).as_posix()}": p.read_bytes()
-                                      for p in system.rglob("*") if p.is_file()}}
+        def ar_snapshot() -> dict[str, bytes]:
+            doc_dir = ar_root / "doc"
+            return {**{p.relative_to(doc_dir).as_posix(): p.read_bytes() for p in doc_dir.rglob("*") if p.is_file()},
+                    **{f"system/{p.relative_to(system).as_posix()}": p.read_bytes() for p in system.rglob("*") if p.is_file()}}
 
-        before = snapshot()
+        before = ar_snapshot()
         for _ in range(2):
             reached = submitted()
             self.assertTrue(reached["reached"], reached["missing"])
         self.assertEqual({"ok": True, "kind": "submitted"}, reached["delivery"])
-        self.assertEqual(before, snapshot(), "重复观察写了文件")
+        self.assertEqual(before, ar_snapshot(), "重复观察写了文件")
 
-        (ticket / "design.md").write_bytes(self.story.read_bytes() + "系统上被改过。\n".encode("utf-8"))
+        # 2e. 远端正文陈旧 / 本地设计参考陈旧 → 拒判
+        (ticket / "design.md").write_bytes(ar_story.read_bytes() + "系统上被改过。\n".encode("utf-8"))
         self.assertFalse(submitted()["reached"], "系统上的正文不是当前这一版")
-        (ticket / "design.md").write_bytes(self.story.read_bytes())
+        (ticket / "design.md").write_bytes(ar_story.read_bytes())
 
-        # 只改了设计参考、Story 没动：系统上也换新附件，旧的发布记录仍不代表这一版送审过
-        design = self.story.parent.parent / "blueprint" / "component-blueprint.review.md"
-        design.write_bytes(design.read_bytes() + "归档之后改的一句。\n".encode("utf-8"))
-        attachment.write_bytes(design.read_bytes())
-        missing = end_target.story_submitted(self.root, "doc/features", "REQ-DEMO", system)
+        ar_design.write_bytes(ar_design.read_bytes() + "归档之后改的一句。\n".encode("utf-8"))
+        attachment.write_bytes(ar_design.read_bytes())
+        missing = end_target.story_submitted(ar_root, "doc/features", ar_feat, system)
         self.assertTrue(any("设计参考" in m for m in missing), missing)
         self.assertFalse(any("Story" in m for m in missing), missing)
 

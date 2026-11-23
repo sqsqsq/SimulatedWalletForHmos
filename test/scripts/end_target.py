@@ -132,31 +132,44 @@ def story_submitted(root: Path, features_dir: str, feature: str, system_dir: Pat
     """当前这一版真实送审了没有：发布记录里这一次交付的每一件都要对上（Story 正文必有，
     设计参考附件在系统要求时必有，否则这一次交了才核）。只读，不替模型上传、不写任何文件。
 
-    发布记录（流程契约 `archived` 的交付项、摘要与 `.backups/published/` 副本）要是当前这几件；需求系统上，
-    正文逐字是当前 Story，附件逐字是（交了时）设计参考。只登记了归档、附件旧了或空着，都不算送到。
+    复用发布合同的系统身份（仅 AR 开头挂在需求系统上）与取材回执的布尔交付声明
+    （`delivery_requirements.design_reference`）：本地非 AR 单、缺/坏取材回执、非布尔声明、
+    必交缺附件、可选已交付但附件缺失/陈旧，或系统正文/副本/摘要对不上，都不算送到。
     """
+    if not str(feature).startswith("AR"):
+        return [f"{feature} 是本地需求（只有 AR 开头的需求挂在需求系统上）：送审终点只对系统单成立"]
     feature_root = root / features_dir / feature
     ar = feature_root / "AR"
     try:
         archived = json.loads((ar / "story-src" / "story-flow.json").read_text(encoding="utf-8")).get("archived") or {}
-        current = {"Story": (ar / "story.md").read_bytes(),
-                   "设计参考": (feature_root / "blueprint" / "component-blueprint.review.md").read_bytes()}
+        story_bytes = (ar / "story.md").read_bytes()
     except (OSError, ValueError) as exc:
-        return [f"读不出流程契约、AR/story.md 或 blueprint/component-blueprint.review.md（{exc}）"]
+        return [f"读不出流程契约或 AR/story.md（{exc}）"]
     if not archived:
         return ["流程契约里没有发布记录：当前这一版还没送审"]
     items = archived.get("items") or []
     if "AR-design.md" not in set(items):
         return [f"发布记录的交付项缺 Story 正文（{items}）：不算送到"]
     design = "design-review.md" in items
+    current: dict[str, bytes] = {"Story": story_bytes}
+    if design:
+        try:
+            current["设计参考"] = (feature_root / "blueprint" / "component-blueprint.review.md").read_bytes()
+        except OSError as exc:
+            return [f"发布记录包含设计参考附件，但读不出 blueprint/component-blueprint.review.md（{exc}）"]
     missing: list[str] = []
-    # 系统要求设计参考附件时（对接层写进取材回执的交付要求），它是必交项，不只看发布记录自己列了什么
+    # 复用发布合同（flow/publish.py::_selected）：取材回执必须可读且显式给布尔 delivery_requirements.design_reference
     try:
-        receipt = json.loads((ar / "story-src" / "fetched.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        receipt = {}
-    if (receipt.get("delivery_requirements") or {}).get("design_reference") is True and not design:
-        missing.append("需求系统要求设计参考附件，发布记录的交付项里没有它：不算送到")
+        receipt = json.loads((ar / "story-src" / "fetched.json").read_text(encoding="utf-8").lstrip("\ufeff"))
+    except (OSError, ValueError) as exc:
+        missing.append(f"取材回执 AR/story-src/fetched.json 读不出或损坏（{exc}）：无法核实需求系统交付要求，不算送到")
+        receipt = None
+    if receipt is not None:
+        req = receipt.get("delivery_requirements") if isinstance(receipt, dict) else None
+        if not isinstance(req, dict) or not isinstance(req.get("design_reference"), bool):
+            missing.append("取材回执缺少合法布尔交付要求声明（delivery_requirements.design_reference）：无法核实是否必交设计参考附件，不算送到")
+        elif req["design_reference"] is True and not design:
+            missing.append("需求系统要求设计参考附件，发布记录的交付项里没有它：不算送到")
     published = feature_root / ".backups" / "published"
     for name, key, copy in (("Story", "story_digest", "story.md"),
                             *((("设计参考", "design_review_digest", "design-review.md"),) if design else ())):
