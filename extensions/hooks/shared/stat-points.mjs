@@ -100,10 +100,10 @@ export function statDelivery(design, contracts, acceptance) {
     '', '验收条目（完整字段）：', ...(cases.length ? cases : ['- （没有验收条目）'])];
 }
 
-/** plan.md「宿主扩展（可选）」下的当前「埋点」小节及其直接所属行区间（止于下一任意标题，不吞入历史示例子节）。 */
+/** plan.md「宿主扩展（可选）」下的规范「埋点」小节及其直接所属行区间（止于下一任意标题，不吞入历史/说明子节）。 */
 export const planEventSection = (doc) => {
   const host = doc.headings.find(h => h.level === 2 && h.name === '宿主扩展（可选）');
-  const sub = host && doc.headings.find(h => h.level === 3 && h.at > host.at && h.at < headingEnd(doc, host) && /^埋点(?:$|\s*[（(：:\-/—])/.test(h.name) && !/示例/.test(h.name));
+  const sub = host && doc.headings.find(h => h.level === 3 && h.at > host.at && h.at < headingEnd(doc, host) && h.name === '埋点');
   return sub ? { from: sub.at, to: doc.headings.find(h => h.at > sub.at)?.at ?? doc.lines.length } : null;
 };
 

@@ -36,7 +36,7 @@ export function hostChapterProblems(text, { file, anchor, judged, acceptance = n
   const within = (line, s) => Boolean(s) && line > s.from && line < s.to;
   const home = planEventSection(doc);
   const problems = need.filter(n => n === '埋点' ? !home : !subs.some(s => s.name.includes(n)))
-    .map(n => `${file}「${anchor}」：本单位承接${n}，这一章下没有讲它的小节——小节名含「${n}」，逐项写本单位怎样落实`);
+    .map(n => `${file}「${anchor}」：本单位承接${n}，这一章下没有讲它的小节——${n === '埋点' ? '小节名写「埋点」' : `小节名含「${n}」`}，逐项写本单位怎样落实`);
   for (const s of subs.filter(x => x.name.includes('规约'))) {
     const ids = doc.tables.filter(t => within(t.line, s)).flatMap(t => t.rows.flatMap(r => String(r[0] ?? '').match(RULE_ID) ?? []));
     for (const id of new Set(ids.filter(x => !units.has(x)))) {
@@ -50,7 +50,7 @@ export function hostChapterProblems(text, { file, anchor, judged, acceptance = n
       problems.push(`${file}「${anchor}」：引用的验收 ${id} 在 acceptance.yaml 里没有`);
     }
   }
-  if (events !== null) {
+  if (events && !doc.tables.some(x => within(x.line, home) && statTableCols(x.header, POINT_TABLE))) {
     for (const t of doc.tables.filter(x => statTableCols(x.header, POINT_TABLE) && !within(x.line, home))) {
       problems.push(`${file}：第 ${t.line + 1} 行的逐点表不在「${anchor}」的「埋点」小节里——埋点按指标在宿主扩展章落实`);
     }

@@ -165,6 +165,19 @@ class PlanRowsAreFoundByTheirColumns(unittest.TestCase):
         dual_col = "# 计划\n\n## 宿主扩展（可选）\n\n### 埋点\n\n| 统计点/责任方法 | 结果 |\n|---|---|\n| Gateway.save | 成功 |\n"
         self.assertEqual([], run("m.planStatRows(plan)", plan=dual_col))
 
+        # S41 R2：「### 埋点（历史参考）」不是规范「### 埋点」小节，不承担本期义务；规范「### 埋点」后附同列名历史子表只取当前表
+        hist_note = (
+            "# 计划\n\n## 宿主扩展（可选）\n\n### 埋点（历史参考）\n\n"
+            "| 统计点 | 责任方法 |\n|---|---|\n| 当前提交 | Gateway.save |\n"
+        )
+        self.assertEqual([], run("m.planStatRows(plan)", plan=hist_note))
+        both = (
+            "# 计划\n\n## 宿主扩展（可选）\n\n### 埋点\n\n"
+            "| 统计点 | 责任方法 |\n|---|---|\n| 当前提交 | Gateway.save |\n\n"
+            "#### 历史对照\n\n| 统计点 | 责任方法 |\n|---|---|\n| 旧点 | Legacy.old |\n"
+        )
+        self.assertEqual([["当前提交", ["Gateway.save"]]], [[r["point"], r["methods"]] for r in run("m.planStatRows(plan)", plan=both)])
+
 
 
 #: 一条带附加条件、多种结果的合法埋点明细
