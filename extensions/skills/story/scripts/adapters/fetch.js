@@ -77,8 +77,15 @@ function readJsonStrict(root, rel, reason) {
   return doc;
 }
 
-function isRegularFile(file) {
-  try { return fs.statSync(file).isFile(); } catch { return false; }
+/** 区分路径三态：`absent`（确实不存在）、`file`（可用普通文件）、`invalid`（已存在但非普通文件，或状态无法确认）。 */
+function probeFileState(file) {
+  try {
+    const st = fs.statSync(file);
+    return st.isFile() ? { state: 'file' } : { state: 'invalid', why: '已存在但不是普通文件' };
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { state: 'absent' };
+    return { state: 'invalid', why: `状态无法确认（${e?.code ?? e?.message ?? 'unknown'}）` };
+  }
 }
 
 /** 核对 body_write.backup 归属：须是本需求 `.backups/cloud/` 备份区内的现存普通文件（不接受目录或无关路径）。 */
@@ -92,14 +99,18 @@ function backupProblem(root, reqNo, rel) {
   if (!inside || inside === '.' || inside.startsWith('..') || path.isAbsolute(inside)) {
     return `指向的备份 ${rel} 不在本需求 .backups/cloud/ 备份区内`;
   }
-  return isRegularFile(target) ? null : `指向的备份 ${rel} 不存在或不是普通备份文件`;
+  const probe = probeFileState(target);
+  if (probe.state === 'file') return null;
+  return probe.state === 'absent'
+    ? `指向的备份 ${rel} 不存在`
+    : `指向的备份 ${rel} ${probe.why}`;
 }
 
 /**
  * 写前核清本单的发布与覆盖身份：
  * - 未发布且无未恢复正文覆盖 → 首次取材（AR 原件）；
  * - 契约 `archived` 与 `.backups/published/story.md` 双证成立，或旧回执 `body_write` 表明已真实覆盖且未记恢复 → 交付回流表面；
- * - 任一状态文件损坏、发布双证冲突或覆盖前备份缺失/身份非法 → 在写入任何批次/回执前报错，保留原件并指回既有归档/恢复责任。
+ * - 任一状态文件损坏、发布副本状态非法（非普通文件或不可判）、发布双证冲突或覆盖前备份缺失/身份非法 → 在写入任何批次/回执前报错，保留原件并指回既有归档/恢复责任。
  */
 function publishedBefore(root, reqNo) {
   const contractRel = 'AR/story-src/story-flow.json';
@@ -107,7 +118,12 @@ function publishedBefore(root, reqNo) {
   const backupRel = '.backups/published/story.md';
   const contract = readJsonStrict(root, contractRel, '无法核清发布身份，不能按首次 AR 取材');
   const prev = readJsonStrict(root, receiptRel, '旧取材回执可能带有正文覆盖与恢复凭据（body_write），不能直接覆盖');
-  const hasBackup = isRegularFile(path.join(root, ...backupRel.split('/')));
+  const backupProbe = probeFileState(path.join(root, ...backupRel.split('/')));
+  if (backupProbe.state === 'invalid') {
+    throw new Error(`${backupRel} ${backupProbe.why}：发布副本状态非法，无法核清发布身份；`
+      + '已保留原件且未写本次回执，请先按既有归档/恢复责任核清');
+  }
+  const hasBackup = backupProbe.state === 'file';
   const archived = Boolean(contract?.archived);
   if (archived && !hasBackup) {
     throw new Error(`${contractRel} 已记发布（archived）但 ${backupRel} 缺失：发布身份不完整，不能按首次 AR 取材；`

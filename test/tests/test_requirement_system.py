@@ -689,6 +689,40 @@ class TestPublishIdentityAndReceiptRecovery(SystemCase):
         self.assertEqual("inbox/review/fetch-first-null-backup/AR-design.md", ar_item.get("saved"))
         self.assertEqual(valid_first, self.receipt_file()["body_write"])
 
+    def test_published_marker_directory_or_conflict_is_rejected_before_write(self) -> None:
+        """S39 R1：.backups/published/story.md 区分不存在/普通文件/目录等非法状态——未记 archived 时为目录须写前拒绝并保旧回执。"""
+        src = self.feature / "AR" / "story-src"
+        src.mkdir(parents=True, exist_ok=True)
+        old_rec = json.dumps({"mode": "fetch", "items": [], "sentinel": "keep-me"}, ensure_ascii=False)
+        (src / "fetched.json").write_text(old_rec, encoding="utf-8")
+        # 1. 同名目录（非普通文件）+ 无 archived：写前报错、旧回执字节不动
+        pub_marker = self.feature / ".backups" / "published" / "story.md"
+        pub_marker.mkdir(parents=True, exist_ok=True)
+        before = self._snapshot_tree()
+        proc_dir = self.fetch_into("fetch-pub-dir")
+        self.assertEqual(1, proc_dir.returncode, proc_dir.stdout + proc_dir.stderr)
+        self.assertIn(".backups/published/story.md", self.receipt(proc_dir)["error"])
+        self.assertIn("不是普通文件", self.receipt(proc_dir)["error"])
+        self.assertEqual(before, self._snapshot_tree())
+        self.assertEqual(old_rec, (src / "fetched.json").read_text(encoding="utf-8"))
+        pub_marker.rmdir()
+
+        # 2. 普通文件 + 无 archived：发布双证冲突、写前报错、旧回执字节不动
+        pub_marker.write_text("# 孤立发布副本\n", encoding="utf-8")
+        before_file = self._snapshot_tree()
+        proc_file = self.fetch_into("fetch-pub-conflict")
+        self.assertEqual(1, proc_file.returncode, proc_file.stdout + proc_file.stderr)
+        self.assertIn("发布身份冲突", self.receipt(proc_file)["error"])
+        self.assertEqual(before_file, self._snapshot_tree())
+        self.assertEqual(old_rec, (src / "fetched.json").read_text(encoding="utf-8"))
+        pub_marker.unlink()
+
+        # 3. 确实不存在 + 无 archived：正常首次 AR 取材
+        proc_ok = self.fetch_into("fetch-pub-absent")
+        self.assertEqual(0, proc_ok.returncode, proc_ok.stderr)
+        ar_ok = next(i for i in self.receipt(proc_ok)["items"] if i["name"] == "AR-design.md")
+        self.assertEqual("AR", ar_ok.get("role"))
+
     def test_upgrade_changes_carries_fetch_write_before_contract(self) -> None:
         text = (DEV_EXT / "skills" / "story-adaptation" / "reference" / "upgrade-changes.md").read_text(encoding="utf-8")
         for token in ("body_write", ".backups/published/story.md", "story-flow.json", "fetched.json"):
