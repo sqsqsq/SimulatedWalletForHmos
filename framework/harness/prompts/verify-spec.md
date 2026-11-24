@@ -65,6 +65,7 @@
      - 可以通过手动或自动化方式验证
   3. "暂不支持"类功能的 AC，只要指明"弹出 Toast"即视为可测试
   4. 若 AC 仅有定性描述（如"用户体验好"）而无量化标准，判为 FAIL
+  5. 对 P0 逐项比较预期结果、实际触发及 checkpoint 能观察到的断言。多条义务使用同一 UI 动作时，核实该动作后的断言分别覆盖所承诺的可见结果。页面出现可以证明到达，内部持久值、记录身份或真实调用次数由可读取实际值的应用内测试核验。若 CU 蓝图已把内部义务分给无相应观察能力的通道，记录验收 ID、原设计位置、实际可见结果与缺证的值，使用下方结构化回传，`affected_files` 指向当前蓝图/CU 中确须修订的产物并确认 `repair_owner: external`。保留原承诺，交设计处理分层或拆为独立 ID。已确认属于 UI、只缺定位或断言定义时交 spec 补齐。
 
 ### 检查 6: 模拟范围意识 (simulation_scope_awareness)
 
@@ -111,12 +112,11 @@
 
 ### 检查 15: 保真档位与捕获完整性 (fidelity_capture_governance)
 
-- **严重等级**: BLOCKER（`fidelity_target: pixel_1to1` 时）
+- **严重等级**: BLOCKER（实际阻断确定的视觉契约、验收或授权时）
 - **评估方法**:
-  1. Visual Handoff yaml 是否声明 `fidelity_target` / `asset_acquisition_mode` / `fidelity_deferrals`（`pixel_1to1`/P0 的 defer 始终是未满足义务；legacy `human_signed`/`signed_by` 无 gate 权重，能力不足须走 capability defer）？
-  2. 是否产出 `spec/ref-elements.yaml`（参考图侧独立枚举）？`disposition: defer` 是否与 `fidelity_deferrals` 交叉一致？
-  3. 是否产出 `spec/asset-manifest.yaml`（`pixel_1to1` 联动 user_dir）？占位资产是否向用户显式说明？
-  4. ui-spec 是否含 `must_have_elements` / `semantic_role` / `color_ref` 等新字段？脚本 `capture_completeness` / `fidelity_deferrals` 若 FAIL → 本项 FAIL
+  1. 直接消费本轮机器认定的 `effective_fidelity`、`acceptance_strictness`（来源 `spec/reports/fidelity-intent.json`）及捕获/延后检查，包括 `capture_completeness`、`fidelity_deferrals_strict_contract` 与 `ref_elements_strict_defer`。保留机器失败和证据缺口。
+  2. 查 `spec/ref-elements.yaml` 中相关元素的真实处置。有效 `best_effort` 已登记的 `disposition: defer` 保留披露和债务，仅未补抄到另一处不能阻断或触发返工。核实占位资产是否向用户清楚披露。
+  3. 硬性视觉承诺仍按原验收执行。对照来源、`ui-spec` 和适用的资产，指出缺了哪个必需元素或改了何种授权、证据位置及放过的后果。补抄登记或 legacy `human_signed` / `signed_by` 不改变授权；能力不足沿已有 capability defer 路径处理。
 
 ### 检查 R: 跨产物引用核对 (reference_crosscheck)
 
@@ -220,9 +220,8 @@ verification_result:
 
 ## 终态块（唯一版本化结论出口 · 必填）
 
-> **你收到的 Task prompt 是一份 request JSON**（`kind: "maison_verifier_request"`），
-> 不是本文件全文。按其中的 `prompt_path` 用 Read 工具读取磁盘上的 `ai-prompt.md`，
-> 那才是本轮要审的材料（可达上百 KB，刻意不走传输面）。
+> 运行时可在原 request JSON 前附已签复核范围。按 JSON（`kind: "maison_verifier_request"`）
+> 内的 `prompt_path` 读取本轮磁盘材料 `ai-prompt.md`。
 >
 > 结束时，回答的**最后**必须且只能出现一个终态块，`verifier_subject_id` **逐字回显**
 > request 里的 `subject_id`（不得改写、不得截断、不得自行编造）：
@@ -237,7 +236,5 @@ verification_result:
 >
 > `verdict=PASS` 当且仅当 `blocker_count=0`；两者不一致的报告一律判为无效证据。
 >
-> 若你收到的**不是**这样一份 request JSON（例如被手抄成模板、只给了 feature/phase，
-> 或 JSON 前后夹带了额外指令）：照常输出审查结论，并在正文显著位置说明
-> 「未收到合法 verifier request，本次报告不可入闭环，请调用方把
-> `summary.verifier_request` 指向的 JSON 整段重投」。**不要自行编造 subject。**
+> request 字段须保持原样。缺合法 JSON（例如仅有 feature/phase 或字段被改）时仍输出审查结论，
+> 明示报告不可采信，请运行时重新投递 `summary.verifier_request` 原件。**不要自行编造 subject。**

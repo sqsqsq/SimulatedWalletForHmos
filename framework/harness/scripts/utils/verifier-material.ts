@@ -21,7 +21,9 @@ import * as path from 'path';
 
 import { createRuntimeArtifactPredicate, resolvePhaseEvidenceManifest, loadPhaseEvidenceManifest, evidenceEntryMatchesCurrentFile, identityNeutralEvidenceDigest,
   PHASE_OUTPUT_FILES_BY_PHASE, PHASE_OPTIONAL_OUTPUT_FILES_BY_PHASE, PHASE_OPTIONAL_OUTPUT_RELPATHS_BY_PHASE } from './phase-evidence-manifest';
-import type { ContextFileEntry, Phase } from './types';
+import { GLOBAL_FEATURE_SENTINEL, type ContextFileEntry, type Phase } from './types';
+import { readImplementationReviewChanges, type ImplementationReviewChanges } from './diff-scope';
+import type { StatusDiffEntry } from './git-diff';
 import type { ResolvedPhaseInputs } from './capability-resolution';
 import type { FactsInvocationContext } from './context-facts';
 import { factsPhaseFingerprint, resolveFactsAbsPath } from './context-facts';
@@ -55,7 +57,13 @@ export type CurrentAcceptanceEvidenceInput = Pick<BuildVerifierMaterialInput,
   subjectId?: string | null;
   phaseIssues?: import('./repair-candidates').PhaseRepairIssues | null;
   authorityReaders?: IdentityNeutralDigestReaders;
+  implementationChanges?: readonly StatusDiffEntry[] | null;
 };
+
+/** Coding and Review consume the ordinary implementation diff. Other phases follow their bound evidence. */
+export function verifierUsesImplementationChanges(phase: Phase): boolean {
+  return phase === 'coding' || phase === 'review';
+}
 
 /** Actual test sources and the existing weakening check are evidence for independent judgment, not a sufficiency verdict. */
 export function collectTestStrengthContext(input: CurrentAcceptanceEvidenceInput): ContextFileEntry[] {
@@ -72,7 +80,8 @@ export function collectTestStrengthContext(input: CurrentAcceptanceEvidenceInput
     const profile = loadResolvedProfile(input.projectRoot, loadFrameworkConfig(input.projectRoot), input.frameworkRoot);
     const spec = new SpecLoader(input.projectRoot, undefined, undefined, input.frameworkRoot).loadFeatureSpec(input.feature, input.resolvedInputs);
     const contracts = spec.contracts ?? { files: [], modules: [] };
-    const planned = implementationFiles(input.projectRoot, input.feature, contracts, runId);
+    const planned = implementationFiles(input.projectRoot, input.feature, contracts, runId,
+      verifierUsesImplementationChanges(input.phase) ? input.implementationChanges : null);
     const coverage = loadCoverageEvidence(input.projectRoot, input.feature);
     const manifest = loadPhaseEvidenceManifest(input.projectRoot, input.feature, 'ut');
     const explicitTests = Object.values(input.resolvedInputs?.values ?? {}).flatMap(value => value.state === 'resolved'
@@ -93,7 +102,7 @@ export function collectTestStrengthContext(input: CurrentAcceptanceEvidenceInput
     const applicable = [...(spec.acceptance?.criteria ?? []), ...(spec.acceptance?.boundaries ?? [])].filter(item => item.ut_layer === 'unit' || item.ut_layer === 'both');
     if (!tests.length && !applicable.length && input.resolvedInputs?.context.obligations['unit-evidence'] !== 'required') return [];
     out.push({ label: '(test strength and applicable acceptance)', content: JSON.stringify({ acceptance: applicable, mappings: coverage?.feature === input.feature ? coverage.mappings : [],
-      guidance: '独立核验逐项读取真实用例、断言、失败路径与mock边界；标签/映射/工具PASS不是充分性结论。缺执行原件保留未知；设计里程碑不以尚未执行的未来测试冒充设计失败。' }, null, 2) });
+      guidance: '本轮检查项或已签发问题涉及这些验收时，核对真实用例、断言、失败路径与mock边界。标签/映射/工具PASS不足以证明断言够强。缺执行原件保留未知；设计里程碑不以尚未执行的未来测试冒充设计失败。' }, null, 2) });
     const sources = partitionConstructionFiles(input.projectRoot, profile.profileDir, { ...contracts, files: planned }).implementation;
     for (const file of [...new Set([...tests, ...sources])]) {
       const abs = path.resolve(input.projectRoot, file);
@@ -136,13 +145,16 @@ export function collectCurrentAcceptanceEvidence(input: CurrentAcceptanceEvidenc
     const { resolveCurrentHapSha256Full } = require('./actionable-evidence') as typeof import('./actionable-evidence');
     const reports = featurePhaseReportsDir(input.projectRoot, input.feature, 'testing', input.frameworkRoot);
     const pending = readPendingTestingRetests({ ...input, runId, currentHapSha256: resolveCurrentHapSha256Full(input.projectRoot, reports) });
-    if (pending.length) entries.push({ label: '(original failed behaviors awaiting equivalent retest)', content: JSON.stringify(pending.map(finding => ({
+    // The Testing attestation consumes these retest verdicts. Other stages may cite the same bound originals in their own findings.
+    if (input.phase === 'testing' && pending.length) entries.push({ label: '(original failed behaviors awaiting equivalent retest)', content: JSON.stringify(pending.map(finding => ({
       issue: `testing_failure_routing_${failureRouteSlug(finding.route.caseId, finding.route.stepIndex)}`,
       original_failure: finding.route, behavior: finding.behavior,
       trace: toPosixRel(input.projectRoot, finding.tracePath), plan: toPosixRel(input.projectRoot, finding.derivedPlanPath),
     })), null, 2) + '\n原发现按行为和原件定位，不按CR序号或用例名称等同。代码已改与行为已复验分别报告；删除、改号、换层、跳过或纯逻辑UT不能证明实际UI生命周期已修。用适用的新原生证据覆盖原触发与预期；如修正测试而换步骤，在原issue-verification逐条给refuted/confirmed/unclear并列原失败与新证据，不用摘要PASS代替。' });
     for (const finding of pending) for (const file of [finding.tracePath, finding.derivedPlanPath, ...finding.candidateEvidence]) entries.push({
-      label: toPosixRel(input.projectRoot, file), kind: 'path', content: 'Read原失败与适用候选复验的完整触发/预期；原失败仅为历史依据，新用例与断言是否等价须独立核实。' });
+      label: toPosixRel(input.projectRoot, file), kind: 'path', content: input.phase === 'testing'
+        ? 'Read原失败与适用候选复验的完整触发/预期；原失败仅为历史依据，新用例与断言是否等价须独立核实。'
+        : '本轮检查项或已签发问题引用时，Read原失败与适用候选复验的完整触发/预期。' });
   }
   return entries.length ? [{ label: '(current acceptance evidence)', content: '本次材料选择已完成；下列源码与真实原件供独立核验，缺执行仍保持未知。' },
     ...new Map(entries.map(entry => [entry.label + '\0' + entry.content, entry])).values()] : [];
@@ -191,6 +203,10 @@ export function collectNativeAcceptanceEvidence(input: CurrentAcceptanceEvidence
     const abs = path.resolve(projectRoot, file);
     try {
       if (!isInsideProjectRoot(projectRoot, abs) || !isInsideProjectRoot(fs.realpathSync(projectRoot), fs.realpathSync(abs))) return null;
+      if (path.extname(abs).toLowerCase() === '.hap') {
+        const sha256 = sha256FileOrNull(abs);
+        return sha256 ? { label: toPosixRel(projectRoot, abs), kind: 'path', content: `HAP SHA-256 ${sha256}` } : null;
+      }
       const content = fs.readFileSync(abs, 'utf8');
       return content.length > 64_000 ? { label: toPosixRel(projectRoot, abs), kind: 'path', content: `${fs.statSync(abs).size} bytes; read the bound original evidence at this path` }
         : { label: toPosixRel(projectRoot, abs), content };
@@ -436,6 +452,9 @@ export interface BuildVerifierMaterialInput {
   templateText: string;
   checks: ReadonlyArray<{ id: string; status: string; severity: string; details?: string; affected_files?: readonly string[] }>;
   contextFiles: ReadonlyArray<ContextFileEntry>;
+  reviewChanges?: ImplementationReviewChanges | null;
+  /** The signing entry already loaded the phase's open findings with the script verdict. */
+  phaseIssues?: PhaseRepairIssues | null;
   /** 装配进 prompt 的 lifecycle hook fragments（实例 / profile / framework） */
   lifecycleFragments?: ReadonlyArray<string>;
   /** 装配进 prompt 尾部的实例扩展输入（formatExtensionPhasePrompt 输出） */
@@ -465,6 +484,26 @@ function reviewInputBindingsSha256(projectRoot: string, inputs: ResolvedPhaseInp
       dependencies: value.binding.dependencies.map(dependency => ({ path: relative(dependency.path), exists: dependency.exists, role: dependency.role }))
         .sort((a, b) => a.path.localeCompare(b.path) || a.role.localeCompare(b.role)) }];
   })));
+}
+
+export class VerifierPreimagesUnavailable extends Error {}
+
+export function verifierInputBindingsSha256(input: Pick<BuildVerifierMaterialInput,
+  'projectRoot' | 'feature' | 'phase' | 'frameworkRoot' | 'resolvedInputs' | 'runId' | 'factsContext' | 'reviewChanges'>): string | undefined {
+  const { projectRoot, feature, resolvedInputs } = input;
+  const original = resolvedInputs && reviewInputBindingsSha256(projectRoot, resolvedInputs);
+  if (!verifierUsesImplementationChanges(input.phase)) return original;
+  const subject = input.factsContext?.subject;
+  const runId = input.runId ?? (subject && 'run_id' in subject ? subject.run_id : process.env.MAISON_GOAL_RUN_ID?.trim());
+  const changes = input.reviewChanges !== undefined ? input.reviewChanges :
+    feature && feature !== GLOBAL_FEATURE_SENTINEL ? readImplementationReviewChanges(projectRoot, feature,
+      { frameworkRoot: input.frameworkRoot, runId, resolvedInputs, preimagesOnly: true }) : null;
+  if (!changes?.preimages.length) return original;
+  const missing = changes.preimages.filter(entry => entry.sha256 === null);
+  if (missing.length) throw new VerifierPreimagesUnavailable(
+    `verifier 的 Git 基线旧原件不可读取：${missing.map(entry => entry.path).join('、')}。恢复原比较基线的 Git 对象后重跑本阶段。`);
+  const preimages = changes.preimages.map(entry => stableStringify(entry)).sort();
+  return sha256Text(stableStringify([original ?? null, preimages]));
 }
 
 /** The independent strength judgment covers the complete comparison and actual pre-write facts, not just current bytes. */
@@ -498,6 +537,7 @@ function testStrengthFactSha256(input: BuildVerifierMaterialInput, check: BuildV
 
 export function buildVerifierMaterialView(input: BuildVerifierMaterialInput): VerifierMaterialView {
   const { projectRoot, feature, phase } = input;
+  const inputBindings = verifierInputBindingsSha256(input);
   const files = new Map<string, string | null>();
   const authorityReaders = createIdentityNeutralDigestReaders();
   // 排除规则与 `phaseEvidenceManifestCandidatePaths`（沿用判据的"属不属 manifest 面"判定）
@@ -543,7 +583,9 @@ export function buildVerifierMaterialView(input: BuildVerifierMaterialInput): Ve
   // Diagnosis reads the proposal's concrete text, which may exceed the CU-neutral consumption view.
   if (phase === 'coding' || phase === 'ut') {
     const { readPhaseRepairIssues } = require('./repair-candidates') as typeof import('./repair-candidates');
-    const diagnosis = readPhaseRepairIssues(projectRoot, feature, phase);
+    const diagnosis = input.phaseIssues === undefined
+      ? readPhaseRepairIssues(projectRoot, feature, phase, { frameworkRoot: input.frameworkRoot, runId: input.runId })
+      : input.phaseIssues;
     if (diagnosis?.rows.length) for (const file of [diagnosis.reportPath, ...diagnosis.evidenceFiles.map(entry => entry.label)]) {
       const sha = verifierMaterialFileHash({ projectRoot, feature, phase, factsContext: input.factsContext, file, authorityReaders });
       if (sha !== null) files.set(file, sha);
@@ -552,7 +594,7 @@ export function buildVerifierMaterialView(input: BuildVerifierMaterialInput): Ve
 
   const base = {
     schema: VERIFIER_MATERIAL_SCHEMA,
-    ...(input.resolvedInputs ? { input_bindings_sha256: reviewInputBindingsSha256(projectRoot, input.resolvedInputs) } : {}),
+    ...(inputBindings ? { input_bindings_sha256: inputBindings } : {}),
     feature,
     phase,
     gate_fingerprint: input.gateFingerprint,
@@ -660,7 +702,8 @@ export function independentVerificationContext(input: {
   designQuestioning?: boolean;
   /** A real public Q original, when Q has P1 before.yaml/pre_snapshot instead of a verifier material manifest. */
   previousOriginal?: ContextFileEntry | null;
-  actualDiff: readonly ContextFileEntry[] | null;
+  actualDiff: readonly ContextFileEntry[] | null | boolean;
+  partialReview?: boolean;
   openFindings?: PhaseRepairIssues | null;
   affectedDependencies?: readonly (Omit<ResolutionDependency, 'exists'> & { exists?: boolean; state?: 'unknown'; detail?: string })[];
   currentEvidence?: readonly ContextFileEntry[];
@@ -670,23 +713,28 @@ export function independentVerificationContext(input: {
   const verifierBaseline = !!input.previousReport && !!input.previousMaterial && !!input.currentMaterial
     && input.previousReport.feature === input.currentMaterial.feature && input.previousReport.phase === input.currentMaterial.phase
     && input.previousMaterial.feature === input.currentMaterial.feature && input.previousMaterial.phase === input.currentMaterial.phase;
-  const completeBaseline = input.actualDiff !== null && (verifierBaseline || !input.previousReport && !!input.previousOriginal);
-  const out: ContextFileEntry[] = [{ label: '(independent verification scope)', content: completeBaseline
+  const completeBaseline = input.actualDiff !== null && input.actualDiff !== false && (verifierBaseline || !input.previousReport && !!input.previousOriginal);
+  const out: ContextFileEntry[] = [{ label: '(independent verification scope)', content: input.partialReview
+    ? '按提示开头列出的本轮检查逐项复核，保留可采信的既有判定及其原始依据。' : completeBaseline
     ? '本次按公开前次原件及真实材料变化增量复核。逐项保留无关的有效结论，重评受影响的验收、契约、依赖和发现；作者摘要不是变更范围依据。'
     : '缺可信前次公开报告、材料或真实差异原件；本次完整核验当前适用材料，明确缺口。不得用作者摘要或 HEAD 冒充上次真实字节。' }];
   if (input.previousReport) out.push({ label: input.previousReport.md_path_rel, kind: 'path', content:
-    `上轮公开核验原件，subject=${input.previousReport.subject_id}，verdict=${input.previousReport.verdict}。Read完整正文与尚未关闭的问题；历史PASS不是当前受影响材料已通过的证明。` });
+    `上轮公开核验原件，subject=${input.previousReport.subject_id}，verdict=${input.previousReport.verdict}。`
+      + (input.partialReview ? '按条目定位原始依据与开放发现。' : 'Read完整正文与尚未关闭的问题；历史PASS不是当前受影响材料已通过的证明。') });
   if (input.previousOriginal) out.push(input.previousOriginal);
-  if (input.previousMaterial && input.currentMaterial) out.push({ label: '(actual material changes)', content: diffVerifierMaterial(input.previousMaterial, input.currentMaterial).join('\n') || '审查材料未变；复用当前subject的有效结果，FAIL仍是FAIL，不因重复读取产生新的评估。' });
+  if (input.previousMaterial && input.currentMaterial) out.push({ label: '(actual material changes)',
+    content: diffVerifierMaterial(input.previousMaterial, input.currentMaterial).join('\n')
+      || (input.partialReview ? '审查材料未变，只补本轮已列出的核验缺口。' : '审查材料未变；复用当前subject的有效结果。') });
   if (input.openFindings) {
     out.push({ label: '(open verification findings)', content: JSON.stringify(input.openFindings.rows, null, 2) });
     out.push(...input.openFindings.evidenceFiles);
     if (input.openFindings.diagnostics?.length) out.push({ label: '(verification reference gaps)', content: input.openFindings.diagnostics.join('\n') });
   }
   if (input.affectedDependencies?.length) out.push({ label: '(affected contract dependencies)', content: JSON.stringify(input.affectedDependencies, null, 2) });
-  out.push(...(input.actualDiff ?? []), ...(input.currentEvidence ?? []), ...(input.declineContext ?? []));
+  if (Array.isArray(input.actualDiff)) out.push(...input.actualDiff);
+  out.push(...(input.currentEvidence ?? []), ...(input.declineContext ?? []));
   if (!input.designQuestioning) out.push({ label: '(independent acceptance and refusal review)', content:
-    '核验验收→用例→真实断言、失败路径及mock与产品真值的关系。来源/覆盖标签和工具绿灯不证明断言充分。对结构化拒修逐项核原依据与反证，以原issue-verification返回confirmed/refuted/unclear；拒修本身不关闭问题。正文中的实质否定不能被总结PASS覆盖。' });
+    '围绕本轮检查项及已签发问题，核验相应验收、真实断言、失败路径及mock与产品真值的关系。来源/覆盖标签和工具绿灯不证明断言充分。对结构化拒修逐项核原依据与反证，以原issue-verification返回confirmed/refuted/unclear；拒修本身不关闭问题。正文中的实质否定不能被总结PASS覆盖。' });
   if (input.testStrengthCheck?.affected_files?.length) out.push({ label: '(current test strength verification)', content: JSON.stringify(input.testStrengthCheck, null, 2)
     + '\n在原issue-verification块以issue=coding_existing_test_preserved返回逐项裁决，evidence须包含全部当前文件与完整原details（可用YAML block scalar保留多行）。confirmed表示当前删弱/跳过致原验收不足；refuted表示已核实合理加强或真实重签后的期望且覆盖充分，不否认原文本差异；unclear/缺原件保留未知。即使文本原样保留，也须核外部fixture/data/mock是否弱化真值。' });
   return out;

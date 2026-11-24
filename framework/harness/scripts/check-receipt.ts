@@ -68,7 +68,7 @@ import {
 } from './utils/multimodal-evidence-gate';
 import {
   loadVerifierEvidence,
-  findSameMaterialVerifierEvidence,
+  loadCurrentVerifierEvidenceForSubject,
   loadVerifierReportTextOrNull,
   readSummaryVerifierSubjectId,
   type VerifierEvidence,
@@ -78,7 +78,6 @@ import {
   workflowVerifierPrompt,
   type VerifierPlan,
 } from './utils/verifier-plan';
-import { resolveVerifierSubagentDeclared } from './utils/adapter-catalog';
 import { SUMMARY_SCHEMA_VERSION_CURRENT } from './utils/quality-axes';
 import { recomputePhaseEvidenceStaleness } from './utils/phase-evidence-manifest';
 import { RECEIPT_PROJECTION_SCHEMA } from './utils/receipt-scaffold';
@@ -128,13 +127,8 @@ interface ReceiptFrontmatter {
     verdict?: string;
     ran_at?: string;
   };
-  verifier_subagent?: {
-    invoked_via?: string;
-    prompt_template?: string;
-    report_path?: string;
-    verdict?: string;
-    ran_at?: string;
-  };
+  /** 历史回执投影，仅用于披露与机器事实的差异。 */
+  verifier_subagent?: { verdict?: string };
   trace_json?: {
     path?: string;
     exists?: boolean;
@@ -304,8 +298,7 @@ function main(): void {
   const policy = resolveEvidencePolicy(track, runtimeCtx, evidenceConfig);
   const profileResolved = resolveProfileLabel(track, runtimeCtx, evidenceConfig);
   // plan a9d4e7c2 T1/T3：verifier 适用性与生产端**同一个解析器**——闭环侧不再自行
-  // 用 `policy.verifier === 'off'` 二分（那会把"workflow 未声明"和"adapter 无能力"
-  // 一起误判成"该有却缺失"）。结果不落盘，随时可重算。
+  // 将 workflow 未声明与应该提供却缺失区分开。结果不落盘，随时可重算。
   const verifierPlan: VerifierPlan = resolveVerifierPlan({
     phase,
     track,
@@ -313,8 +306,6 @@ function main(): void {
     policy,
     workflowVerifierPrompt: workflowVerifierPrompt(workflowSpecForPlan, phase),
     phaseDisabledByProfile: false, // profile 禁用的 phase 已在上方 exit 0
-    adapterHasVerifierSubagent: resolveVerifierSubagentDeclared(frameworkRoot, fw.agent_adapter),
-    adapterName: fw.agent_adapter,
   });
 
   const receiptResolved = resolveReceiptFilePath(projectRoot, feature, phase);
@@ -670,7 +661,7 @@ function main(): void {
   // 3. verifier（plan d2f7a9c4：报告即真源，校验只剩 subject 回显与 verdict 自洽）
   //
   // 适用性只问 resolveVerifierPlan 一次（二态）：
-  //   · disabled → 零要求。其中 adapter_has_no_reviewer 额外以 WARN 如实披露 not_reviewed；
+  //   · disabled → 零新增要求，同材料已有的有效否决继续生效；
   //   · enabled  → 读当前 subject 的 verifier.report.<subject>.md。
   //
   // **不再按 summary.schema_version 分代**（plan d2f7a9c4 删 grandfather）：把读取面劈成
@@ -679,6 +670,7 @@ function main(): void {
   // 回执手填字段无裁决权，只留兼容投影（与机器事实不符时降 WARN）。
   const vs = frontmatter.verifier_subagent ?? {};
   let verifierEvidence: VerifierEvidence | null = null;
+  let resolvedVerifierInputs: import('./utils/capability-resolution').ResolvedPhaseInputs | undefined;
   // plan 07a41ec6 T7：沿用既往 PASS 闭环时的登记（null = 当前 subject 自身已验真，闭环时清除旧登记）
   let verifierClosure: VerifierClosureRecord | null = null;
   if (verifierPlan.mode === 'disabled') {
@@ -705,16 +697,6 @@ function main(): void {
           `（${verifierPlan.reason}）——关轴只免除"要求提供"，不免除已有的负面结论：` +
           '修复缺陷后跑一轮 strict 让 verifier 自己撤回结论，改回执或改配置都不构成通过。',
       });
-    } else if (verifierPlan.reason === 'adapter_has_no_reviewer') {
-      // 环境事实，不是产物缺陷：闭环照常，但必须诚实标注——绝不写成"已审查通过"。
-      observed.verifier = 'not_reviewed';
-      warnings.push({
-        id: 'verifier_not_reviewed_no_reviewer',
-        severity: 'MAJOR',
-        message:
-          `【verifier 未审查】${verifierPlan.message}` +
-          ' 本阶段闭环记录如实标注 not_reviewed；如需独立语义审查，改用已登记 verifier_subagent 的 adapter。',
-      });
     } else {
       observed.verifier =
         verifierPlan.reason === 'policy_not_applicable' || verifierPlan.reason === 'phase_disabled_by_profile'
@@ -729,19 +711,20 @@ function main(): void {
     const verifierSubjectId = readSummaryVerifierSubjectId(projectRoot, feature, phase, frameworkRoot);
     if (verifierSubjectId) {
       let loaded = loadVerifierEvidence(projectRoot, feature, phase, { frameworkRoot });
-      if (!loaded.ok && loaded.code === 'report_missing') {
-        let resolvedInputs: import('./utils/capability-resolution').ResolvedPhaseInputs | undefined;
+      const missingCurrent = !loaded.ok && loaded.code === 'report_missing';
+      if (missingCurrent || phase === 'ut' || phase === 'spec' && workflowSpecForPlan.schema_version === '1.2') {
         try {
           const entry = require('./utils/capability-resolution-entry-input') as typeof import('./utils/capability-resolution-entry-input');
           const resolver = require('./utils/capability-resolution') as typeof import('./utils/capability-resolution');
-          const input = entry.resolveCapabilityResolutionEntryInput({ projectRoot, frameworkRoot, feature, phase,
-            featuresDir: relFeaturesDir(projectRoot), goalRunId: runId, goalAttemptId: process.env.MAISON_GOAL_ATTEMPT });
-          resolvedInputs = resolver.resolveCapabilityInputs({ projectRoot, frameworkRoot, feature, phase, track, ...input }).inputs;
+          const input = entry.resolveFeaturePhaseCapabilityInput({ projectRoot, frameworkRoot, feature, phase,
+            featuresDir: relFeaturesDir(projectRoot), goalRunId: runId, goalAttemptId: process.env.MAISON_GOAL_ATTEMPT }, workflowSpecForPlan);
+          resolvedVerifierInputs = resolver.resolveCapabilityInputs({ projectRoot, frameworkRoot, feature, phase, track, ...input }).inputs;
         } catch { /* Without original input facts, a legacy result cannot prove equivalence. */ }
-        const same = findSameMaterialVerifierEvidence(projectRoot, feature, phase, verifierSubjectId, { frameworkRoot, resolvedInputs });
-        if (same) {
-          loaded = { ok: true, evidence: same };
-          if (same.verdict === 'PASS') verifierClosure = { mode: 'completed_with_prior_review', reviewed_subject_id: same.subject_id,
+      }
+      if (missingCurrent) {
+        loaded = loadCurrentVerifierEvidenceForSubject(projectRoot, feature, phase, verifierSubjectId, { frameworkRoot, resolvedInputs: resolvedVerifierInputs });
+        if (loaded.ok && loaded.evidence.subject_id !== verifierSubjectId) {
+          if (loaded.evidence.verdict === 'PASS') verifierClosure = { mode: 'completed_with_prior_review', reviewed_subject_id: loaded.evidence.subject_id,
             current_subject_id: verifierSubjectId, current_material_not_reverified: [] };
         }
       }
@@ -774,7 +757,7 @@ function main(): void {
             severity: 'MAJOR',
             message:
               `回执 verifier_subagent.verdict="${vs.verdict}" 与机器真源 ${verifierEvidence.md_path_rel} ` +
-              `的 verdict=${verifierEvidence.verdict} 不一致；手填字段已退出裁决权威（兼容投影），请照机器事实回填。`,
+              `的 verdict=${verifierEvidence.verdict} 不一致；历史字段仅供读档。`,
           });
         }
       }
@@ -788,8 +771,7 @@ function main(): void {
         message:
           `summary.json 缺 verifier_subject_id / verifier_request（${canonicalReportsRel}/summary.json），` +
           `但本 phase 的 verifier 能力已启用（${verifierPlan.reason}）——本轮没有生成调用凭证。` +
-          '正确路径：重跑该 phase 的 harness（分钟级）→ 把新生成的 verifier.request.<subject>.json 整段投给 verifier → ' +
-          '把它的回复原样写入 summary.verifier_report → 重跑本检查。',
+          '重跑该阶段的 harness，按 NEXT 指引执行或交回独立核验。',
       });
     }
   }
@@ -1125,7 +1107,7 @@ function main(): void {
     }
     if (currentRunReadable) {
       const disposition = resolveCompletionDisposition({ projectRoot, frameworkRoot, feature, chain: [phase], runId, workflow: workflowSpecForPlan,
-        currentResults: [{ phase, summary: slimSummary, checks: readPhaseChecks(projectRoot, feature, phase, slimSummary) }] });
+        currentResults: [{ phase, summary: slimSummary, resolvedInputs: resolvedVerifierInputs, checks: readPhaseChecks(projectRoot, feature, phase, slimSummary) }] });
       const pending = phaseCompletionProblems(disposition, [phase]);
       if (pending.length) issues.push({ id: 'slim_summary_not_pass', severity: 'BLOCKER',
         message: '当前统一处置仍未满足：' + pending.map(problem => problem.id + ': ' + problem.detail).join('；') });
@@ -1161,7 +1143,7 @@ function main(): void {
         : '   - script_harness: exit_code=0, blocker_count=0',
     );
     console.log(
-      `   - verifier_subagent: ${
+      `   - verifier: ${
         verifierPlan.mode === 'disabled'
           ? `${observed.verifier}（${verifierPlan.reason}）`
           : verifierEvidence

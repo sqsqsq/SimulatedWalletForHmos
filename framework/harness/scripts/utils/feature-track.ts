@@ -22,8 +22,9 @@ import type { FidelityTarget } from './fidelity-shared';
 import { validateChangeUnitFeatureProjection } from './change-unit-feature-projection';
 import { deriveChangeUnitFeatureId, loadCanonicalChangeUnit, parseChangeUnitFeatureId } from './change-unit-path';
 import { loadCanonicalBlueprint } from './component-blueprint-path';
-import { resolvePhasePathOwnership } from './phase-write-boundary';
+import { isProducedPhaseChange, resolvePhasePathOwnership } from './phase-write-boundary';
 import { readHandoffMaterial, type SessionExecutionRequest } from './session-execution-handoff';
+import { repairCandidateCanReviseScope, scopeRepairReason, SCOPE_REVISION_FACT_KIND, type RepairCandidate } from './repair-candidates';
 import { invocationCompleted } from './invocation-completion';
 import { asRecord, asRecords } from './component-blueprint-model';
 import type { GoalRunEvent } from './goal-runner-phase';
@@ -37,7 +38,7 @@ import type { ChangeUnitArtifact } from './change-unit-model';
 
 import * as fs from 'fs';
 import * as YAML from 'yaml';
-import { featureArtifactPath, featureFilePath, featurePhaseReportsDir, relFeaturesDir, resolveFeatureArtifact } from '../../config';
+import { componentIndexPath, featureArtifactPath, featureFilePath, featurePhaseReportsDir, relFeaturesDir, resolveFeatureArtifact } from '../../config';
 import type { FeatureCompletion } from './verify-feature-completion';
 import { resolveFeatureTrack, type FeatureTrackDecl } from './runtime-policy';
 
@@ -705,8 +706,9 @@ function candidateInput(
 export function refreshScopeBindingInput(ctx: { projectRoot: string; frameworkRoot: string; feature: string; requirement?: string },
   previous: ExecutionScope): ExecutionScopeInput | undefined {
   const legacyRoot = inferLegacyProjectRoot(ctx.projectRoot, previous);
+  const comparison = scopeAtProjectRoot(ctx.projectRoot, previous, legacyRoot);
   let changed = false;
-  const facts = structuredClone(previous.obligations);
+  const facts = structuredClone(comparison.obligations);
   const refresh = (binding: InputBinding, phase: string): InputBinding => {
     if (binding.source.kind === 'derive' && ['derive.codebase', 'derive.test-targets', ...DEPENDENCY_ONLY_PROVIDER_IDS].includes(binding.source.provider_id)) return binding;
     try { readBoundInput({ ...ctx, phase, track: 'full' }, binding, legacyRoot); } catch { return binding; }
@@ -719,7 +721,7 @@ export function refreshScopeBindingInput(ctx: { projectRoot: string; frameworkRo
     fact.basis = fact.basis.map(binding => refresh(binding, fact.owner_phase));
     fact.satisfied_by = fact.satisfied_by?.map(proof => 'input_id' in proof ? refresh(proof, fact.owner_phase) : proof);
   }
-  if (!changed || !hasNewSourcedFact(previous, facts, '')) return undefined;
+  if (!changed || !hasNewSourcedFact(comparison, facts, '')) return undefined;
   return scopeWithRefreshedBindings(previous, facts);
 }
 
@@ -729,21 +731,38 @@ function scopeWithRefreshedBindings(previous: ExecutionScope, facts: ExecutionSc
     facts, contract_fingerprints: [], ...(previous.control_edges ? { control_edges: structuredClone(previous.control_edges) } : {}) };
 }
 
-function scopeAcceptanceBinding(scope: ExecutionScope): InputBinding | undefined {
-  return scope.obligations.flatMap(fact => fact.basis).find(binding => binding.source.kind === 'artifact' && binding.source.artifact === 'acceptance@1');
+function artifactAcceptanceBindings(facts: ExecutionScopeInput['facts']): InputBinding[] {
+  return facts.flatMap(fact => fact.basis).filter(binding => binding.source.kind === 'artifact' && binding.source.artifact === 'acceptance@1');
+}
+
+export function hasStaleContractsScopeProof(ctx: { projectRoot: string; frameworkRoot: string; feature: string }, previous: ExecutionScope): boolean {
+  const legacyRoot = inferLegacyProjectRoot(ctx.projectRoot, previous);
+  return previous.obligations.some(fact => fact.kind === 'design-context' && fact.satisfied_by?.some(ref => 'input_id' in ref
+    && !verifySatisfiedByBinding(ctx.projectRoot, ctx.frameworkRoot, ctx.feature, fact.owner_phase, ref, legacyRoot).ok));
 }
 
 /** A proposal from an unrelated correction must not launder a changed acceptance file. */
 export function assertScopeAcceptanceRevision(ctx: { projectRoot: string; frameworkRoot: string; feature: string },
-  previous: ExecutionScope, next: ExecutionScope, owned: ExecutionScopeInput | undefined): void {
+  previous: ExecutionScope, next: ExecutionScope, owned: ExecutionScopeInput | undefined, checkedSpec?: ExecutionScopeInput): void {
   if (!ctx.feature.startsWith('cu-')) return;
-  const before = scopeAcceptanceBinding(previous);
+  const before = artifactAcceptanceBindings(previous.obligations)[0];
   if (!before) return;
-  const after = scopeAcceptanceBinding(next);
+  const after = artifactAcceptanceBindings(next.obligations)[0];
+  const legacyRoot = inferLegacyProjectRoot(ctx.projectRoot, previous);
+  const admitted = owned && artifactAcceptanceBindings(owned.facts)[0];
+  const matchesAdmitted = (binding: InputBinding): boolean => projectionContentEqual(admitted, {
+    ...binding, dependencies: binding.dependencies.map(dep => ({ ...dep, path: resolveDependencyPath(ctx.projectRoot, dep.path, legacyRoot) })),
+  });
+  if (admitted && checkedSpec) {
+    const checked = artifactAcceptanceBindings(checkedSpec.facts);
+    if (!checked.length || checked.some(binding => !matchesAdmitted(binding))) {
+      throw new Error('[execution-scope] spec 的验收提案与当前 CU 已签发交回的验收绑定不一致，责任方 spec');
+    }
+  }
   if (after && before.content_fingerprint === after.content_fingerprint) return;
-  if (after && owned?.facts.some(fact => fact.basis.some(binding => projectionContentEqual(binding, after)))) return;
+  if (after && admitted && matchesAdmitted(after)) return;
   try {
-    readBoundInput({ ...ctx, phase: 'spec', track: 'full' }, before, inferLegacyProjectRoot(ctx.projectRoot, previous));
+    readBoundInput({ ...ctx, phase: 'spec', track: 'full' }, before, legacyRoot);
   } catch {
     throw new Error('[execution-scope] 验收内容变化缺少当前 CU 已签发责任方的适用交回');
   }
@@ -779,11 +798,36 @@ function keepsAcceptanceCommitments(previous: AcceptanceSpec, current: unknown, 
   return true;
 }
 
+function matchesProducedComponentIndex(projectRoot: string, feature: string, events: readonly GoalRunEvent[],
+  relative: string, before: string | null, after: string | null): boolean {
+  const productions = new Map<string, { phase: string; before: unknown; after: unknown }>();
+  for (const event of events) {
+    const record = event as Record<string, unknown>;
+    if (event.type !== 'phase_write_observed' || !event.phase || !event.invoke_id
+      || record.feature !== feature || record.producer !== 'component-index') continue;
+    for (const row of asRecords(record.produced).filter(row => row.path === relative)) {
+      const first = productions.get(event.invoke_id);
+      productions.set(event.invoke_id, { phase: event.phase, before: first ? first.before : row.pre_sha256, after: row.post_sha256 });
+    }
+  }
+  let expected = before;
+  let advanced = false;
+  for (const [invokeId, production] of productions) {
+    if (!advanced && production.before !== expected) continue;
+    if (typeof production.after !== 'string' || !isProducedPhaseChange(projectRoot, production.phase,
+      { path: relative, how: expected === null ? 'added' : 'modified', preSha256: expected, postSha256: production.after },
+      { events, invokeId })) return false;
+    expected = production.after;
+    advanced = true;
+  }
+  return advanced && expected === after;
+}
+
 /** Rebind the admitted CU's acceptance after the exact authorized author settles, before requiring spec PASS. */
 export function refreshOwnedAcceptanceScopeInput(ctx: { projectRoot: string; frameworkRoot: string; feature: string; requirement?: string; runId: string; runDir: string },
   previous: ExecutionScope, events: readonly GoalRunEvent[]): ExecutionScopeInput | undefined {
   if (!ctx.feature.startsWith('cu-')) return undefined;
-  const prior = scopeAcceptanceBinding(previous);
+  const prior = artifactAcceptanceBindings(previous.obligations)[0];
   if (!prior) return undefined;
   const { projectRoot, frameworkRoot, feature, runId, runDir } = ctx;
   const legacyRoot = inferLegacyProjectRoot(projectRoot, previous);
@@ -805,6 +849,15 @@ export function refreshOwnedAcceptanceScopeInput(ctx: { projectRoot: string; fra
   const observed = createObservedSourceHashReader(projectRoot, feature, { frameworkRoot, runId, ownershipEvents: events, includeAuthorArtifacts: true });
   if (observed({ path: relative, role: 'input', sha256: before, exists: true }, 'scope')?.sha256 !== after) return undefined;
   try {
+    const observedSource = createObservedSourceHashReader(projectRoot, feature, { frameworkRoot, runId, ownershipEvents: events });
+    const designInputs = changedInputs.filter(dep => {
+      if (!isInsideProjectRoot(projectRoot, dep.path)) return true;
+      const relative = relPosix(projectRoot, dep.path);
+      const hash = sha256File(dep.path);
+      if (dep.path === componentIndexPath(projectRoot)) return !matchesProducedComponentIndex(projectRoot, feature, events, relative, dep.sha256, hash);
+      const source = observedSource({ path: relative, role: 'input', exists: dep.exists, sha256: dep.sha256 }, 'scope');
+      return !source || source.sha256 !== hash || source.exists !== fs.existsSync(dep.path);
+    });
     let expected = before;
     let originalRequest: SessionExecutionRequest | undefined;
     let last: { request: SessionExecutionRequest; start: GoalRunEvent } | undefined;
@@ -843,7 +896,7 @@ export function refreshOwnedAcceptanceScopeInput(ctx: { projectRoot: string; fra
     const { request, start } = last;
     const { blueprintId, changeUnitId } = parseChangeUnitFeatureId(feature);
     const unit = loadCanonicalChangeUnit(projectRoot, blueprintId, changeUnitId);
-    if (changedInputs.length) {
+    if (designInputs.length) {
       const blueprint = loadCanonicalBlueprint(projectRoot, blueprintId);
       const design = events.slice(0, events.indexOf(start)).filter(event => event.type === 'design_authority_repair') as Array<GoalRunEvent & {
         blueprint_id?: string; stage?: string; new_revision?: number; outcome?: string; failed_step?: string; signature?: string;
@@ -856,7 +909,7 @@ export function refreshOwnedAcceptanceScopeInput(ctx: { projectRoot: string; fra
       if (!attempt?.handoff_context || sha256File(path.join(runDir, 'design-repair/component-blueprint.yaml')) !== sha256File(blueprint.canonicalPath)) return undefined;
       const previousDesign = readHandoffMaterial<{ baseline: string; cu?: string }>(runDir, attempt.handoff_context);
       const original = new Map([[blueprint.canonicalPath, previousDesign.baseline], [unit.canonicalPath, previousDesign.cu]]);
-      if (changedInputs.some(dep => {
+      if (designInputs.some(dep => {
         const bytes = original.get(dep.path);
         const relative = path.relative(projectRoot, dep.path).replace(/\\/g, '/');
         return !bytes || createHash('sha256').update(Buffer.from(bytes, 'base64')).digest('hex') !== dep.sha256
@@ -1107,13 +1160,20 @@ export function resolveCurrentScopeView(input: {
   const { birth, events, dependencies, history } = readScopeProofHistory({ ...input, currentPhasePass });
   const proofs = new Map<string, ScopeEvidenceRef>();
   const stale = new Set<string>();
-  const { resolveCompletionDisposition, applicableCheckFamilies } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
+  const { resolveCompletionDisposition, applicableCheckFamilies, executionScopeEvidenceFindings, resolvePhaseRunIds,
+    currentScopeProofRunId } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
+  const scopeFindings = input.currentRunId ? executionScopeEvidenceFindings(projectRoot, feature, input.previous,
+    undefined, input.currentRunId, undefined, frameworkRoot, currentPhasePass, input.authorityReaders, input.workflow, history) : undefined;
   const disposition = resolveCompletionDisposition({ projectRoot, feature, chain: applicableCheckFamilies(input.previous),
     workflow: input.workflow, executionScope: input.previous, frameworkRoot, runId: input.currentRunId,
-    pendingOwnerPhase: input.currentPhase, authorityReaders: input.authorityReaders, currentResults: input.currentResults });
+    pendingOwnerPhase: input.currentPhase, authorityReaders: input.authorityReaders, currentResults: input.currentResults, scopeFindings });
   const actualResults = [...new Set(input.previous.obligations.filter(obligation => obligation.applicability !== 'not_applicable')
     .map(obligation => obligation.owner_phase))].filter(phase => !!loadPhaseEvidenceManifest(projectRoot, feature, phase));
   const candidates = new Set([...history.passed, ...input.completedPhases ?? [], ...input.previous.reused_phases.map(p => p.phase), ...actualResults]);
+  const invalidProofIds = new Set(scopeFindings?.filter(finding => finding.class === 'evidence').map(finding => finding.obligation_id));
+  const priorRefs = input.previous.obligations.flatMap(obligation => (obligation.satisfied_by ?? [])
+    .filter((ref): ref is ScopeEvidenceRef => !('input_id' in ref)).map(ref => ({ ref, obligationId: obligation.id })));
+  const newProofs = new Map<string, string>();
   for (const phase of candidates) {
     const evidence = loadPhaseEvidenceManifest(projectRoot, feature, phase);
     // 新发现交真实责任方处理；它不等于来源阶段的证明字节已经过期。
@@ -1122,7 +1182,30 @@ export function resolveCurrentScopeView(input: {
     if (!fresh) { stale.add(phase); continue; }
     const eligible = phaseEvidenceIsCurrent({ fresh: !!fresh, generatedAt: evidence?.manifest.generated_at,
       invalidatedAt: history.invalidatedAt.get(phase) });
-    if (eligible === true && evidence) proofs.set(phase, { phase, ...(input.currentRunId ? { run_id: input.currentRunId } : {}), evidence_manifest_aggregate: evidence.manifest.aggregate_sha256 });
+    if (eligible !== true || !evidence) continue;
+    const aggregate = evidence.manifest.aggregate_sha256;
+    if (!input.currentRunId) { proofs.set(phase, { phase, evidence_manifest_aggregate: aggregate }); continue; }
+    const recorded = priorRefs.filter(({ ref }) => ref.phase === phase && ref.evidence_manifest_aggregate === aggregate);
+    if (!recorded.length) newProofs.set(phase, aggregate);
+    else if (recorded.some(({ obligationId }) => invalidProofIds.has(obligationId))) stale.add(phase);
+    else proofs.set(phase, recorded[0].ref);
+  }
+  if (input.currentRunId && newProofs.size) {
+    const producerRuns: Record<string, string | null> = {};
+    try { Object.assign(producerRuns, resolvePhaseRunIds(projectRoot, feature, [...newProofs.keys()]).runIds); }
+    catch {
+      // A malformed invocation can invalidate one phase while other producers remain verifiable.
+      for (const phase of newProofs.keys()) {
+        try { Object.assign(producerRuns, resolvePhaseRunIds(projectRoot, feature, [phase]).runIds); }
+        catch { producerRuns[phase] = null; }
+      }
+    }
+    for (const [phase, aggregate] of newProofs) {
+      const observed = producerRuns[phase];
+      const producer = observed === undefined ? currentScopeProofRunId(projectRoot, feature, phase, input.currentRunId, events) : observed;
+      if (producer) proofs.set(phase, { phase, run_id: producer, evidence_manifest_aggregate: aggregate });
+      else stale.add(phase);
+    }
   }
   const definitionProofs = new Map<string, readonly InputBinding[]>();
   const legacyRoot = inferLegacyProjectRoot(projectRoot, input.previous);
@@ -1134,6 +1217,52 @@ export function resolveCurrentScopeView(input: {
     definitionProofs.set(id, refs);
   }
   return effectiveScopeView({ birth, events, workflow: input.workflow, proofs, definitionProofs, stalePhases: [...stale], reopen: input.reopen, inputOwners: dependencies.inputOwners, inputEdges: dependencies.inputEdges });
+}
+
+function relocateScopeBindings(projectRoot: string, facts: ExecutionScopeInput['facts'], impact: ExecutionScope['request_impact'], legacyRoot?: string): void {
+  const relocate = (binding: InputBinding): void => {
+    for (const dependency of binding.dependencies) dependency.path = resolveDependencyPath(projectRoot, dependency.path, legacyRoot);
+  };
+  for (const fact of facts) {
+    fact.basis.forEach(relocate);
+    for (const proof of fact.satisfied_by ?? []) if ('input_id' in proof) relocate(proof);
+  }
+  impact?.basis.forEach(relocate);
+}
+
+/** A checkout move gives no new source. The signed historical scope stays on disk verbatim. */
+function scopeAtProjectRoot(projectRoot: string, scope: ExecutionScope, legacyRoot?: string): ExecutionScope {
+  if (!legacyRoot) return scope;
+  const copy = structuredClone(scope);
+  relocateScopeBindings(projectRoot, copy.obligations, copy.request_impact, legacyRoot);
+  return copy;
+}
+
+function repeatsOpenRepairScope(previous: ExecutionScope, resolved: ExecutionScope, candidates: readonly RepairCandidate[]): boolean {
+  const { obligations: prior, ...signedFields } = previous;
+  const { obligations: next, ...resolvedFields } = resolved;
+  if (executionScopeFingerprint(signedFields) !== executionScopeFingerprint(resolvedFields) || prior.length !== next.length) return false;
+  const byId = new Map(next.map(obligation => [obligation.id, obligation]));
+  if (byId.size !== next.length || new Set(prior.map(obligation => obligation.id)).size !== prior.length) return false;
+  const movable = new Set<string>();
+  for (const before of prior) {
+    const after = byId.get(before.id);
+    if (!after) return false;
+    const current = before.applicability === 'required' && !before.satisfied_by?.length && before.basis.length
+      ? candidates.filter(candidate => before.id === `${before.kind}:${candidate.id}`) : [];
+    const reason = current.some(candidate => after.reason === scopeRepairReason(before.owner_phase, candidate)) ? before.reason : after.reason;
+    if (executionScopeFingerprint(before) !== executionScopeFingerprint({ ...after, reason })) return false;
+    // The definition finding's codebase binding records what triggered the repair.
+    // Keep authority-bearing bindings and ordered execution targets in their original positions.
+    if (current.length && (before.kind === SCOPE_REVISION_FACT_KIND.spec || before.kind === SCOPE_REVISION_FACT_KIND.plan)
+      && before.basis.every(binding => binding.input_id === 'codebase' && binding.source.kind === 'derive'
+        && binding.source.provider_id === 'derive.codebase' && binding.dependencies.every(dependency => dependency.role === 'derive'))) movable.add(before.id);
+  }
+  return prior.every((before, index) => {
+    const after = next[index];
+    return before.id === after.id || movable.has(before.id) && movable.has(after.id)
+      && before.owner_phase === after.owner_phase && before.kind === after.kind;
+  });
 }
 
 export function resolveScopeRevisionProposal(input: {
@@ -1149,7 +1278,7 @@ export function resolveScopeRevisionProposal(input: {
    * `ExecutionScope` 没有 `requested_phases` 字段，故由调用方把冻结那一份链传进来。
    */
   authorizedPhases: readonly string[];
-  repairCandidates?: readonly import('./repair-candidates').RepairCandidate[];
+  repairCandidates?: readonly RepairCandidate[];
   completedPhases?: ReadonlySet<string>;
   currentPhase?: string;
   currentRunId?: string;
@@ -1165,17 +1294,10 @@ export function resolveScopeRevisionProposal(input: {
   const featureRecord = input.currentRunId ? undefined : readFeatureFrozenScope(projectRoot, feature);
   const birth = input.currentRunId ? loadFrozenExecutionScope(projectRoot, feature, input.currentRunId) : featureRecord?.execution_scope;
   const legacyRoot = inferLegacyProjectRoot(projectRoot, previous) ?? inferLegacyProjectRoot(projectRoot, birth);
-  const rebaseBinding = (binding: InputBinding): void => {
-    for (const dependency of binding.dependencies) dependency.path = resolveDependencyPath(projectRoot, dependency.path, legacyRoot);
-  };
-  // 只重定位本次提案副本；原事件与旧证明保留，以下仍逐条核验当前实际内容和证据。
-  for (const fact of proposal.facts) {
-    fact.basis.forEach(rebaseBinding);
-    for (const proof of fact.satisfied_by ?? []) if ('input_id' in proof) rebaseBinding(proof);
-  }
-  for (const binding of proposal.request.impact?.basis ?? []) rebaseBinding(binding);
-  const priorImpact = previous.request_impact ? structuredClone(previous.request_impact) : undefined;
-  for (const binding of priorImpact?.basis ?? []) rebaseBinding(binding);
+  // Resolve copied dependencies against the current checkout before re-reading their evidence.
+  relocateScopeBindings(projectRoot, proposal.facts, proposal.request.impact, legacyRoot);
+  const comparison = scopeAtProjectRoot(projectRoot, previous, legacyRoot);
+  const priorImpact = comparison.request_impact;
   proposal.contract_fingerprints = loadFeatureContracts(frameworkRoot).map(contractFingerprint);
   proposal.control_edges ??= structuredClone(previous.control_edges);
   if (proposal.request.completion_target !== previous.completion_target
@@ -1226,7 +1348,7 @@ export function resolveScopeRevisionProposal(input: {
   const revoked = new Set(scopeRevisionInvalidations(progress, { obligations: nextDuties }, order, undefined, workflow, readRepairDependencyContext(projectRoot, feature, workflow, progress, frameworkRoot)));
   for (const fact of proposal.facts) if (revoked.has(nextDuties.find(o => o.id === fact.id)!.owner_phase)) delete fact.satisfied_by;
   if (proposal.request.impact === null) throw new Error('[execution-scope] 影响判断为 null——请给出判断或不要携带该字段');
-  if (proposal.request.impact === undefined) proposal.request.impact = previous.request_impact;
+  if (proposal.request.impact === undefined) proposal.request.impact = structuredClone(priorImpact);
   const impactInherited = proposal.request.impact === undefined
     || (priorImpact !== undefined
       && executionScopeFingerprint(proposal.request.impact) === executionScopeFingerprint(priorImpact));
@@ -1262,7 +1384,12 @@ export function resolveScopeRevisionProposal(input: {
   const reopened = proposal.facts.some(fact => repairFactIds.has(fact.id)
     && !fact.satisfied_by?.length && progress.obligations.some(prior => prior.id === fact.id && prior.satisfied_by?.length));
   // A current trusted finding is new knowledge; its unchanged product file need not be rewritten to earn recovery.
-  if (!control.newSource && !hasNewSourcedFact(previous, proposal.facts, input.currentRunId ?? '') && !confirmedRepair && !reopened
-    && !previous.obligations.some(prior => prior.satisfied_by?.length && !progress.obligations.find(o => o.id === prior.id)?.satisfied_by?.length)) throw new Error('[execution-scope] revision requires new sourced facts');
+  if (!control.newSource && !hasNewSourcedFact(comparison, proposal.facts, input.currentRunId ?? '') && !confirmedRepair && !reopened
+    && !previous.obligations.some(prior => prior.satisfied_by?.length && !progress.obligations.find(o => o.id === prior.id)?.satisfied_by?.length)) {
+    const current = (input.repairCandidates ?? []).filter(candidate => repairCandidateCanReviseScope(candidate)
+      && (!input.currentPhase || candidate.source_phase === input.currentPhase));
+    if (repeatsOpenRepairScope(comparison, resolved, current)) return null;
+    throw new Error('[execution-scope] revision requires new sourced facts');
+  }
   return { scope: resolved, input: proposal };
 }

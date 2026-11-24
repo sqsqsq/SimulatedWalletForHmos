@@ -1,10 +1,10 @@
 import { isRequiredCheckGap, requiredSummaryCheckGaps, phaseCompletionProblems, resolveCurrentDisposition, renderCurrentDisposition, type CurrentDisposition } from './scripts/utils/check-disposition';
 import { readCurrentDispositionInput, readReusableCheckResult, applicableCheckFamilies, currentCompletionEvaluation, hasChangedVerifierMaterialInputs } from './scripts/utils/verify-feature-completion';
 import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest, loadPhaseEvidenceManifest, recomputeManifestAggregate } from './scripts/utils/phase-evidence-manifest';
-import { implementationChangeContext, readImplementationChangeContext } from './scripts/utils/diff-scope';
+import { implementationFiles, readImplementationReviewChanges, type ImplementationReviewChanges } from './scripts/utils/diff-scope';
 import { resolveRepairResponsibility, type RepairResponsibilityContext } from './scripts/utils/repair-responsibility';
 import { createIdentityNeutralDigestReaders } from './scripts/utils/identity-neutral-digest';
-import { validateProjectRelativePath } from './scripts/utils/project-relative-path';
+import { isInsideProjectRoot, validateProjectRelativePath } from './scripts/utils/project-relative-path';
 // ============================================================================
 // Harness 统一运行入口
 // ============================================================================
@@ -28,15 +28,18 @@ import { validateProjectRelativePath } from './scripts/utils/project-relative-pa
 import * as crypto from 'crypto';
 import * as path from 'path';
 import * as fs from 'fs';
+import { isDeepStrictEqual } from 'util';
 import { spawnSync } from 'child_process';
 import minimist from 'minimist';
-import { SpecLoader, FeatureArtifactInspection } from './scripts/utils/spec-loader';
+import { decodeTextFile, SpecLoader, FeatureArtifactInspection } from './scripts/utils/spec-loader';
 import { assembleKnowledge, knowledgeContextFiles, renderKnowledge, type KnowledgeAssembly } from './scripts/utils/knowledge-context';
 import {
   generateScriptReport,
   assembleAIPrompt,
   generateMergedReport,
   loadVerifierPromptTemplate,
+  rebuildVerifierItemReviewPrompt,
+  mergeContextFiles,
   projectScriptReportForPrompt,
   printReportToConsole,
   failScriptReportWithFatalError,
@@ -49,10 +52,12 @@ import {
   writeVerifierMaterial,
   computeMaterialSha256,
   verifierMaterialFileHash,
+  verifierUsesImplementationChanges,
+  VerifierPreimagesUnavailable,
   type VerifierMaterialView,
 } from './scripts/utils/verifier-material';
 import { assembleGoalBrief, CONSOLE_BRIEF_SECTIONS, renderGoalBrief, resolvedInputsCarryRequirement } from './scripts/utils/goal-brief';
-import { resolveFactsAbsPath } from './scripts/utils/context-facts';
+import { projectFactsForPhase, resolveFactsAbsPath } from './scripts/utils/context-facts';
 import { phaseEvidenceManifestCandidatePaths } from './scripts/utils/phase-evidence-manifest';
 import { REVALIDATE_ENV, runRevalidate } from './scripts/utils/revalidate';
 import { resolveAuthoritativeHylyreTracePath } from './scripts/utils/testing-trace-gates';
@@ -60,6 +65,7 @@ import {
   Phase,
   CheckResult,
   CheckContext,
+  ContextFileEntry,
   PhaseChecker,
   ScriptReport,
   GLOBAL_FEATURE_SENTINEL,
@@ -139,7 +145,6 @@ import {
   parseReviewIssueRows,
   reviewIssueRequiresRepair,
   buildSummaryRepairCandidates,
-  buildCurrentVerifierDiagnosisContext,
   reviewRepairVerificationContext,
   readPhaseRepairIssues,
   phaseIssuesForVerifierSubject,
@@ -148,7 +153,6 @@ import {
   repairDeclineContextFiles,
   type PhaseRepairIssues,
   extractFailureClassification,
-  findUnreadableDiagnosisChecks,
   formatRepairEvidenceRefs,
   scopeRevisionInputFromRepairCandidates,
   writeScopeRevisionInputToScriptReport,
@@ -166,7 +170,11 @@ import { phaseRequiresDevice, phaseHasNativeExecution } from './scripts/utils/ph
 import { computeProductWorktreeDigest } from './scripts/utils/worktree-digest';
 import {
   loadVerifierEvidenceForSubject,
-  loadVerifierReportTextOrNull,
+  loadCurrentVerifierEvidenceForSubject,
+  verifierReportItemGaps,
+  verdictReportTextWithOriginals,
+  planVerifierItemReview,
+  type LoadVerifierEvidenceResult,
 } from './scripts/utils/verifier-evidence';
 import {
   buildVerifierRequest,
@@ -183,7 +191,6 @@ import {
   type VerifierPlan,
   type VerifierRequestEligibility,
 } from './scripts/utils/verifier-plan';
-import { resolveVerifierSubagentDeclared } from './scripts/utils/adapter-catalog';
 import { readRunControl } from './scripts/utils/goal-run-control';
 import {
   isAgentSideGoalHarness,
@@ -224,9 +231,8 @@ import {
   resolvePhaseClosureSource,
   type RuntimeContext,
 } from './scripts/utils/runtime-policy';
-import { featureRequirementBinding, loadFeatureTrackDecl } from './scripts/utils/feature-track';
-import { inferLegacyProjectRoot, resolveDependencyPath } from './scripts/utils/project-relative-path';
-import { resolveCapabilityResolutionEntryInput } from './scripts/utils/capability-resolution-entry-input';
+import { loadFeatureTrackDecl } from './scripts/utils/feature-track';
+import { resolveFeaturePhaseCapabilityInput } from './scripts/utils/capability-resolution-entry-input';
 import { ensureFeatureExecutionScopeFrozen, applyFeatureScopeRevisionsThenMaybeComplete } from './scripts/utils/feature-execution-scope';
 import { runExplicitRequest } from './scripts/utils/request-phase';
 import { finalizePhaseClosure, executedEvidenceInputs, preparePhaseRepairFeedback, currentRequirementEvidenceSha } from './scripts/utils/phase-closure-finalizer';
@@ -234,11 +240,10 @@ import {
   assertCapabilityConsumption,
   capabilityResolutionChecks,
   collectBlockedCapabilityFacts,
-  readBoundInput,
   resolveCapabilityInputs,
   type CapabilityResolutionReport,
+  type ResolvedPhaseInputs,
 } from './scripts/utils/capability-resolution';
-import { resolveRequirementInput } from './scripts/utils/goal-manifest';
 import { assessAndRenderNextStep } from './scripts/utils/assess-renderer';
 import {
   dispatchLifecycleHooks,
@@ -376,9 +381,10 @@ const args = minimist(process.argv.slice(2), {
     'q-requirement', 'q-contract', 'q-code', 'goal-run-id', 'goal-attempt-id',
     'goal-owner-id', 'goal-owner-epoch', 'from', 'screen',
     'request-file', 'report-dir', 'project-root', 'framework-root', 'module', 'term', 'package-path', 'path', 'session-ref', 'target', 'test-target', 'allow-test-write', 'cases',
-    'requirement', 'requirement-file',
+    'requirement', 'requirement-file', 'user-deadline-at', 'adapter-model', 'adapter-provider', 'adapter-reasoning', 'adapter-model-config',
+    'frontend-request-file', 'frontend-session-id', 'frontend-request-id', 'verifier-worker-subject', 'verifier-worker-expected', 'verifier-wait-timeout-ms', 'resume-verifier',
   ],
-  boolean: ['list', 'help', 'verbose', 'clear-state', 'sync-closure', 'report-reconcile-only', 'force-device', 'revalidate', 'measure', 'summary', 'failures-only', 'skip-visual-handoff', 'skip-ui-spec', 'skip-visual-parity', 'correction-init', 'adhoc-correction', 'prepare-request'],
+  boolean: ['list', 'help', 'verbose', 'clear-state', 'sync-closure', 'report-reconcile-only', 'force-device', 'revalidate', 'measure', 'summary', 'failures-only', 'skip-visual-handoff', 'skip-ui-spec', 'skip-visual-parity', 'correction-init', 'adhoc-correction', 'prepare-request', 'execute-verifier', 'cancel-verifier'],
   alias: {
     p: 'phase',
     f: 'feature',
@@ -498,6 +504,8 @@ Harness — Spec/Harness 验证工具
   --ai-report <path>        指定 AI Harness 报告文件路径，合并到最终报告
   --adhoc-cases <text>      normalized fallback cases when testing has no acceptance.yaml
   --clear-state             丢弃当前阶段状态文件（用于明确放弃某个未闭环阶段）；一并清理残留的 .current-correction.json（no-feature 修正状态）
+  --execute-verifier        执行并等待已签的独立核验（需 --phase 与 --feature）；--verifier-wait-timeout-ms 只限制等待，--cancel-verifier 明确取消本轮
+                            --resume-verifier <invoke_id> 显式恢复已取消或过期的原调用。原任务截止后还须传新授权的 --user-deadline-at
   --sync-closure            不跑脚本 harness；仅 check-receipt + 同步 .current-phase.json / summary.json
   --revalidate              检查执行器：按链找 stale 阶段，逐阶段重跑脚本门禁并按 T4 路径闭环（需 --feature；可选 --from <phase>）
   --measure                 视觉量测（只测量不裁决）：对 ui-spec 声明元素输出 bounds/间距/重叠/与参考图差值/取色，写 device-screenshots/measure-<screen>.json（需 --feature；可选 --screen <id>；由 profile 提供）
@@ -593,6 +601,12 @@ async function main(): Promise<void> {
   }
 
   const harnessRoot = __dirname;
+  if (args['execute-verifier'] && (args['request-file'] !== undefined || args['report-dir'] !== undefined || args['prepare-request']
+    || args['session-ref'] !== undefined || args.target !== undefined || args['test-target'] !== undefined
+    || args['sync-closure'] || args['clear-state'] || args['revalidate'] || args.measure || args.list || args['report-reconcile-only']
+    || args['correction-init'] || args['adhoc-correction'] || args['force-device'])) {
+    throw new Error('--execute-verifier 只执行当前已签核验，请单独调用。');
+  }
   if (args['request-file'] !== undefined || args['report-dir'] !== undefined || args['prepare-request'] || args['session-ref'] !== undefined || args.target !== undefined || args['test-target'] !== undefined) {
     const detected = detectRepoLayout(harnessRoot);
     try {
@@ -604,6 +618,19 @@ async function main(): Promise<void> {
   const layout = typeof args['project-root'] === 'string' ? inferRepoLayout(path.resolve(args['project-root'])) : detectRepoLayout(harnessRoot);
   if (args['framework-root'] && fs.realpathSync(path.resolve(args['framework-root'])) !== fs.realpathSync(layout.frameworkRoot)) throw new Error('--framework-root 与项目 layout 不一致');
   const { projectRoot, frameworkRoot: resolvedFrameworkRoot, frameworkRel, kind: layoutKind } = layout;
+  if (args['execute-verifier']) {
+    try {
+      const phase = normalizePhaseId(String(args.phase ?? ''));
+      if (!phase || typeof args.feature !== 'string' || !args.feature.trim()) throw new Error('请同时指定 --phase 与 --feature。');
+      const { executeStandaloneStageVerifier } = require('./scripts/utils/standalone-stage-verifier') as typeof import('./scripts/utils/standalone-stage-verifier');
+      process.exitCode = await executeStandaloneStageVerifier({ projectRoot, frameworkRoot: resolvedFrameworkRoot, feature: args.feature,
+        phase, entry: __filename, argv: args, rawArgs: process.argv.slice(2) });
+    } catch (error) {
+      console.error('[verifier] ' + (error as Error).message);
+      process.exitCode = 1;
+    }
+    return;
+  }
   // D1 §6.4：前置条件从「必须有 run 身份」放开为「有 run 或有 feature 冻结记录」——
   // 无 run 的零设备 feature 同样不该被要求交 trace。
   if (args['report-reconcile-only'] && args.phase === 'testing' && typeof args.feature === 'string' && !args['sync-closure'] && !args['clear-state'] && !args.list) {
@@ -993,9 +1020,7 @@ async function main(): Promise<void> {
   // verifier 适用性解析（plan a9d4e7c2 T1 / d2f7a9c4）——**一次解析，全员消费**
   // ---------------------------------------------------------------------------
   // 生产端不再无条件装配：Step 4（ai-prompt）与 request 生成都由 plan.mode 门控。
-  // **三种运行模式解析结果完全一致**（plan d2f7a9c4）：旧口径下 adapter 能力门只作用于
-  // interactive、而 hook 在 goal/headless 一律不发布，两条规则交集为空，宿主两轮无人值守
-  // run 因此熔断。runtimeMode 现在只进 policy 与话术，不参与 verifier 能力判定。
+  // 各运行模式按同一阶段策略决定适用性。
   // 结果**不落 summary 快照**：适用性是随时可重算的判断，不是会漂移的状态。
   const verifierRuntimeCtx: RuntimeContext = {
     mode: isGoalOrchestrationEnv() || isAgentSideGoalHarness() ? 'goal' : 'interactive',
@@ -1017,8 +1042,6 @@ async function main(): Promise<void> {
     }),
     workflowVerifierPrompt: workflowVerifierPrompt(workflowSpec, phase),
     phaseDisabledByProfile: isPhaseDisabledByProfile(phase, resolvedProfile),
-    adapterHasVerifierSubagent: resolveVerifierSubagentDeclared(resolvedFrameworkRoot, fwConfigEarly.agent_adapter),
-    adapterName: fwConfigEarly.agent_adapter,
   });
 
   // Step 1: 加载 Spec
@@ -1059,34 +1082,7 @@ async function main(): Promise<void> {
     try {
       const explicitRequirement = Object.prototype.hasOwnProperty.call(args, 'requirement')
         || Object.prototype.hasOwnProperty.call(args, 'requirement-file');
-      if (process.env.MAISON_GOAL_RUN_ID?.trim() && explicitRequirement) {
-        throw new Error('Goal harness 的需求权威是已冻结 manifest；不得用 --requirement/--requirement-file 覆盖');
-      }
-      let runlessRequirement: ReturnType<typeof resolveRequirementInput> | undefined;
-      if (!process.env.MAISON_GOAL_RUN_ID?.trim() && phase === 'spec' && workflowSpec.schema_version === '1.2') {
-        const binding = featureRequirementBinding(projectRoot, feature);
-        const legacyRoot = inferLegacyProjectRoot(projectRoot, binding);
-        if (explicitRequirement) {
-          runlessRequirement = resolveRequirementInput({ requirement: args.requirement, requirementFile: args['requirement-file'], projectRoot });
-        } else {
-          const sources = binding.dependencies.filter(dep => dep.exists).map(dep => resolveDependencyPath(projectRoot, dep.path, legacyRoot));
-          if (sources.length !== 1) {
-            throw new Error('无 run inline/旧候选无法恢复原始需求正文；请用 --requirement 或 --requirement-file 重跑当前 spec harness');
-          }
-          runlessRequirement = resolveRequirementInput({ requirementFile: sources[0], projectRoot });
-        }
-        if (!runlessRequirement.text?.trim()) throw new Error('spec 阶段缺少原始需求正文');
-        readBoundInput({
-          frameworkRoot: resolvedFrameworkRoot, projectRoot, feature, phase: 'spec', track: 'full',
-          requirement: runlessRequirement.text,
-          // Legacy/inline candidates bind text only. An explicit file is still a valid way to
-          // re-supply that text; source provenance applies to this invocation, not retroactively
-          // to the frozen candidate.
-          requirementSourceFiles: binding.dependencies.length ? runlessRequirement.sources : [],
-          inputContext: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] },
-        }, binding, legacyRoot);
-      }
-      const capabilityInput = resolveCapabilityResolutionEntryInput({
+      const capabilityInput = resolveFeaturePhaseCapabilityInput({
         frameworkRoot: resolvedFrameworkRoot,
         projectRoot,
         feature,
@@ -1095,8 +1091,7 @@ async function main(): Promise<void> {
         goalRunId: process.env.MAISON_GOAL_RUN_ID,
         goalAttemptId: process.env.MAISON_GOAL_ATTEMPT,
         explicitAdhocCases: typeof args['adhoc-cases'] === 'string' ? args['adhoc-cases'] : undefined,
-        ...(runlessRequirement?.text ? { requirement: runlessRequirement.text, requirementSourceFiles: runlessRequirement.sources } : {}),
-      });
+      }, workflowSpec, explicitRequirement ? { requirement: args.requirement, requirementFile: args['requirement-file'] } : undefined);
       const resolution = resolveCapabilityInputs({
         frameworkRoot: resolvedFrameworkRoot,
         projectRoot,
@@ -1212,8 +1207,9 @@ async function main(): Promise<void> {
     const reused = readReusableCheckResult({ projectRoot, feature, phase, frameworkRoot: resolvedFrameworkRoot,
       runId: process.env.MAISON_GOAL_RUN_ID?.trim(), resolvedInputs, factsContext,
       deviceRequired: phaseRequiresDevice(phase, resolvedProfile) || phaseHasNativeExecution(phase, resolvedProfile) });
-    if (reused && !(verifierPlan.mode === 'enabled' && hasChangedVerifierMaterialInputs({ projectRoot, feature, phase,
-      frameworkRoot: resolvedFrameworkRoot, summary: reused.summary }))) {
+    if (reused && !hasChangedVerifierMaterialInputs({ projectRoot, feature, phase, resolvedInputs, factsContext,
+      runId: process.env.MAISON_GOAL_RUN_ID?.trim(), frameworkRoot: resolvedFrameworkRoot, summary: reused.summary,
+      checkFiles: verifierPlan.mode === 'enabled' })) {
       const feedback = preparePhaseRepairFeedback({ projectRoot, feature, phase, frameworkRoot: resolvedFrameworkRoot,
         goalRunId: process.env.MAISON_GOAL_RUN_ID?.trim(), resolvedInputs });
       const currentResult = feedback?.repairCandidates === undefined ? reused
@@ -1225,7 +1221,8 @@ async function main(): Promise<void> {
         console.log(`CHECK_RESULT reused=${path.join(featurePhaseReportsDir(projectRoot, feature, phase, resolvedFrameworkRoot), 'script-report.json')}`);
         printStableSummary(summary, currentCompletionEvaluation({ projectRoot, feature, frameworkRoot: resolvedFrameworkRoot,
           chain: [phase], runId: process.env.MAISON_GOAL_RUN_ID?.trim(), currentResults: [currentResult] }, disposition));
-        console.log(buildNextLine(summary, phase, feature, { currentDisposition: disposition }));
+        console.log(buildNextLine(summary, phase, feature, { currentDisposition: disposition,
+          outerGoalRerun: outerGoalHarnessWillRerun(projectRoot, feature) }));
         process.exit(phaseCompletionProblems(disposition, [phase]).length ? 1 : 0);
       }
     }
@@ -1425,7 +1422,7 @@ async function main(): Promise<void> {
   console.log('\n📊 Step 3: 生成脚本报告...');
   const scriptReport = generateScriptReport(harnessRoot, phase, feature, projectRoot, checks, resolvedFrameworkRoot, capabilityReport);
   // plan f7045213 §5：阶段结论在内存求值一次，控制台、verifier 资格、合并报告与 summary 写入器共用。
-  const scriptPhaseVerdict = resolvePhaseVerdict(projectRoot, scriptReport);
+  const scriptPhaseVerdict = resolvePhaseVerdict(projectRoot, scriptReport, resolvedFrameworkRoot);
   printReportToConsole(scriptReport, {
     failuresOnly: Boolean(args['failures-only']) || !Boolean(args.verbose),
     verdict: scriptPhaseVerdict.verdict,
@@ -1464,75 +1461,19 @@ async function main(): Promise<void> {
       if (process.env.HARNESS_FORCE_STEP4_FAIL) {
         throw new TypeError('relativePath.endsWith is not a function (simulated by HARNESS_FORCE_STEP4_FAIL)');
       }
-      const knowledge = assembleKnowledge({ projectRoot, frameworkRoot: resolvedFrameworkRoot, phase,
-        subject: phaseIsGlobal ? 'global' : 'feature', role: 'verifier', contracts: featureSpec.contracts,
-        requirement: context.resolvedInputs?.values.requirement?.state === 'resolved'
-          ? String(context.resolvedInputs.values.requirement.value) : undefined,
-        extensionBundle: resolvedProfile.extensionBundle });
-      const reviewRunId = process.env.MAISON_GOAL_RUN_ID?.trim();
-      const actualDiff = readImplementationChangeContext(projectRoot, feature, reviewRunId, featureSpec.contracts?.modules);
-      const contextFiles = collectContextFiles(specLoader, layout, phase, feature, featureSpec, {
-        actualChanges: actualDiff,
-        knowledge,
-        resolvedInputs: context.resolvedInputs,
-        factsContext: context.factsContext,
-        adapterMultimodal: context.adapterMultimodal,
-        adapterImageInput: context.adapterImageInput,
-        specVisualSources: context.specVisualSources,
+      const assembled = assembleVerifierPhasePrompt(harnessRoot, layout, specLoader, context, scriptReport, {
+        phaseIsGlobal, phaseIssues: scriptPhaseVerdict.phaseIssues ?? null, resolvedProfile, lifecycleFragments, goalBrief,
+        verifierPromptRel: verifierPlan.verifier_prompt ?? undefined,
+        repairDiagnosis: verifierEligibility.kind === 'repair_diagnosis'
+          ? { failedCheckIds: verifierEligibility.diagnosticCheckIds, reason: verifierEligibility.reason } : undefined,
       });
-      const specContent = YAML.stringify(phaseRule);
-      // 实例扩展输入（manifest 1.1）同时进 verifier prompt 与审前材料：改 knowledge / audience / 绑定 → 换 subject。
-      const extensionInstructions = knowledge.extensionInstructions;
-      // 已解析输入里已有需求正文时简报不重复它（§3.2 装配去重）。
-      const goalBriefText = goalBrief
-        ? renderGoalBrief(goalBrief, { requirementInContext: resolvedInputsCarryRequirement(context.resolvedInputs) })
-        : '';
-
-      verifierMaterial = buildVerifierMaterialView({ deviceTestEvidence: context.deviceTestEvidence, resolvedInputs, factsContext,
-        projectRoot, feature, phase, frameworkRoot: resolvedFrameworkRoot,
-        gateFingerprint: computeGateFingerprint(resolvedFrameworkRoot, phase), phaseRuleText: specContent,
-        templateText: loadVerifierPromptTemplate(harnessRoot, phase, resolvedProfile, verifierPlan.verifier_prompt ?? undefined),
-        checks: scriptReport.checks, contextFiles, lifecycleFragments, extensionInstructions, goalBriefText });
-      const { findPriorVerifierEvidence } = require('./scripts/utils/verifier-evidence') as typeof import('./scripts/utils/verifier-evidence');
-      const previousReport = findPriorVerifierEvidence(projectRoot, feature, phase, { frameworkRoot: resolvedFrameworkRoot, resolvedInputs });
-      const previousMaterial = previousReport ? readVerifierMaterialOrNull(path.join(projectRoot, path.dirname(previousReport.md_path_rel)), previousReport.subject_id) : null;
-      const reviewIssues = readPhaseRepairIssues(projectRoot, feature, phase, { frameworkRoot: resolvedFrameworkRoot, runId: reviewRunId });
-      const reviewContext = independentVerificationContext({ previousReport, previousMaterial, currentMaterial: verifierMaterial,
-        actualDiff, openFindings: reviewIssues, declineContext: repairDeclineContextFiles(projectRoot, feature, reviewRunId),
-        affectedDependencies: Object.values(resolvedInputs?.values ?? {}).flatMap(value => value.state === 'resolved' ? value.binding.dependencies : value.attempts.flatMap(attempt => attempt.dependencies)),
-        testStrengthCheck: scriptReport.checks.find(check => check.id === 'coding_existing_test_preserved') });
-
-      assembleAIPrompt(
-        harnessRoot,
-        projectRoot,
-        phase,
-        feature,
-        [...contextFiles, ...reviewContext],
-        JSON.stringify(projectScriptReportForPrompt(scriptReport), null, 2),
-        specContent,
-        resolvedProfile,
-        lifecycleFragments,
-        resolvedFrameworkRoot,
-        {
-          imageInput: context.adapterImageInput,
-          extensionInstructions,
-          // 装配用哪个模板由 workflow 声明说了算（plan a9d4e7c2 P1-1）——
-          // enabled 时 resolveVerifierPlan 必带出该路径。
-          verifierPromptRel: verifierPlan.verifier_prompt ?? undefined,
-          // D1/D2（plan 3a7f9c12）：负面分支的诊断说明——内存选项，不新增 request 字段
-          // 或持久模式。verifier 仍读**原始 FAIL 报告**，不投影成假 PASS。
-          repairDiagnosis:
-            verifierEligibility.kind === 'repair_diagnosis'
-              ? { failedCheckIds: verifierEligibility.diagnosticCheckIds, reason: verifierEligibility.reason }
-              : undefined,
-          goalBrief: goalBriefText,
-        },
-      );
+      verifierMaterial = assembled.material;
       console.log(`   ✓ AI prompt 已写入 ${reportDirRel}/ai-prompt.md`);
     } catch (err) {
       const e = err as Error;
       console.error(`   ✗ Step 4 组装 AI Harness prompt 失败: ${e.message}`);
-      finalReport = failScriptReportWithFatalError(scriptReport, 'assemble_ai_prompt', e, resolvedFrameworkRoot);
+      finalReport = failScriptReportWithFatalError(scriptReport, 'assemble_ai_prompt', e, resolvedFrameworkRoot,
+        e instanceof VerifierPreimagesUnavailable ? 'verification_evidence_gap' : undefined);
     }
   }
 
@@ -1695,9 +1636,10 @@ async function main(): Promise<void> {
   // 最终结果
   console.log('\n' + '='.repeat(60));
   // plan f7045213 §5：最终控制台与退出码读最后一次写入的 summary（共享结论），不读脚本报告的 legacy 结论。
+  const outerGoalRerun = outerGoalHarnessWillRerun(projectRoot, String(feature));
   if (runSummary.verdict === 'PASS') {
     console.log('  ✅ 脚本 Harness 检查通过');
-    for (const line of buildPassGuidanceLines(runSummary, verifierPlan, phase, String(feature))) {
+    for (const line of buildPassGuidanceLines(runSummary, verifierPlan, phase, String(feature), outerGoalRerun)) {
       console.log(line);
     }
   } else if (runSummary.verdict === 'INCOMPLETE') {
@@ -1717,7 +1659,7 @@ async function main(): Promise<void> {
   }
   console.log(
     `  ${buildNextLine(runSummary, phase, String(feature), {
-      outerGoalRerun: outerGoalHarnessWillRerun(projectRoot, String(feature)),
+      outerGoalRerun,
       currentDisposition: nextDisposition,
       responsibility: { projectRoot, frameworkRoot: resolvedFrameworkRoot, feature: String(feature), runId: runSummary.run_id },
     })}`,
@@ -1858,7 +1800,7 @@ export interface PhaseVerdict {
   lattice: ReturnType<typeof deriveSummaryVerdictLattice>;
 }
 
-export function resolvePhaseVerdict(projectRoot: string, report: ScriptReport): PhaseVerdict {
+export function resolvePhaseVerdict(projectRoot: string, report: ScriptReport, frameworkRoot?: string): PhaseVerdict {
   const lattice = deriveSummaryVerdictLattice(
     report.checks,
     resolveAxisApplicability(projectRoot, report.feature, report.phase),
@@ -1872,7 +1814,7 @@ export function resolvePhaseVerdict(projectRoot: string, report: ScriptReport): 
     post: lattice.projected_verdict,
     legacy,
   });
-  return { report, verdict, legacy, mismatch, lattice, phaseIssues: readPhaseRepairIssues(projectRoot, report.feature, report.phase) };
+  return { report, verdict, legacy, mismatch, lattice, phaseIssues: readPhaseRepairIssues(projectRoot, report.feature, report.phase, { frameworkRoot }) };
 }
 
 /**
@@ -2170,22 +2112,6 @@ export function writeRunSummaryBase(
   // 通用投影只转述 capability/input/attempt/dependency；requirement 专属话术只来自 derive.requirement
   // 自己的 attempt.detail（经 fact.unresolved[].detail 原样带出），此处不硬编码。
   readinessSignals.push(...capabilityBlockedReadinessSignals(report));
-  // plan d2f7a9c4：当前 adapter 起不了 verifier 子代理 → 本阶段没有独立语义审查。
-  // 这是环境事实、不阻断闭环，但**必须写进 summary**（D0 第 4 条：可以不复审，不能把
-  // "未复审"描述成"已 PASS"）。控制台 WARN 会随 run 消失，readiness_signals 才是持久面。
-  if (opts?.verifierPlan?.reason === 'adapter_has_no_reviewer') {
-    readinessSignals.push({
-      id: 'verifier_not_reviewed',
-      // status=unknown 而非 incomplete：incomplete 会让 decideNextAction 落
-      // complete_readiness_warnings_then_continue，把调用方指去"完成"一件他完不成的事
-      // （工具起不了子代理，不是待办的准备项）。这条轴的实情是**没有结论**，正是 unknown。
-      status: 'unknown',
-      message:
-        '本阶段未经独立 verifier 语义审查：当前 adapter 未登记 verifier_subagent' +
-        '（agents/<adapter>/adapter.yaml）。脚本门禁结论照常有效，闭环不因此阻断；' +
-        '如需语义审查，改用已登记的 adapter 重跑本阶段。',
-    });
-  }
   // plan 07a41ec6 T8：--revalidate 只重跑脚本门禁；语义 verifier 不重审——如实标注，不宣称完整语义再审。
   if (process.env[REVALIDATE_ENV] === '1') {
     readinessSignals.push({
@@ -2290,29 +2216,21 @@ export function writeRunSummaryBase(
     ? null
     : resolveCarriedVerifierSubject(projectRoot, report, frameworkRoot, opts?.verifierPlan?.mode, gateFingerprint ?? null, opts?.resolvedInputs, opts?.factsContext);
   const anchoredSubjectId = verifierIssued?.subjectId ?? carriedVerifierSubjectId;
-  const verifierEvidence = resolveVerifierEvidenceState(
-    projectRoot,
-    report,
-    frameworkRoot,
-    opts?.verifierPlan?.mode,
-    anchoredSubjectId,
-    carriedVerifierSubjectId !== null,
-  );
+  const loadedVerifier = anchoredSubjectId ? loadCurrentVerifierEvidenceForSubject(projectRoot, report.feature, report.phase,
+    anchoredSubjectId, { frameworkRoot, resolvedInputs: opts?.resolvedInputs }) : null;
+  const verifierEvidence = resolveVerifierEvidenceState(opts?.verifierPlan?.mode, loadedVerifier, carriedVerifierSubjectId !== null);
   // plan a9d4e7c2 P1-5：锚到本轮刚签发的 subject（不传 subjectId 会读到**上一轮**的
   // 磁盘 summary 现值）。此处提到 candidate 组装之前是因为 D3/D4 的正文可采信性判定
   // 与候选组装读的必须是同一份正文。S0b：沿用态锚到沿用的 subject（同样是显式 subject，
   // 不是"读磁盘现值"）。
-  const verifierReportText = loadVerifierReportTextOrNull(
-    projectRoot,
-    report.feature,
-    report.phase,
-    { frameworkRoot, subjectId: anchoredSubjectId },
-  );
   const phaseIssues = phaseVerdict.phaseIssues;
   const runId = process.env.MAISON_GOAL_RUN_ID?.trim();
+  const verifierReportText = loadedVerifier?.ok ? verdictReportTextWithOriginals({ projectRoot, feature: report.feature,
+    phase: report.phase, frameworkRoot, runId, currentSubject: anchoredSubjectId ?? undefined, resolvedInputs: opts?.resolvedInputs }, loadedVerifier.evidence) : null;
   const currentEvidence = report.phase === 'spec' || report.phase === 'plan' ? (() => {
     const authorityReaders = createIdentityNeutralDigestReaders();
-    const issues = readPhaseRepairIssues(projectRoot, report.feature, report.phase, { subjectId: anchoredSubjectId, frameworkRoot, runId });
+    const issueSubjectId = loadedVerifier?.ok ? loadedVerifier.evidence.subject_id : anchoredSubjectId;
+    const issues = readPhaseRepairIssues(projectRoot, report.feature, report.phase, { subjectId: issueSubjectId, frameworkRoot, runId });
     return { phaseIssues: issues, authorityReaders, acceptanceEvidence: collectCurrentAcceptanceEvidence({
       projectRoot, feature: report.feature, phase: report.phase, frameworkRoot, subjectId: anchoredSubjectId,
       phaseIssues: issues, runId, authorityReaders,
@@ -2327,13 +2245,11 @@ export function writeRunSummaryBase(
   // （表格/YAML 缺项、冲突、占位）时**不得**落回"先修原始 blocker"——那条路让重复
   // harness 反复复用同一份坏正文、恒零候选。仍走 run_verifier_for_repair（NEXT 在该
   // 分支里给出"先按原始回复重写报告"的出口），不新增动作字符串/状态机。
-  const diagnosisContext = buildCurrentVerifierDiagnosisContext({ projectRoot, feature: report.feature, phase: report.phase,
-    frameworkRoot, runId: process.env.MAISON_GOAL_RUN_ID?.trim(), subjectId: anchoredSubjectId,
-    phaseIssues: verifiedPhaseIssues ?? phaseIssues, verifierSubjectCurrent: carriedVerifierSubjectId === null });
-  const unreadableDiagnosisChecks =
-    (eligibility.kind === 'repair_diagnosis' || carriedVerifierSubjectId !== null || report.phase === 'spec' || report.phase === 'plan') && verifierReportText
-      ? findUnreadableDiagnosisChecks(report.phase, verifierReportText, diagnosisContext)
-      : [];
+  const unreadableDiagnosisChecks = loadedVerifier?.ok ? verifierReportItemGaps({ projectRoot, feature: report.feature,
+    phase: report.phase, frameworkRoot, runId, currentSubject: anchoredSubjectId ?? undefined,
+    phaseIssues: verifiedPhaseIssues ?? phaseIssues, resolvedInputs: opts?.resolvedInputs,
+    diagnosisRequired: eligibility.kind === 'repair_diagnosis' || carriedVerifierSubjectId !== null,
+    verifierSubjectCurrent: carriedVerifierSubjectId === null }, loadedVerifier.evidence) : [];
   if (unreadableDiagnosisChecks.length > 0) {
     console.warn(
       `   ⚠ [verifier-report] 诊断轮正文读不出必需检查项（${unreadableDiagnosisChecks.join('、')}）——` +
@@ -2347,8 +2263,8 @@ export function writeRunSummaryBase(
       message: [
         ...(unreadableDiagnosisChecks.length > 0 ? [`逐条诊断：${unreadableDiagnosisChecks.join('；')}`] : []),
         verifierIssued ? (report.phase === 'spec' || report.phase === 'plan'
-          ? '已签发当前 request：请原独立 verifier 在同次材料中补核具体验收、修复目标、事实与责任；不能仅重抄缺字段的旧报告。'
-          : '已签发当前 request：按原回复修正转录，确无有效回复才重投当前 verifier。')
+          ? '已签发当前 request：本轮须补核具体验收、修复目标、事实与责任。'
+          : '已签发当前 request：运行时先从原始回复恢复报告，确无可用原件再补核。')
           : `当前 verifier request 未签发：${eligibility.reason} `
             + (carriedVerifierSubjectId ? `沿用 subject=${carriedVerifierSubjectId}，保留旧负面结论与拒修依据。` : '')
             + '先修当前阶段可合法修复的资格缺口；若能力已禁用，不自动改配置，需新的逐条判断时用既有配置入口启用。真实 FAIL/open 不由人签放行。',
@@ -2495,7 +2411,8 @@ export function writeRunSummaryBase(
   }
   opts?.onCurrentDisposition?.(currentDisposition);
   summary.next_action = decideNextAction(report, blockers, runStatuses, blockingSkips, readinessSignals, {
-    effectiveVerdict, capabilityBlocked: hasBlocked, verifierMode: opts?.verifierPlan?.mode, verifierEvidence,
+    effectiveVerdict, capabilityBlocked: hasBlocked, verifierMode: opts?.verifierPlan?.mode,
+    verifierEvidence: verifierEvidence === 'pass' && unreadableDiagnosisChecks.length ? 'invalid' : verifierEvidence,
     currentDisposition,
     repairDiagnosisNeedsVerifier: eligibility.kind === 'repair_diagnosis' && Boolean(verifierIssued)
       && (verifierEvidence === 'absent' || verifierEvidence === 'invalid' || unreadableDiagnosisChecks.length > 0),
@@ -2518,11 +2435,8 @@ export function writeRunSummaryBase(
  * 把旧 subject 的结论算到新 run 头上。签发失败（无 subject）就诚实返回 absent。
  */
 function resolveVerifierEvidenceState(
-  projectRoot: string,
-  report: ScriptReport,
-  frameworkRoot: string,
   mode: 'disabled' | 'enabled' | undefined,
-  issuedSubjectId: string | null,
+  loaded: LoadVerifierEvidenceResult | null,
   /**
    * S0b（plan 7b3e9a15 D1）：本轮 policy off，但沿用到了一份**已验真的非 PASS** 报告
    * （由 resolveCarriedVerifierSubject 判定）。此时 mode 仍是 disabled，却必须报 'fail'。
@@ -2530,14 +2444,7 @@ function resolveVerifierEvidenceState(
   carriedFail = false,
 ): 'not_applicable' | 'absent' | 'pass' | 'fail' | 'invalid' {
   if (mode !== 'enabled') return carriedFail ? 'fail' : 'not_applicable';
-  if (!issuedSubjectId) return 'absent';
-  const loaded = loadVerifierEvidenceForSubject(
-    projectRoot,
-    report.feature,
-    report.phase,
-    issuedSubjectId,
-    { frameworkRoot },
-  );
+  if (!loaded) return 'absent';
   if (loaded.ok) return loaded.evidence.verdict === 'PASS' ? 'pass' : 'fail';
   return loaded.code === 'report_missing' ? 'absent' : 'invalid';
 }
@@ -2588,8 +2495,10 @@ function resolveCarriedVerifierSubject(
   // 材料视图缺席（凭证由更早的、还不落材料视图的世代签发）→ 无从核实身份，不沿用。
   const priorMaterial = readVerifierMaterialOrNull(dir, subjectId);
   if (!priorMaterial) return null;
-  if (
-    !carriedMaterialStillCurrent(
+  const loaded = loadVerifierEvidenceForSubject(projectRoot, report.feature, report.phase, subjectId, { frameworkRoot });
+  if (!loaded.ok || loaded.evidence.verdict === 'PASS') return null;
+  try {
+    if (!carriedMaterialStillCurrent(
       priorMaterial,
       // policy 无关的材料面：manifest 文件 + gate + 脚本报告投影。取不到的三面传空值——
       // 它们不参与比较（carriedMaterialStillCurrent 只读上面三面）。
@@ -2616,16 +2525,13 @@ function resolveCarriedVerifierSubject(
         // 下两边必须算出同一个 reports 目录，否则归属判定分叉——codex 三轮 medium）。
         frameworkRoot,
       }),
-    )
-  ) {
-    return null;
+    )) return null;
+  } catch (error) {
+    if (!(error instanceof VerifierPreimagesUnavailable)) throw error;
+    // An unavailable original cannot prove equivalence or lift a recorded negative conclusion.
+    console.warn(`   ⚠ [verifier] ${error.message} 仅保留旧否决 ${subjectId.slice(0, 12)}…`);
+    return subjectId;
   }
-  const loaded = loadVerifierEvidenceForSubject(projectRoot, report.feature, report.phase, subjectId, {
-    frameworkRoot,
-  });
-  // 只沿用**已验真的负面结论**：PASS 不需要沿用（policy off 本就不要求这条轴），
-  // 无效/缺席同样落回零要求——balanced 买到的正是"没有报告时不阻断"。
-  if (!loaded.ok || loaded.evidence.verdict === 'PASS') return null;
   console.log(
     `   ℹ [verifier] policy off，但当前 subject ${subjectId.slice(0, 12)}… 已有有效 ` +
       `verdict=${loaded.evidence.verdict} 报告（${loaded.evidence.md_path_rel}）——沿用该否决，不签发新凭证。`,
@@ -2672,8 +2578,7 @@ function carriedMaterialStillCurrent(
  * plan a9d4e7c2 T2：生成本轮 run 的 verifier **调用凭证**（短 request JSON）。
  *
  * 只在 `resolveVerifierPlan` 判 enabled 时调用。产物两样：
- *   · `verifier.request.<subject>.json`——主 agent 把它**整段**当 Task prompt 投给
- *     verifier；verifier 按 `prompt_path` 自己 Read 磁盘 ai-prompt.md（大文件不过传输面）；
+ *   · `verifier.request.<subject>.json`——独立核验执行者按 `prompt_path` 读取已签提示；
  *   · `summary.verifier_subject_id` / `summary.verifier_request`——闭环侧的身份锚。
  *
  * subject 按**实际审查材料**寻址：`prompt_sha256` 直接哈希磁盘 ai-prompt.md 原文，
@@ -2734,6 +2639,7 @@ function issueVerifierRequest(input: {
 export function refreshVerifierRequestContext(input: {
   projectRoot: string; frameworkRoot: string; feature: string; phase: string; runId: string;
   additionalContextFiles?: readonly { label: string; content: string }[];
+  resolvedInputs?: ResolvedPhaseInputs;
 }): HarnessRunSummary | null {
   const dir = featurePhaseReportsDir(input.projectRoot, input.feature, input.phase, input.frameworkRoot);
   const summaryPath = path.join(dir, 'summary.json');
@@ -2761,8 +2667,15 @@ export function refreshVerifierRequestContext(input: {
   current.material_sha256 = computeMaterialSha256(current);
   const originalPrompt = fs.readFileSync(path.resolve(input.projectRoot,
     validateProjectRelativePath(input.projectRoot, request.prompt_path, 'verifier prompt')), 'utf8');
+  const verifierPrompt = workflowVerifierPrompt(resolveWorkflowSpec(input.projectRoot, { frameworkRoot: input.frameworkRoot }), input.phase);
+  const profile = loadResolvedProfile(input.projectRoot, loadFrameworkConfig(input.projectRoot), input.frameworkRoot);
+  const templateText = verifierPrompt
+    ? loadVerifierPromptTemplate(path.join(input.frameworkRoot, 'harness'), input.phase, profile, verifierPrompt) : originalPrompt;
+  const itemReview = planVerifierItemReview({ ...input, currentMaterial: current, templateText,
+    diagnosisRequired: summary.readiness_signals.some(signal => signal.id === 'verifier_repair_diagnosis' && signal.status === 'incomplete') });
+  const scopedPrompt = verifierPrompt ? rebuildVerifierItemReviewPrompt(input.projectRoot, originalPrompt, templateText, itemReview, input.feature) : originalPrompt;
   const promptAbs = path.join(dir, `ai-prompt.${current.material_sha256}.md`);
-  fs.writeFileSync(promptAbs, originalPrompt + '\n\n## 当前作者论据原件\n'
+  fs.writeFileSync(promptAbs, scopedPrompt + '\n\n## 当前作者论据原件\n'
     + context.map(entry => `### ${entry.label}\n${entry.content}`).join('\n\n') + '\n', 'utf8');
   const report = JSON.parse(fs.readFileSync(path.join(dir, 'script-report.json'), 'utf8')) as ScriptReport;
   const issued = issueVerifierRequest({ dir, report, projectRoot: input.projectRoot, material: current, promptAbs,
@@ -2915,24 +2828,42 @@ function printStableSummary(summary: HarnessRunSummary, evaluation?: import('./s
  *
  * 抽成纯函数是为了让"控制台说了什么"可被断言——只断 summary 字段挡不住渲染层自说自话。
  */
+function stageVerifierGuidance(
+  summary: { verdict?: string; verifier_request?: string; verifier_report?: string;
+    readiness_signals?: ReadonlyArray<{ id: string; message: string }> },
+  phase: string,
+  feature: string,
+  outerGoalRerun = false,
+): string {
+  const request = summary.verifier_request ?? 'summary.verifier_request';
+  const report = summary.verifier_report ?? 'summary.verifier_report';
+  const result = `当前检查=${summary.verdict ?? 'PASS'}，request=${request}，报告目标=${report}`;
+  const diagnosis = summary.readiness_signals?.find(signal => signal.id === 'verifier_repair_diagnosis')?.message;
+  const detail = diagnosis ? ' ' + diagnosis : '';
+  if (outerGoalRerun) {
+    return result + '。结束本轮并交回检查状态与两个路径，由当前 Goal runtime 派独立核验并重算处置。' + detail;
+  }
+  return result + '。按当前客户端绑定本轮模型，执行并等待：npx ts-node harness-runner.ts --execute-verifier --phase '
+    + phase + ' --feature ' + feature + '。' + detail;
+}
+
+const STAGE_VERIFIER_ACTIONS = ['run_verifier_then_receipt', 'rerun_verifier_with_current_request', 'run_verifier_for_repair'];
+
 export function buildPassGuidanceLines(
   summary: Pick<HarnessRunSummary, 'next_action' | 'verifier_request' | 'verifier_subject_id' | 'verifier_report'>,
   plan: Pick<VerifierPlan, 'message'>,
   phase: string,
   feature: string,
+  outerGoalRerun = false,
 ): string[] {
-  const syncHint = `  📝 下一步：按 summary/verifier/policy 收口 → npx ts-node harness-runner.ts --sync-closure --phase ${phase} --feature ${feature}`;
+  const syncHint = outerGoalRerun
+    ? '  📝 工作完成后回传结果与证据路径，由 Goal runtime 正式检查和收口。'
+    : '  📝 下一步：按 summary/verifier/policy 收口 → npx ts-node harness-runner.ts --sync-closure --phase ' + phase + ' --feature ' + feature;
   switch (summary.next_action) {
     case 'run_verifier_then_receipt':
     case 'rerun_verifier_with_current_request':
-      return [
-        '  📤 verifier 已启用，三步（plan d2f7a9c4）：',
-        `     ① 把这份 request JSON **整段**作为 Task prompt 投给 subagent_type=verifier：${summary.verifier_request ?? '(本轮未生成 request，请检查 Step 4 是否失败)'}`,
-        '        （verifier 自行 Read 其中的 prompt_path；不要投递 ai-prompt.md 全文，也不要改写任何字段）',
-        `     ② 把它的回复**原样全文**写入：${summary.verifier_report ?? '(本轮未生成报告路径)'}`,
-        '        （不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入）',
-        '     ③ 跑 check-receipt 收口',
-      ];
+    case 'run_verifier_for_repair':
+      return [`  📤 ${stageVerifierGuidance(summary, phase, feature, outerGoalRerun)}`];
     case 'fill_receipt_then_sync_closure':
       return [
         summary.verifier_subject_id
@@ -2978,23 +2909,21 @@ export function buildNextLine(
     responsibility?: RepairResponsibilityContext;
   },
 ): string {
-  if (opts?.currentDisposition) {
-    const disposition = opts.currentDisposition;
-    const verification = disposition.completionBlocking.some(problem => problem.action === 'verify') && summary.verifier_request
-      ? `；独立核验读取 ${summary.verifier_request}，原文结果写入 ${summary.verifier_report ?? '本次核验原件'}，由机器接收，不由作者签通过` : '';
-    return `NEXT: ${renderCurrentDisposition(disposition).split('\n').join('；')}${verification}`;
+  const disposition = opts?.currentDisposition;
+  const pendingVerifier = disposition?.completionBlocking.some(problem => problem.phase === phase
+    && problem.id === 'attestation_present' && problem.action === 'verify');
+  if (summary.verifier_request && (pendingVerifier || !disposition && STAGE_VERIFIER_ACTIONS.includes(summary.next_action ?? ''))) {
+    const route = stageVerifierGuidance(summary, phase, feature, opts?.outerGoalRerun);
+    return 'NEXT: ' + route + (disposition ? ' ' + renderCurrentDisposition(disposition).split('\n').join('；') : '');
   }
+  if (disposition) return 'NEXT: ' + renderCurrentDisposition(disposition).split('\n').join('；');
   const rerun = `然后重跑：npx ts-node harness-runner.ts --phase ${phase} --feature ${feature}`;
   const firstLine = (s: string | undefined): string => (s ?? '').split(/\r?\n/)[0].trim();
   const tasks = summary.repair_candidates ?? [];
   if (tasks.length && ['fix_verifier_findings_then_rerun_harness', 'fill_receipt_then_sync_closure', 'phase_closed_wait_user'].includes(summary.next_action ?? '')) {
     const work = tasks.map(candidate => {
-      const problems = opts?.currentDisposition?.completionBlocking.filter(problem => problem.id === `open_finding:${candidate.id}`
-        && (!candidate.source_phase || (problem.source_phase ?? problem.phase) === candidate.source_phase)) ?? [];
-      const resolved = problems.length === 1 ? undefined : resolveRepairResponsibility({ ...opts?.responsibility, currentPhase: phase,
-        target: candidate });
-      const problem = problems.length === 1 ? problems[0] : problems.find(item => item.owner === resolved?.owner);
-      return { candidate, owner: problem ? (problem.owner ?? problem.phase) : resolved?.owner, action: problem?.action ?? 'repair' };
+      const resolved = resolveRepairResponsibility({ ...opts?.responsibility, currentPhase: phase, target: candidate });
+      return { candidate, owner: resolved.owner, action: 'repair' };
     });
     const describe = ({ candidate, owner }: typeof work[number]): string => `${candidate.id}（责任=${owner ?? '待既有责任链确定'}）：${candidate.summary}；产物=${candidate.files.join(', ') || '见原报告'}；依据=${formatRepairEvidenceRefs(candidate).join(' ') || summary.verifier_report || summary.script_report || '见上述逐项原始引用'}`;
     const owned = work.filter(item => item.owner === phase && item.action === 'repair');
@@ -3010,9 +2939,7 @@ export function buildNextLine(
         return `${blocker.id}${hint ? `（${hint}）` : ''}`;
       }).join('；')}` : '',
     ].filter(Boolean);
-    const ownedProblem = opts?.currentDisposition?.completionBlocking.some(problem => (problem.owner ?? problem.phase) === phase
-      && problem.action === 'repair' && !problem.id.startsWith('open_finding:'));
-    if (owned.length || ownedProblem) {
+    if (owned.length) {
       details.push('按原报告与验收修复本职责产物，由原验证方复验后再闭环', opts?.outerGoalRerun
         ? '工作完成后回传结果与证据路径，由 goal runtime 正式 gate 和统一收口' : rerun);
     } else if (summary.verdict !== 'PASS' || summary.next_action === 'fix_verifier_findings_then_rerun_harness' || verification.length) {
@@ -3034,24 +2961,6 @@ export function buildNextLine(
   if (diagnosis && !summary.verifier_request && summary.verdict !== 'PASS') {
     return `NEXT: ${diagnosis}；具体检查与原报告见 ${summary.script_report ?? 'script-report.json'}；${rerun}。`;
   }
-  // D1/D2：产品 FAIL 但失败可诊断——必须先于"非 PASS 都先修 blocker"的通用分支。
-  // 一行里给齐三样：投哪份 request、报告写到哪、写完之后干什么。
-  if (summary.next_action === 'run_verifier_for_repair') {
-    const after = opts?.outerGoalRerun
-      ? '写完即结束本轮并回传当前 FAIL 与这两个路径（goal 外层 runner 会重跑 harness 并重算回修候选，你不要自己再跑一次）'
-      : `写完后重跑一次本阶段 harness 以重算回修候选：npx ts-node harness-runner.ts --phase ${phase} --feature ${feature}`;
-    return (
-      (summary.verdict === 'PASS' ? 'NEXT: 原始检查 PASS，但当前发现仍须独立核实——' : 'NEXT: 本轮产品 FAIL 但失败可诊断（脚本 FAIL 仍签发了 verifier request）——') +
-      `把 ${summary.verifier_request ?? 'verifier.request.<subject>.json'} 整段投给 subagent_type=verifier，同步等它返回；` +
-      `把回复原样全文写入 ${summary.verifier_report ?? 'verifier.report.<subject>.md'}；${after}。` +
-      // D3/D4：报告已在但读不出必需检查项时，出路是**修报告格式**而不是改产品——
-      // 上面的 warn 已点名是哪几项；重投 request 只是没有原始回复时的兜底。
-      '若该报告已存在却读不出必需检查项（缺项/状态冲突/占位符），先按 verifier 的原始回复重写这一份，' +
-      '确无有效回复才重投 request——不要因此去改产品。' +
-      (diagnosis ? `${diagnosis}。` : '') +
-      '原始检查结论保留；当前核实完成前保持 open，先别改产品，等逐条确认。'
-    );
-  }
   if (summary.verdict !== 'PASS') {
     const gaps = requiredSummaryCheckGaps(summary).filter(check => check.blocking_class === 'framework_internal');
     if (!(summary.blockers?.length) && gaps.length) return `NEXT: 必需检查未取得结论（${gaps.map(check => check.id).join(', ')}），产品结论未知；请 AgentMaison 维护者修复检查后重新发起同一请求，保留有效产物并复验受影响阶段，勿无变化重试。`;
@@ -3071,12 +2980,6 @@ export function buildNextLine(
     return `NEXT: 按 ${summary.script_report ?? 'script-report.json'} 的 FAIL/INCOMPLETE 项一轮修完；${rerun}`;
   }
   switch (summary.next_action) {
-    case 'run_verifier_then_receipt':
-    case 'rerun_verifier_with_current_request':
-      return (
-        `NEXT: 把 ${summary.verifier_request ?? 'verifier.request.<subject>.json'} 整段投给 subagent_type=verifier，同步等它返回；` +
-        `把回复原样写入 ${summary.verifier_report ?? 'verifier.report.<subject>.md'}；然后跑 check-receipt --phase ${phase} --feature ${feature}`
-      );
     case 'fill_receipt_then_sync_closure':
       return `NEXT: 跑 check-receipt --phase ${phase} --feature ${feature}（或 harness-runner --sync-closure）收口本阶段`;
     case 'fix_verifier_findings_then_rerun_harness':
@@ -3684,6 +3587,125 @@ function recordStartCommit(
 // 上下文文件收集
 // --------------------------------------------------------------------------
 
+/** Production Step 4: material is complete even when the verifier only needs to revisit individual checks. */
+export function assembleVerifierPhasePrompt(
+  harnessRoot: string,
+  layout: RepoLayout,
+  specLoader: SpecLoader,
+  context: Pick<CheckContext, 'phase' | 'feature' | 'phaseRule' | 'featureSpec' | 'resolvedInputs' | 'factsContext' |
+    'deviceTestEvidence' | 'adapterMultimodal' | 'adapterImageInput' | 'specVisualSources'>,
+  scriptReport: ScriptReport,
+  options: {
+    phaseIsGlobal?: boolean;
+    phaseIssues: ReturnType<typeof readPhaseRepairIssues>;
+    resolvedProfile: NonNullable<CheckContext['resolvedProfile']>;
+    lifecycleFragments?: string[];
+    goalBrief: ReturnType<typeof assembleGoalBrief> | null;
+    verifierPromptRel?: string;
+    repairDiagnosis?: { failedCheckIds: readonly string[]; reason: string };
+  },
+) {
+  const { projectRoot, frameworkRoot } = layout;
+  const { phase, feature, featureSpec, resolvedInputs, factsContext } = context;
+  const { resolvedProfile, lifecycleFragments, phaseIssues } = options;
+  const phaseIsGlobal = options.phaseIsGlobal ?? feature === GLOBAL_FEATURE_SENTINEL;
+  const knowledge = assembleKnowledge({ projectRoot, frameworkRoot, phase, subject: phaseIsGlobal ? 'global' : 'feature',
+    role: 'verifier', contracts: featureSpec.contracts, extensionBundle: resolvedProfile.extensionBundle,
+    requirement: resolvedInputs?.values.requirement?.state === 'resolved' ? String(resolvedInputs.values.requirement.value) : undefined });
+  const factsSubject = factsContext?.subject;
+  const runId = process.env.MAISON_GOAL_RUN_ID?.trim() || (factsSubject && 'run_id' in factsSubject ? factsSubject.run_id : undefined);
+  const includeImplementationChanges = !phaseIsGlobal && verifierUsesImplementationChanges(phase);
+  const reviewChanges = includeImplementationChanges ? readImplementationReviewChanges(projectRoot, feature, {
+    runId, frameworkRoot, resolvedInputs, modules: featureSpec.contracts?.modules ?? [],
+  }) : null;
+  const contextFiles = collectContextFiles(specLoader, layout, phase, feature, featureSpec, { ...context, knowledge, reviewChanges, phaseIssues });
+  const specContent = YAML.stringify(context.phaseRule);
+  const templateText = loadVerifierPromptTemplate(harnessRoot, phase, resolvedProfile, options.verifierPromptRel);
+  const extensionInstructions = knowledge.extensionInstructions;
+  const goalBriefText = options.goalBrief ? renderGoalBrief(options.goalBrief, { requirementInContext: resolvedInputsCarryRequirement(resolvedInputs) }) : '';
+  const material = buildVerifierMaterialView({ projectRoot, frameworkRoot, feature, phase, resolvedInputs, factsContext,
+    deviceTestEvidence: context.deviceTestEvidence, gateFingerprint: computeGateFingerprint(frameworkRoot, phase),
+    phaseRuleText: specContent, templateText, checks: scriptReport.checks, contextFiles, lifecycleFragments, extensionInstructions,
+    goalBriefText, phaseIssues, reviewChanges, runId });
+  const reportDir = relFeaturePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
+  const currentSubject = buildVerifierRequest({
+    feature, phase, gate_fingerprint: material.gate_fingerprint, source_commit_sha: null, worktree_digest: null,
+    prompt_path: path.posix.join(reportDir, 'ai-prompt.md'), prompt_sha256: computePromptSha256(''), material_sha256: material.material_sha256,
+  }).subject_id;
+  const { planVerifierItemReview } = require('./scripts/utils/verifier-evidence') as typeof import('./scripts/utils/verifier-evidence');
+  const itemReview = { ...planVerifierItemReview({ projectRoot, frameworkRoot, feature, phase, runId, currentMaterial: material,
+    currentSubject, resolvedInputs, templateText, phaseIssues, diagnosisRequired: !!options.repairDiagnosis }),
+  currentReportPath: path.posix.join(reportDir, verifierReportMdFilename(currentSubject)) };
+  const { previousReport, scope } = itemReview;
+  const previousMaterial = previousReport ? readVerifierMaterialOrNull(path.join(projectRoot, path.dirname(previousReport.md_path_rel)), previousReport.subject_id) : null;
+  const reviewContext = independentVerificationContext({ previousReport, previousMaterial, currentMaterial: material,
+    actualDiff: !includeImplementationChanges || reviewChanges !== null, partialReview: scope.mode === 'partial',
+    affectedDependencies: Object.values(resolvedInputs?.values ?? {}).flatMap(value => value.state === 'resolved' ? value.binding.dependencies
+      : value.attempts.flatMap(attempt => attempt.dependencies)),
+    testStrengthCheck: scriptReport.checks.find(check => check.id === 'coding_existing_test_preserved') });
+  const prompt = assembleAIPrompt(harnessRoot, projectRoot, phase, feature, [...contextFiles, ...reviewContext],
+    JSON.stringify(projectScriptReportForPrompt(scriptReport), null, 2), specContent, resolvedProfile, lifecycleFragments, frameworkRoot,
+    { imageInput: context.adapterImageInput, extensionInstructions, repairDiagnosis: options.repairDiagnosis, goalBrief: goalBriefText, templateText, itemReview });
+  return { material, prompt, itemReview };
+}
+
+function resolvedVerifierInputContext(projectRoot: string, inputs: NonNullable<CheckContext['resolvedInputs']>): ContextFileEntry[] {
+  const files: ContextFileEntry[] = [];
+  const selected = new Set<unknown>();
+  const addValue = (label: string, value: unknown) => {
+    files.push({ label, content: typeof value === 'string' ? value : YAML.stringify(value) });
+  };
+  const realRoot = fs.realpathSync(projectRoot);
+  const readBoundFile = (dep: { path: string; exists: boolean; sha256: string | null }) => {
+    const abs = path.resolve(projectRoot, dep.path);
+    if (!dep.exists || !dep.sha256 || !isInsideProjectRoot(projectRoot, abs)) return null;
+    try {
+      if (!isInsideProjectRoot(realRoot, fs.realpathSync(abs))) return null;
+      const bytes = fs.readFileSync(abs);
+      if (createHash('sha256').update(bytes).digest('hex') === dep.sha256) return bytes;
+    } catch { /* Preserve the resolved value when its bound original cannot be read. */ }
+    return null;
+  };
+  for (const [id, input] of Object.entries(inputs.values)) {
+    if (input.state !== 'resolved') continue;
+    const { value, binding } = input;
+    selected.add(value);
+    if (binding.source.kind === 'derive' && ['derive.codebase', 'derive.test-targets'].includes(binding.source.provider_id) && Array.isArray(value) && value.length) {
+      const dependencies = new Map(binding.dependencies.filter(dep => dep.role === 'derive').map(dep => [path.resolve(projectRoot, dep.path), dep]));
+      const originals = value.filter(file => {
+        const dep = typeof file?.path === 'string' ? dependencies.get(path.resolve(projectRoot, file.path)) : undefined;
+        const bytes = dep && readBoundFile(dep);
+        if (!bytes || !(file.binary === true ? file.sha256 === dep!.sha256 : decodeTextFile(bytes) === file.content)) return true;
+        const label = path.relative(projectRoot, dep!.path).replace(/\\/g, '/');
+        files.push({ label, kind: 'path', content: `绑定输入 ${id}${file.binary === true ? `（二进制，sha256=${file.sha256}）` : ''}` });
+        return false;
+      });
+      if (originals.length) addValue(`(resolved input ${id})`, originals);
+      continue;
+    }
+    if (binding.source.kind === 'artifact') {
+      const physical = binding.dependencies.find(dep => {
+        const bytes = dep.role === 'artifact' ? readBoundFile(dep) : null;
+        const text = bytes && decodeTextFile(bytes);
+        if (text === null) return false;
+        if (typeof value === 'string') return value === text;
+        if (!/\.(?:ya?ml|json)$/i.test(dep.path)) return false;
+        try { return isDeepStrictEqual(YAML.parse(text), value); }
+        catch { return false; }
+      });
+      if (physical) {
+        files.push({ label: path.relative(projectRoot, physical.path).replace(/\\/g, '/'), kind: 'path', content: `绑定输入 ${id}` });
+        continue;
+      }
+    }
+    addValue(`(resolved input ${id})`, value);
+  }
+  for (const [id, value] of Object.entries(inputs.artifacts)) {
+    if (!selected.has(value)) addValue(`(resolved artifact ${id})`, value);
+  }
+  return files;
+}
+
 export function collectContextFiles(
   specLoader: SpecLoader,
   layout: RepoLayout,
@@ -3697,40 +3719,46 @@ export function collectContextFiles(
     adapterMultimodal?: boolean;
     adapterImageInput?: 'none' | 'tool_read' | 'native_attach';
     specVisualSources?: CheckContext['specVisualSources'];
-    actualChanges?: readonly import('./scripts/utils/types').ContextFileEntry[] | null;
+    actualChanges?: readonly ContextFileEntry[] | null;
+    reviewChanges?: ImplementationReviewChanges | null;
+    phaseIssues?: ReturnType<typeof readPhaseRepairIssues>;
   },
-): import('./scripts/utils/types').ContextFileEntry[] {
+): ContextFileEntry[] {
   const { projectRoot } = layout;
   const knowledge = opts?.knowledge ?? assembleKnowledge({ projectRoot, frameworkRoot: layout.frameworkRoot, phase,
     subject: feature === GLOBAL_FEATURE_SENTINEL ? 'global' : 'feature', role: 'verifier', contracts: featureSpec.contracts });
-  const files: import('./scripts/utils/types').ContextFileEntry[] = knowledgeContextFiles(knowledge);
-  const collected = (): typeof files => {
-    const output: typeof files = [], paths = new Map<string, typeof files[number]>();
-    for (const file of files) {
-      const prior = !file.label.startsWith('(') && paths.get(file.label);
-      if (!prior) {
-        const entry = { ...file }; output.push(entry);
-        if (!file.label.startsWith('(')) paths.set(file.label, entry);
-        continue;
-      }
-      if (prior.content !== file.content) prior.content = [prior.content, file.content].filter(Boolean).join('\n\n');
-      if (file.kind === 'image') Object.assign(prior, { kind: file.kind, imagePath: file.imagePath, mime: file.mime });
-      else if (prior.kind === 'path' && file.kind !== 'path') prior.kind = file.kind ?? 'text';
-    }
-    return output;
+  const files = knowledgeContextFiles(knowledge);
+  const collected = () => mergeContextFiles(projectRoot, files);
+  const resolvedInputs = opts?.resolvedInputs;
+  const featureScoped = !!feature && feature !== GLOBAL_FEATURE_SENTINEL;
+  const relative = (absolute: string) => path.relative(projectRoot, absolute).replace(/\\/g, '/');
+  const featureDocument = (name: string) => resolveFeatureArtifact(projectRoot, feature, name);
+  const addFeatureOutput = (name: string) => {
+    const file = featureDocument(name);
+    if (file.exists) files.push({ label: relative(file.actualPath), content: fs.readFileSync(file.actualPath, 'utf8') });
   };
   const factsSubject = opts?.factsContext?.subject;
   const runId = process.env.MAISON_GOAL_RUN_ID?.trim() || (factsSubject && 'run_id' in factsSubject ? factsSubject.run_id : undefined);
-  const phaseIssues = readPhaseRepairIssues(projectRoot, feature, phase, { frameworkRoot: layout.frameworkRoot, runId });
+  const includeImplementationChanges = featureScoped && verifierUsesImplementationChanges(phase);
+  const reviewChanges = !includeImplementationChanges ? null : opts?.reviewChanges !== undefined ? opts.reviewChanges
+    : readImplementationReviewChanges(projectRoot, feature, {
+      runId, frameworkRoot: layout.frameworkRoot, resolvedInputs, modules: featureSpec.contracts?.modules ?? [],
+    });
+  const phaseIssues = opts?.phaseIssues === undefined
+    ? readPhaseRepairIssues(projectRoot, feature, phase, { frameworkRoot: layout.frameworkRoot, runId }) : opts.phaseIssues;
   files.push(...collectCurrentAcceptanceEvidence({ projectRoot, feature, phase, frameworkRoot: layout.frameworkRoot, phaseIssues,
-    runId, factsContext: opts?.factsContext, resolvedInputs: opts?.resolvedInputs }));
-  if (phaseIssues) files.push(...phaseIssues.evidenceFiles);
-  if (phaseIssues && phase !== 'review' && phaseIssues.rows.length) files.push({ label: '(upstream issues to verify)', content:
-    '逐条读当前问题表与证据；issue-verification 的 evidence 包含责任文件名，并原样复制下列完整问题/依据＋修复建议，再给事实与责任判断。\n'
-      + phaseIssues.rows.map(row => `${row.id} → 责任产物 ${row.files.join('、')}\nevidence 原文：${row.summary}`).join('\n') });
-  files.push(...repairDeclineContextFiles(projectRoot, feature, runId));
-  if (phase === 'review' || phase === 'coding') files.push(...(opts?.actualChanges !== undefined ? opts.actualChanges ?? [] : implementationChangeContext(projectRoot, feature, runId, featureSpec.contracts?.modules)));
-  if (runId) {
+    runId, factsContext: opts?.factsContext, resolvedInputs, implementationChanges: reviewChanges?.entries ?? null }));
+  if (phaseIssues) {
+    if (phase !== 'spec' && phase !== 'plan') files.push({ label: phaseIssues.reportPath, content: phaseIssues.reportText, references: ['当前问题清单'] });
+    if (phaseIssues.rows.length) files.push({ label: phase === 'review' ? '(open verification findings)' : '(upstream issues to verify)', content:
+      '逐条读当前问题表与证据；issue-verification 的 evidence 包含责任文件名，并原样复制完整问题/依据＋修复建议，再给事实与责任判断。\n'
+        + JSON.stringify(phaseIssues.rows, null, 2) });
+    files.push(...phaseIssues.evidenceFiles.map(file => ({ ...file, references: ['开放发现的直接依据'] })));
+    if (phaseIssues.diagnostics?.length) files.push({ label: '(verification reference gaps)', content: phaseIssues.diagnostics.join('\n') });
+  }
+  files.push(...repairDeclineContextFiles(projectRoot, feature, runId, layout.frameworkRoot));
+  if (includeImplementationChanges) files.push(...(opts?.actualChanges !== undefined ? opts.actualChanges ?? [] : reviewChanges?.contextFiles ?? []));
+  if (runId && featureScoped) {
     const { loadGoalManifestFromRun } = require('./scripts/utils/goal-manifest') as typeof import('./scripts/utils/goal-manifest');
     const manifest = loadGoalManifestFromRun(projectRoot, runId, { feature });
     files.push({ label: path.posix.join(manifest.report_dir.replace(/\\/g, '/'), 'manifest.json'), kind: 'path', content: '原始请求与真实diff基线；不以作者摘要替代。' });
@@ -3738,32 +3766,88 @@ export function collectContextFiles(
   if (knowledge.entries.length || knowledge.notices.length) files.push({ label: '(knowledge navigation)',
     content: renderKnowledge({ ...knowledge, extensionInstructions: '' }, false) });
   if (['coding', 'review', 'ut'].includes(phase) && featureSpec.contracts) {
-    const fullSource = phase === 'review' && knowledge.entries.some(entry => entry.available && ['conventions', 'component-index'].includes(entry.kind));
-    // collectSourceFiles 读取实际改动与既有定位线索，不扫全仓。
-    for (const [filePath, content] of specLoader.collectSourceFiles(projectRoot, featureSpec.contracts)) {
-      const existing = files.find(file => file.label === filePath);
-      if (existing && fullSource) { existing.kind = 'text'; existing.content = content; }
-      else if (!existing) files.push({ label: filePath, kind: fullSource ? 'text' : 'path', content: fullSource ? content : `${Buffer.byteLength(content, 'utf8')} 字节；按路径核对目标源码` });
+    const legacyInline = !resolvedInputs && phase === 'review'
+      && knowledge.entries.some(entry => entry.available && ['conventions', 'component-index'].includes(entry.kind));
+    for (const label of implementationFiles(projectRoot, feature, featureSpec.contracts, runId, reviewChanges?.entries ?? null)) {
+      if (legacyInline) {
+        const content = decodeTextFile(fs.readFileSync(path.join(projectRoot, label)));
+        if (content !== null) { files.push({ label, content }); continue; }
+      }
+      files.push({ label, kind: 'path', content: '实际变更或契约引用的目标源码' });
     }
   }
 
-  if (opts?.resolvedInputs) {
-    for (const [id, value] of Object.entries(opts.resolvedInputs.values)) {
-      if (value.state !== 'resolved') continue;
-      files.push({ label: '(resolved input ' + id + ')', content: typeof value.value === 'string' ? value.value : YAML.stringify(value.value) });
-    }
-    for (const [id, content] of Object.entries(opts.resolvedInputs.artifacts)) {
-      if (!Object.values(opts.resolvedInputs.values).some(value => value.state === 'resolved' && value.value === content)) {
-        files.push({ label: '(resolved artifact ' + id + ')', content: typeof content === 'string' ? content : YAML.stringify(content) });
+  const boundSpec = resolvedInputs?.artifacts['spec@1'];
+  const prd = typeof boundSpec === 'string' ? boundSpec
+    : featureScoped && (!resolvedInputs || resolvedInputs.context.required_outputs.includes('spec.md'))
+      ? specLoader.loadFeatureDoc(projectRoot, feature, 'spec.md') : null;
+  const uiChange = prd ? parseUiChangeFromSpecMarkdown(prd) : null;
+  const wantsVisualContext =
+    ['spec', 'coding', 'review'].includes(phase) &&
+    uiChange !== null &&
+    UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange);
+
+  if (wantsVisualContext) {
+    const imageInput = opts?.adapterImageInput ?? (opts?.adapterMultimodal === false ? 'none' : 'tool_read');
+    if (imageInput === 'none') {
+      files.push({
+        label: '(multimodal-degraded)',
+        kind: 'text',
+        content:
+          '视觉多模态层已降级：adapter image_input=none；仅文本 ui-spec + 确定性 parity 生效。',
+      });
+    } else if (prd) {
+      const imgPaths = collectAuthoritativeImagePaths(projectRoot, prd, (p) => {
+        const r = resolveAuthoritativePath(p, {
+          projectRoot,
+          externalRoots: opts?.specVisualSources?.external_roots,
+          allowAbsolutePaths: Boolean(opts?.specVisualSources?.allow_absolute_paths),
+          allowNetworkPaths: Boolean(opts?.specVisualSources?.allow_network_paths),
+        });
+        return r.agentReachable ? r.resolvedAbsolute ?? null : null;
+      });
+      for (const img of imgPaths.slice(0, 8)) {
+        const ext = path.extname(img).toLowerCase();
+        const mime =
+          ext === '.png' ? 'image/png' :
+          ext === '.webp' ? 'image/webp' :
+          ext === '.gif' ? 'image/gif' :
+          'image/jpeg';
+        files.push({
+          label: path.relative(projectRoot, img).replace(/\\/g, '/'),
+          kind: 'image',
+          mime,
+          imagePath: img,
+          content: '权威视觉参考图（sidecar 副本；VL verifier 须读 reports/.../context-images/）',
+        });
+      }
+      if (imgPaths.length === 0) {
+        files.push({
+          label: '(multimodal-no-images)',
+          kind: 'text',
+          content:
+            'ui_change 需要 ui-spec，但未解析到 reachable 的 authoritative_ref 图片；多模态对照不可用。',
+        });
       }
     }
-    for (const name of feature ? opts.resolvedInputs.context.required_outputs : []) {
-      const content = specLoader.loadFeatureDoc(projectRoot, feature, name);
-      if (content !== null) files.push({ label: relFeatureArtifact(projectRoot, feature, name), content });
-    }
+  }
+
+  if (resolvedInputs) {
+    files.push(...resolvedVerifierInputContext(projectRoot, resolvedInputs));
+    for (const name of featureScoped ? resolvedInputs.context.required_outputs : []) addFeatureOutput(name);
     if (opts.factsContext) {
       const factsPath = resolveFactsAbsPath(projectRoot, feature, opts.factsContext);
-      if (fs.existsSync(factsPath)) files.push({ label: path.relative(projectRoot, factsPath).replace(/\\/g, '/'), content: fs.readFileSync(factsPath, 'utf8') });
+      if (fs.existsSync(factsPath)) {
+        const raw = fs.readFileSync(factsPath, 'utf8');
+        const label = relative(factsPath);
+        let content = raw;
+        try {
+          const { baseline, delta } = projectFactsForPhase(raw, phase);
+          content = baseline + (delta.present ? `\n\n## phase_delta: ${phase}\n${delta.content}` : '');
+        } catch { /* The script diagnostic describes malformed facts; retain the original for diagnosis. */ }
+        for (const entry of files) if (entry.label === label && entry.content === raw) entry.content = content;
+        files.push({ label, content, references: ['按此项目路径读取完整 facts 原件。'] });
+      }
     }
     if (phase === 'ut' && featureSpec.contracts?.modules?.length) {
       const { tryLoadUtSourceRootResolver } = require('./profile-host-loader') as typeof import('./profile-host-loader');
@@ -3839,9 +3923,8 @@ export function collectContextFiles(
     kind: 'path',
     content: `${Buffer.byteLength(content, 'utf-8')} 字节`,
   });
-  const prd = specLoader.loadFeatureDoc(projectRoot, feature, 'spec.md');
   if (prd) {
-    const label = relFeatureArtifact(projectRoot, feature, 'spec.md');
+    const label = relative(featureDocument('spec.md').actualPath);
     files.push(upstreamAsPath ? pathEntry(label, prd) : { label, content: prd });
   }
 
@@ -3853,70 +3936,16 @@ export function collectContextFiles(
     });
   }
 
-  const uiChange = prd ? parseUiChangeFromSpecMarkdown(prd) : null;
-  const wantsVisualContext =
-    ['spec', 'coding', 'review'].includes(phase) &&
-    uiChange !== null &&
-    UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange);
-
-  if (wantsVisualContext) {
-    const imageInput = opts?.adapterImageInput ?? (opts?.adapterMultimodal === false ? 'none' : 'tool_read');
-    if (imageInput === 'none') {
-      files.push({
-        label: '(multimodal-degraded)',
-        kind: 'text',
-        content:
-          '视觉多模态层已降级：adapter image_input=none；仅文本 ui-spec + 确定性 parity 生效。',
-      });
-    } else if (prd) {
-      const imgPaths = collectAuthoritativeImagePaths(projectRoot, prd, (p) => {
-        const r = resolveAuthoritativePath(p, {
-          projectRoot,
-          externalRoots: opts?.specVisualSources?.external_roots,
-          allowAbsolutePaths: Boolean(opts?.specVisualSources?.allow_absolute_paths),
-          allowNetworkPaths: Boolean(opts?.specVisualSources?.allow_network_paths),
-        });
-        return r.agentReachable ? r.resolvedAbsolute ?? null : null;
-      });
-      for (const img of imgPaths.slice(0, 8)) {
-        const ext = path.extname(img).toLowerCase();
-        const mime =
-          ext === '.png' ? 'image/png' :
-          ext === '.webp' ? 'image/webp' :
-          ext === '.gif' ? 'image/gif' :
-          'image/jpeg';
-        files.push({
-          label: path.relative(projectRoot, img).replace(/\\/g, '/'),
-          kind: 'image',
-          mime,
-          imagePath: img,
-          content: '权威视觉参考图（sidecar 副本；VL verifier 须读 reports/.../context-images/）',
-        });
-      }
-      if (imgPaths.length === 0) {
-        files.push({
-          label: '(multimodal-no-images)',
-          kind: 'text',
-          content:
-            'ui_change 需要 ui-spec，但未解析到 reachable 的 authoritative_ref 图片；多模态对照不可用。',
-        });
-      }
-    }
-  }
-
   if (['plan', 'coding', 'review', 'ut', 'testing'].includes(phase)) {
     const design = specLoader.loadFeatureDoc(projectRoot, feature, 'plan.md');
     if (design) {
-      const label = relFeatureArtifact(projectRoot, feature, 'plan.md');
+      const label = relative(featureDocument('plan.md').actualPath);
       files.push(phase === 'plan' ? { label, content: design } : pathEntry(label, design));
     }
   }
 
   if (phase === 'review') {
-    const reviewReport = specLoader.loadFeatureDoc(projectRoot, feature, 'review-report.md');
-    if (reviewReport) {
-      files.push({ label: relFeatureArtifact(projectRoot, feature, 'review-report.md'), content: reviewReport });
-    }
+    if (!phaseIssues) addFeatureOutput('review-report.md');
 
     const specDir = featureDir(projectRoot, feature);
     for (const specFile of ['acceptance.yaml', 'contracts.yaml']) {
@@ -3974,15 +4003,8 @@ export function collectContextFiles(
       }
     }
 
-    const testPlan = specLoader.loadFeatureDoc(projectRoot, feature, 'test-plan.md');
-    if (testPlan) {
-      files.push({ label: relFeatureArtifact(projectRoot, feature, 'test-plan.md'), content: testPlan });
-    }
-
-    const testReport = specLoader.loadFeatureDoc(projectRoot, feature, 'test-report.md');
-    if (testReport) {
-      files.push({ label: relFeatureArtifact(projectRoot, feature, 'test-report.md'), content: testReport });
-    }
+    addFeatureOutput('test-plan.md');
+    addFeatureOutput('test-report.md');
     // plan 07a41ec6 T7（codex review）：verifier 必读的运行期证据按路径送入（进材料视图，verifier 按需 Read）：
     // 最新真机 run 的 trace.json 与 visual-diff.json。
     const testingReports = featurePhaseReportsDir(projectRoot, feature, 'testing');

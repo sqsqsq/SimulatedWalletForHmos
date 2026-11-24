@@ -18,10 +18,7 @@
 // 任一不成立的**唯一**恢复动作是重跑 verifier 并重写报告——绝不指向"改文书"。
 //
 // ─── 单写者 ─────────────────────────────────────────────────────────────────
-// 写者是**派发 verifier 的那个 agent**（phase executor / 主 agent）：把 verifier 的回复
-// 原样写入 summary.verifier_report。verifier 子代理保持只读工具集、只负责回复。刻意不做
-// 「verifier 只回终态块 + 调用方兜底补写」——那会产出一份只有终态块、却能通过本 loader 的
-// 报告，repair candidates、WARN 与多模态审查正文全部丢失。
+// 独立核验执行者只写本调用结果。运行时验收后按 subject 发布完整原答；旧版报告仍走兼容读取。
 //
 // ─── 放弃的准确性（plan d2f7a9c4 一、放弃项）─────────────────────────────────
 // 报告可被伪造或事后修改而不被机器识别；同 subject 并发不再报 conflict。兜底靠下游阶段
@@ -31,12 +28,17 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as YAML from 'yaml';
 
-import { featurePhaseReportsDir } from '../../config';
-import type { VerifierClosureRecord } from './types';
+import { featureFilePath, featurePhaseReportsDir } from '../../config';
+import type { AcceptanceSpec, VerifierClosureRecord } from './types';
 import { readVerifierMaterialOrNull, verifierMaterialsEquivalent, type VerifierMaterialView } from './verifier-material';
 import { parseResultBlock, SUBJECT_ID_PATTERN, verifierReportMdFilename } from './verifier-subject';
 import type { ResolvedPhaseInputs } from './capability-resolution';
+import { computePromptSha256, parseVerifierRequest, verifierRequestFilename } from './verifier-request';
+import { realProjectPath } from './project-relative-path';
+import { isUnitUtLayer } from './acceptance-layering';
+import { isBlockingCheck } from './check-disposition';
 
 export function verifierReportMdPath(reportsDir: string, subjectId: string): string {
   return path.join(reportsDir, verifierReportMdFilename(subjectId));
@@ -47,6 +49,7 @@ export type VerifierEvidenceErrorCode =
   | 'subject_absent'
   /** 报告文件不存在——verifier 未跑，或跑了但调用方没把回复写下来 */
   | 'report_missing'
+  | 'report_unaccepted'
   /** 终态块缺失 / 多于一个 / 字段非法 */
   | 'block_unparseable'
   /** 终态块回显的 subject 不是当前 subject（迟到、错位，或被手改） */
@@ -75,13 +78,280 @@ export interface LoadVerifierEvidenceOptions {
   resolvedInputs?: ResolvedPhaseInputs;
 }
 
-/** 恢复话术**唯一出处**：只指向重跑 verifier + 重写报告，绝不指向改文书。 */
+interface VerifierItemReviewInput extends LoadVerifierEvidenceOptions {
+  projectRoot: string;
+  feature: string;
+  phase: string;
+  runId?: string;
+  currentSubject?: string;
+  diagnosisRequired?: boolean;
+  unitEvidenceRequired?: boolean;
+  verifierSubjectCurrent?: boolean;
+  templateText?: string;
+  phaseIssues?: import('./repair-candidates').PhaseRepairIssues | null;
+  /** Current, still unresolved findings handed to this independent reviewer. */
+  findings?: readonly { id: string; files?: readonly string[] }[];
+}
+
+function verifierItemQuestions(input: VerifierItemReviewInput, applicableIds: readonly string[], report: VerifierEvidence | null): {
+  requiredIds: string[]; recheckIds: string[]; recheckFindings: NonNullable<VerifierItemReviewInput['findings']>; diagnostics: string[];
+} {
+  const repairs = require('./repair-candidates') as typeof import('./repair-candidates');
+  const { projectRoot, feature, phase, frameworkRoot, runId } = input;
+  const text = report?.report_text ?? '';
+  const design = phase === 'spec' || phase === 'plan';
+  const issues = design && report
+    ? repairs.readVerifierSemanticIssues(projectRoot, feature, phase, text, report.md_path_rel, frameworkRoot, runId)
+    : input.phaseIssues === undefined && (input.diagnosisRequired || input.findings?.length)
+      ? repairs.readPhaseRepairIssues(projectRoot, feature, phase, { frameworkRoot, runId, subjectId: input.currentSubject ?? null }) : input.phaseIssues;
+  const requiresDiagnosis = design || input.diagnosisRequired;
+  const diagnosisContext = (requiresDiagnosis || input.findings?.length) && report
+    ? repairs.buildCurrentVerifierDiagnosisContext({ ...input, subjectId: input.currentSubject ?? null, phaseIssues: issues }) : undefined;
+  const diagnostics = requiresDiagnosis && report ? repairs.findUnreadableDiagnosisChecks(phase, text, diagnosisContext) : [];
+  const acceptanceInput = input.resolvedInputs?.values.acceptance;
+  const acceptance = acceptanceInput?.state === 'resolved' ? acceptanceInput.value as AcceptanceSpec : undefined;
+  const unitCriteria = [...acceptance?.criteria ?? [], ...acceptance?.boundaries ?? [], ...acceptance?.performance ?? []];
+  const requiredUnitEvidence = phase === 'ut' && (input.unitEvidenceRequired
+    || input.resolvedInputs?.context.obligations['unit-evidence'] === 'required' && unitCriteria.some(item => isUnitUtLayer(item.ut_layer)));
+  const unitIds = ['end_to_end_driving', 'business_assertion_value'];
+  const explicit = repairs.verifierSemanticChecks(text, phase, feature).flatMap(row => typeof row.id === 'string'
+    && Array.isArray(row.acceptance_ids) && row.acceptance_ids.length && Array.isArray(row.affected_files) && row.affected_files.length ? [row.id] : []);
+  const diagnosedIds = diagnostics.flatMap(detail => {
+    const id = detail.split('：', 1)[0];
+    if (applicableIds.includes(id)) return [id];
+    if (phase === 'review' && issues?.rows.length) return ['issue_accuracy'];
+    if (design && issues?.rows.length) return issues.rows.map(row => row.id);
+    if (phase === 'ut' && (input.diagnosisRequired || requiredUnitEvidence)) return unitIds;
+    return [];
+  });
+  const answered = text && input.findings?.length ? repairs.parseIssueVerificationBlock(text).entries : [];
+  const findings = (input.findings ?? []).filter(({ id }) => applicableIds.includes(id) || issues?.rows.some(row => row.id === id)
+    || answered.some(entry => entry.issue === id));
+  const findingIds = findings.map(finding => finding.id);
+  const missingDecisions = findings.flatMap(finding => {
+    const row = issues?.rows.find(item => item.id === finding.id);
+    const reason = row ? repairs.reviewIssueDiagnosis(row, answered, diagnosisContext ?? {})
+      : !repairs.uniqueIssueVerification(answered, finding.id) ? `${finding.id}：缺本轮逐条结论` : null;
+    return reason ? [{ finding, reason }] : [];
+  });
+  const required = new Set([...explicit, ...findingIds, ...(design ? issues?.rows.map(row => row.id) ?? [] : []),
+    ...(phase === 'ut' && (input.diagnosisRequired || requiredUnitEvidence) ? unitIds : [])]);
+  return { requiredIds: applicableIds.filter(id => required.has(id)), recheckIds: [...new Set(diagnosedIds)],
+    recheckFindings: missingDecisions.map(item => item.finding), diagnostics: [...diagnostics, ...missingDecisions.map(item => item.reason)] };
+}
+
+/** Plan a request from public originals and the currently bound material, before it is dispatched. */
+export function planVerifierItemReview(input: VerifierItemReviewInput & { currentMaterial: VerifierMaterialView; templateText: string }) {
+  const { selectVerifierItemScope, verifierTemplateCheckIds, readVerifierUtSourcePaths } = require('./verifier-item-scope') as typeof import('./verifier-item-scope');
+  const { projectRoot, feature, phase, currentMaterial } = input;
+  const exact = input.currentSubject ? loadVerifierEvidenceForSubject(projectRoot, feature, phase, input.currentSubject, input) : null;
+  const issued = exact?.ok ? readIssuedVerifierItemScope(input, exact.evidence) : null;
+  const repairs = require('./repair-candidates') as typeof import('./repair-candidates');
+  const rows = exact?.ok && issued ? repairs.readVerifierSummaryRows(exact.evidence.report_text) ?? [] : [];
+  const missingCarried = exact?.ok && issued && (issued.reusedRows.some(expected => !sameVerifierSummaryRow(expected, rows.find(row => row.id === expected.id)))
+    || carriedVerifierDetails(input, exact.evidence, issued.reusedRows).missing.length > 0);
+  const same = exact?.ok && !missingCarried ? exact.evidence
+    : findPriorVerifierEvidence(projectRoot, feature, phase, { ...input, excludeSubject: input.currentSubject, material: currentMaterial });
+  const previousReport = same ?? findPriorVerifierEvidence(projectRoot, feature, phase, { ...input, excludeSubject: input.currentSubject });
+  const dir = resolveReportsDir(projectRoot, feature, phase, input.frameworkRoot);
+  const previousMaterial = same ? currentMaterial : previousReport && readVerifierMaterialOrNull(dir, previousReport.subject_id);
+  const applicableIds = verifierTemplateCheckIds(input.templateText);
+  const previousText = previousReport ? verdictReportTextWithOriginals({ ...input, currentSubject: previousReport.subject_id }, previousReport) : null;
+  const questions = verifierItemQuestions(input, applicableIds, previousReport && previousText !== null ? { ...previousReport, report_text: previousText } : null);
+  if (issued && !missingCarried) questions.requiredIds = [...new Set([...questions.requiredIds, ...issued.reviewIds])];
+  return { previousReport, scope: selectVerifierItemScope({ previousMaterial, currentMaterial,
+    previousReportText: previousText, applicableIds, ...questions,
+    ...(phase === 'ut' && previousMaterial && previousReport ? { utSourcePaths: readVerifierUtSourcePaths({ ...input,
+      frameworkRoot: input.frameworkRoot ?? path.resolve(__dirname, '../../..'),
+      material: previousMaterial, reportText: previousReport.report_text }) } : {}) }) };
+}
+
+/** An existing transport-level verdict can still owe a specific current semantic answer. */
+export function verifierDiagnosisRequired(phase: string, summary?: {
+  next_action?: unknown; readiness_signals?: unknown;
+} | null): boolean {
+  if (phase === 'spec' || phase === 'plan' || summary?.next_action === 'run_verifier_for_repair') return true;
+  return Array.isArray(summary?.readiness_signals) && summary.readiness_signals.some(signal =>
+    signal?.id === 'verifier_repair_diagnosis' && signal.status === 'incomplete');
+}
+
+export function verifierReportItemGaps(input: VerifierItemReviewInput, evidence: VerifierEvidence): string[] {
+  const { readVerifierSummaryRows } = require('./repair-candidates') as typeof import('./repair-candidates');
+  const { verifierTemplateCheckIds } = require('./verifier-item-scope') as typeof import('./verifier-item-scope');
+  const { loadFrameworkConfig } = require('../../config') as typeof import('../../config');
+  const { loadResolvedProfile } = require('../../profile-loader') as typeof import('../../profile-loader');
+  const { resolveWorkflowSpec } = require('../../workflow-loader') as typeof import('../../workflow-loader');
+  const { workflowVerifierPrompt } = require('./verifier-plan') as typeof import('./verifier-plan');
+  const { loadVerifierPromptTemplate } = require('./report-generator') as typeof import('./report-generator');
+  const frameworkRoot = input.frameworkRoot ?? path.resolve(__dirname, '../../..');
+  const template = input.templateText === undefined ? workflowVerifierPrompt(resolveWorkflowSpec(input.projectRoot, { frameworkRoot }), input.phase) : null;
+  const profile = template ? loadResolvedProfile(input.projectRoot, loadFrameworkConfig(input.projectRoot), frameworkRoot) : undefined;
+  const templateText = input.templateText ?? (template
+    ? loadVerifierPromptTemplate(path.join(frameworkRoot, 'harness'), input.phase, profile, template) : '');
+  const applicableIds = verifierTemplateCheckIds(templateText);
+  const scope = readIssuedVerifierItemScope(input, evidence);
+  const carried = carriedVerifierDetails(input, evidence, scope?.reusedRows);
+  const reified = { ...evidence, report_text: withCarriedVerifierDetails(input, evidence, carried) };
+  const { diagnostics, requiredIds } = verifierItemQuestions(input, applicableIds, reified);
+  if (!requiredIds.length && !scope) return diagnostics;
+  const rows = new Map((readVerifierSummaryRows(evidence.report_text) ?? []).map(row => [row.id, row]));
+  const missing = [...requiredIds, ...scope?.reviewIds ?? []].filter(id => !rows.get(id)?.evidence.trim());
+  const drift = scope?.reusedRows.flatMap(row => {
+    const actual = rows.get(row.id);
+    return sameVerifierSummaryRow(row, actual) ? [] : [`${row.id}：须保留已核实的原结论和依据`];
+  }) ?? [];
+  // The terminal blocker count describes the report before workspace disposition rules are applied.
+  if (scope && rows.size && [...rows.values()].filter(({ id, status, severity }) =>
+    isBlockingCheck({ id, status, severity }, [])).length !== evidence.blocker_count) {
+    drift.push('终态 blocker_count 未包含当前及沿用的 BLOCKER FAIL');
+  }
+  return [...new Set([...diagnostics, ...missing, ...drift, ...carried.missing])];
+}
+
+function verifierOriginalRunDirs(projectRoot: string, feature: string, phase: string, reportsDir: string, subject: string, runId?: string): string[] {
+  const { standaloneVerifierRunDir } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
+  const runsDir = featureFilePath(projectRoot, feature, 'goal-runs');
+  let siblings: fs.Dirent[] = [];
+  try { siblings = fs.readdirSync(runsDir, { withFileTypes: true }); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  const candidates = [...new Set([...(runId ? [runId] : []), ...siblings.filter(item => item.isDirectory()).map(item => item.name)])];
+  const phased = candidates.filter(id => /^[a-zA-Z0-9-]+$/.test(id)).map(id => path.join(runsDir, id))
+    .filter(dir => fs.existsSync(path.join(dir, 'phases', phase + '-verifier-format-repair')));
+  return [standaloneVerifierRunDir(reportsDir, subject), ...phased];
+}
+
+function readIssuedVerifierItemScope(input: VerifierItemReviewInput, evidence: VerifierEvidence) {
+  if (input.currentSubject !== evidence.subject_id) return null;
+  const { projectRoot, feature, phase, frameworkRoot } = input;
+  const reports = resolveReportsDir(projectRoot, feature, phase, frameworkRoot);
+  try {
+    const request = parseVerifierRequest(fs.readFileSync(path.join(reports, verifierRequestFilename(evidence.subject_id)), 'utf8'));
+    if (!request || request.subject_id !== evidence.subject_id || request.feature !== feature || request.phase !== phase) return null;
+    const prompt = fs.readFileSync(realProjectPath(projectRoot, request.prompt_path, 'verifier prompt'), 'utf8');
+    if (computePromptSha256(prompt) !== request.prompt_sha256) return null;
+    const { readVerifierItemReviewPrompt } = require('./report-generator') as typeof import('./report-generator');
+    const { stageVerifierHandbacks } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
+    for (const runDir of verifierOriginalRunDirs(projectRoot, feature, phase, reports, evidence.subject_id, input.runId)) {
+      for (const handback of stageVerifierHandbacks(runDir, request, evidence.md_path_abs)) {
+        if (handback.bytes.toString('utf8') !== evidence.report_text) continue;
+        const scoped = handback.instruction ? readVerifierItemReviewPrompt(handback.instruction) : null;
+        if (scoped) return scoped;
+        break;
+      }
+    }
+    return readVerifierItemReviewPrompt(prompt);
+  } catch { return null; }
+}
+
+/** The reference to the original adjudication is independent of local Markdown wording. */
+export function readVerifierOriginalReference(evidence: string): { report: string; line: number; marker: string } | null {
+  const refs = [...evidence.matchAll(/\[原核验\]\(\s*(?:<([^<>\r\n]+)#L([1-9]\d*)>|([^\s<>()]+)#L([1-9]\d*))\s*\)/g)];
+  if (refs.length !== 1) return null;
+  const [marker, anglePath, angleLine, plainPath, plainLine] = refs[0];
+  return { report: anglePath ?? plainPath, line: Number(angleLine ?? plainLine), marker };
+}
+
+function sameVerifierSummaryRow(expected: import('./repair-candidates').VerifierSummaryRow,
+  actual?: import('./repair-candidates').VerifierSummaryRow): boolean {
+  if (!actual || expected.id !== actual.id || expected.status !== actual.status || expected.severity !== actual.severity) return false;
+  const original = readVerifierOriginalReference(expected.evidence);
+  if (!original) return expected.evidence.replace(/\s+/g, ' ').trim() === actual.evidence.replace(/\s+/g, ' ').trim();
+  const referenced = readVerifierOriginalReference(actual.evidence);
+  return referenced?.report === original.report && referenced.line === original.line;
+}
+
+function carriedVerifierDetails(input: VerifierItemReviewInput, evidence: VerifierEvidence,
+  expected?: readonly import('./repair-candidates').VerifierSummaryRow[]) {
+  const repairs = require('./repair-candidates') as typeof import('./repair-candidates');
+  const { citesIssue } = require('./verifier-item-scope') as typeof import('./verifier-item-scope');
+  const { projectRoot, feature, phase, frameworkRoot } = input;
+  const details = new Map<string, Record<string, unknown>>();
+  const issues = new Map<string, ReturnType<typeof repairs.parseIssueVerificationBlock>['entries'][number]>();
+  const missing: string[] = [];
+  if (!evidence.report_text.includes('[原核验](')) return { details, issues, missing };
+  const rows = repairs.readVerifierSummaryRows(evidence.report_text) ?? [];
+  const originals = new Map<string, LoadVerifierEvidenceResult>();
+  const reports = resolveReportsDir(projectRoot, feature, phase, frameworkRoot);
+  for (const row of rows) {
+    const link = readVerifierOriginalReference(row.evidence);
+    const priorId = link && /^verifier\.report\.([0-9a-f]{64})\.md$/.exec(path.posix.basename(link.report))?.[1];
+    if (!link || !priorId || priorId === evidence.subject_id) continue;
+    const issued = expected?.some(item => sameVerifierSummaryRow(item, row));
+    if (expected && !issued) continue;
+    if (!originals.has(priorId)) originals.set(priorId, loadVerifierEvidenceForSubject(projectRoot, feature, phase, priorId, { frameworkRoot }));
+    const previous = originals.get(priorId)!;
+    if (!previous.ok || previous.evidence.md_path_rel !== link.report) {
+      if (issued) missing.push(`${row.id}：原独立核验报告不可读`);
+      continue;
+    }
+    const original = previous.evidence.report_text;
+    const sourceRow = repairs.readVerifierSummaryRows(original)?.find(item => item.line === link.line && item.id === row.id);
+    if (!sourceRow || sourceRow.status !== row.status || sourceRow.severity !== row.severity) {
+      if (issued) missing.push(`${row.id}：找不到相同的原核验行`);
+      continue;
+    }
+    if (!issued && !carriedVerifierMaterialApplies(input, reports, priorId, original, evidence.subject_id, rows, row.id)) continue;
+    for (const detail of repairs.verifierSemanticChecks(original, phase, feature)) {
+      if (detail.id === row.id && detail.status !== 'PASS') details.set(row.id, detail);
+    }
+    const entries = repairs.parseIssueVerificationBlock(original).entries;
+    for (const entry of entries) {
+      const referenced = entry.issue === row.id || citesIssue(sourceRow.evidence, entry.issue)
+        || phase === 'review' && row.id === 'issue_accuracy' && /^CR-[0-9]+$/.test(entry.issue);
+      if (referenced && repairs.uniqueIssueVerification(entries, entry.issue)) issues.set(entry.issue, entry);
+    }
+  }
+  return { details, issues, missing };
+}
+
+function carriedVerifierMaterialApplies(input: VerifierItemReviewInput, reports: string, priorId: string, priorText: string,
+  reportedSubject: string, rows: readonly import('./repair-candidates').VerifierSummaryRow[], id: string): boolean {
+  const old = readVerifierMaterialOrNull(reports, priorId);
+  const current = readVerifierMaterialOrNull(reports, input.currentSubject ?? reportedSubject);
+  if (!old || !current) return false;
+  if (verifierMaterialsEquivalent(old, current, input.projectRoot, input.resolvedInputs)) return true;
+  const { selectVerifierItemScope, readVerifierUtSourcePaths } = require('./verifier-item-scope') as typeof import('./verifier-item-scope');
+  const utSourcePaths = input.phase === 'ut' ? readVerifierUtSourcePaths({ ...input, material: old, reportText: priorText,
+    frameworkRoot: input.frameworkRoot ?? path.resolve(__dirname, '../../..') }) : undefined;
+  const scope = selectVerifierItemScope({ previousMaterial: old, currentMaterial: current, previousReportText: priorText,
+    applicableIds: rows.map(row => row.id), utSourcePaths });
+  return scope.reusedRows.some(row => row.id === id);
+}
+
+/** Reuse readable original non-PASS details without making a new reply reproduce them verbatim. */
+export function verdictReportTextWithOriginals(input: VerifierItemReviewInput, evidence: VerifierEvidence): string {
+  if (!evidence.report_text.includes('[原核验](')) return evidence.report_text;
+  const scope = readIssuedVerifierItemScope(input, evidence);
+  return withCarriedVerifierDetails(input, evidence, carriedVerifierDetails(input, evidence, scope?.reusedRows));
+}
+
+function withCarriedVerifierDetails(input: VerifierItemReviewInput, evidence: VerifierEvidence,
+  carried: ReturnType<typeof carriedVerifierDetails>): string {
+  const repairs = require('./repair-candidates') as typeof import('./repair-candidates');
+  let text = evidence.report_text;
+  if (carried.details.size) {
+    const declared = new Set(repairs.verifierSemanticChecks(text, input.phase, input.feature).map(item => item.id));
+    const missing = [...carried.details].filter(([id]) => !declared.has(id)).map(([, item]) => item);
+    if (missing.length) text += '\n\n```yaml\n' + YAML.stringify({ verification_result: { phase: input.phase, feature: input.feature, checks: missing } }) + '```\n';
+  }
+  if (carried.issues.size) {
+    const match = /```issue-verification\s*\r?\n[\s\S]*?```/i.exec(text);
+    const current = repairs.parseIssueVerificationBlock(text);
+    if (match && !current.ok) return text;
+    const declared = new Set(current.entries.map(entry => entry.issue));
+    const missing = [...carried.issues].filter(([id]) => !declared.has(id)).map(([, entry]) => entry);
+    if (!missing.length) return text;
+    const entries = [...current.entries, ...missing].map(({ invalid_reason, ...entry }) =>
+      invalid_reason ? { ...entry, verdict: 'invalid' } : entry);
+    const block = '```issue-verification\n' + YAML.stringify(entries) + '```';
+    text = match ? text.slice(0, match.index) + block + text.slice(match.index + match[0].length) : text + '\n\n' + block + '\n';
+  }
+  return text;
+}
+
+/** 恢复原交回或补核由同一核验入口负责。 */
 function rerunGuidance(): string {
-  return (
-    '恢复：把 summary.verifier_request 指向的 request JSON **整段**作为 Task prompt 投给 verifier' +
-    '（verifier 自行 Read 其中的 prompt_path），再把它的回复**原样**写入 summary.verifier_report ' +
-    '指向的路径，然后重跑本检查。'
-  );
+  return '恢复：按当前阶段 NEXT 交回或执行原核验请求，核验执行器恢复原答或补核并消费完整报告。';
 }
 
 /**
@@ -198,6 +468,15 @@ export function findSameMaterialVerifierEvidence(projectRoot: string, feature: s
   return verifierMaterialsEquivalent(material, current, projectRoot, opts?.resolvedInputs) ? previous : null;
 }
 
+/** An equivalent public original carries its real verdict and report path into current consumption. */
+export function loadCurrentVerifierEvidenceForSubject(projectRoot: string, feature: string, phase: string, currentSubject: string,
+  opts?: LoadVerifierEvidenceOptions): LoadVerifierEvidenceResult {
+  const exact = loadVerifierEvidenceForSubject(projectRoot, feature, phase, currentSubject, opts);
+  if (exact.ok || exact.code !== 'report_missing') return exact;
+  const same = findSameMaterialVerifierEvidence(projectRoot, feature, phase, currentSubject, opts);
+  return same ? { ok: true, evidence: same } : exact;
+}
+
 /**
  * plan 07a41ec6 T7：闭环定稿时 verifier 结论来源的**唯一派生口径**（runner finalize /
  * check-receipt CLI / sync-closure 三条路径同一函数）：当前 subject 自身已验真 → null（不登记）；
@@ -262,6 +541,22 @@ export function loadVerifierEvidenceForSubject(
     };
   }
 
+  try {
+    const { stageVerifierPublicReportQualified } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
+    const runDirs = verifierOriginalRunDirs(projectRoot, feature, phase, dir, currentSubject);
+    if (!stageVerifierPublicReportQualified(runDirs, { feature, phase, subject_id: currentSubject }, mdAbs, text)) {
+      return { ok: false, code: 'report_unaccepted', message: mdRel + ' 尚未由拥有该已签请求的运行时接收。' };
+    }
+  } catch (error) {
+    return { ok: false, code: 'report_unaccepted', message: mdRel + ' 的交回无法核实：' + (error as Error).message };
+  }
+  return parseVerifierEvidenceText({ feature, phase, currentSubject, text, mdAbs, mdRel });
+}
+
+/** Check returned original bytes with the same reader before restoring the public report. */
+export function parseVerifierEvidenceText(input: { feature: string; phase: string; currentSubject: string;
+  text: string; mdAbs: string; mdRel: string }): LoadVerifierEvidenceResult {
+  const { feature, phase, currentSubject, text, mdAbs, mdRel } = input;
   // 终态块：**必须恰好一个**。零个 = verifier 没按契约输出，或调用方只写了摘要；
   // 多于一个 = 回答被拼接污染。两种都不是"能修的文书问题"，一律重跑。
   const block = parseResultBlock(text);
@@ -332,8 +627,8 @@ export function loadVerifierReportTextOrNull(
   if (opts && 'subjectId' in opts) {
     if (!opts.subjectId) return null;
     const pinned = loadVerifierEvidenceForSubject(projectRoot, feature, phase, opts.subjectId, opts);
-    return pinned.ok ? pinned.evidence.report_text : null;
+    return pinned.ok ? verdictReportTextWithOriginals({ ...opts, projectRoot, feature, phase, currentSubject: opts.subjectId }, pinned.evidence) : null;
   }
   const res = loadVerifierEvidence(projectRoot, feature, phase, opts);
-  return res.ok ? res.evidence.report_text : null;
+  return res.ok ? verdictReportTextWithOriginals({ ...opts, projectRoot, feature, phase, currentSubject: res.evidence.subject_id }, res.evidence) : null;
 }
