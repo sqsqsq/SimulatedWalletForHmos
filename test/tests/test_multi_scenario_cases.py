@@ -431,16 +431,16 @@ class S09CaseAndUpdatePlanTest(unittest.TestCase):
                 self.assertNotRegex(text, r"story:submitted|phase:plan", f"{case_id}.{field} 带着终点标签")
 
     def test_the_fixed_standard_and_the_case_plan_are_pinned_together(self) -> None:
-        """@31 与两例计划共同固定：标准正文 SHA 是评价域唯一真源，Case 计划只引用它，不另写一套判分。"""
+        """@33 与两例计划共同固定：标准正文 SHA 是评价域唯一真源，Case 计划只引用它，不另写一套判分。"""
         import hashlib  # noqa: PLC0415
         standard = ROOT / "test" / "regression" / "extension-acceptance.md"
         change = ROOT / "doc" / "spec" / "2.0.5" / "评价标准变更.md"
         declared = re.search(r"extension-acceptance@(\d+)[^。\n]*?SHA256 `([0-9a-f]{64})`",
                              change.read_text(encoding="utf-8"))
         self.assertIsNotNone(declared, "评价标准变更里没有标准版本与 SHA")
-        self.assertEqual("31", declared.group(1))
+        self.assertEqual("33", declared.group(1))
         self.assertEqual(declared.group(2), hashlib.sha256(standard.read_bytes()).hexdigest(),
-                         "评价标准正文与它登记的 @31 身份不一致")
+                         "评价标准正文与它登记的 @33 身份不一致")
         for case_id in sorted(CASE_IDS):
             self.assertNotIn("extension-acceptance", case_text(case_id), f"{case_id} 把标准正文抄进了 Case 输入")
 

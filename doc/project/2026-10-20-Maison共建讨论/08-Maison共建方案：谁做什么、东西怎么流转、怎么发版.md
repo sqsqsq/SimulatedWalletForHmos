@@ -84,7 +84,7 @@ flowchart LR
 | Framework | 盛强 | 外网 Maison 源码仓 | `framework/` | 发布提交的源码快照（如 `git archive` 打出的文件），导入后快照文件不保存 |
 | Web Profile | 高云云 | 内网 `maison-web` | `framework/profiles/web-app/` | 平台 tag |
 | Android Profile | 钟玉生 | 内网 `maison-android` | `framework/profiles/android-app/` | 平台 tag |
-| Extensions | 王义康 | 外网 `SimulatedWalletForHmos` | `extensions/base/`、`extensions/examples/` | 发布提交的源码快照 |
+| Extensions | 王义康 | 外网 `SimulatedWalletForHmos` | `extensions/base/`（含临时适配样例） | 发布提交的源码快照 |
 | 需求系统对接层 | 待定 | 内网 `maison-adapters` | `extensions/adapters/` | 对接层 tag |
 
 Profile 随 Framework 一起打包；Extensions 和对接层随 Maison 发行包一起交付。业务拿到的是一个发行包。Profile 名 `web-app`、`android-app` 是暂定名，正式名由盛强定。
@@ -115,7 +115,7 @@ maison-distribution/                       分支 1.x、2.x
 │  └─ dist/                                打包输出，不入库
 ├─ extensions/
 │  ├─ base/                                Extensions 包，与业务工程 doc/extensions/base/ 同构，随外网快照
-│  ├─ examples/knowledge/                  样例知识，随外网快照
+│  │  └─ examples/knowledge/               base 内的适配样例，base 同时带 .gitignore
 │  └─ adapters/                            来自 maison-adapters 的 tag
 ├─ 打包/
 │  ├─ pack-maison.ps1（或 .sh）             从当前提交打出 Maison 发行包
@@ -138,7 +138,7 @@ maison-distribution/                       分支 1.x、2.x
 framework/                        Maison 源码仓 3.2.0，外网提交 a1b2c3d
 framework/profiles/web-app        maison-web  web-2.0.3
 framework/profiles/android-app    maison-android  android-2.0.1（沿用上一版）
-extensions/base/、examples/       SimulatedWalletForHmos 2.1.0，外网提交 e4f5a6b，配 Framework 3.2.0
+extensions/base/                 SimulatedWalletForHmos 2.1.0，外网提交 e4f5a6b，配 Framework 3.2.0
 extensions/adapters/              maison-adapters  adapters-2.0.2
 ```
 
@@ -147,7 +147,7 @@ extensions/adapters/              maison-adapters  adapters-2.0.2
 | 动作 | 整份替换 | 保留不动 |
 |---|---|---|
 | 导入 Framework | `framework/` | `framework/profiles/web-app/`、`android-app/` |
-| 导入 Extensions | `extensions/base/`、`extensions/examples/` | `extensions/adapters/` |
+| 导入 Extensions | 只替换 `extensions/base/` | 内网 `extensions/adapters/` 保留原样；发布仓不设项目 knowledge |
 | 收平台 tag | `framework/profiles/<名>/` | — |
 | 收对接层 tag | `extensions/adapters/` | — |
 
@@ -205,26 +205,26 @@ maison-adapters/                           分支 1.x、2.x
 
 ### 6.1 Extensions 的包形态
 
-业务工程里的 `doc/extensions/` 分成四块，各有归属：
+业务工程的扩展根为 `doc/extensions/`，2.0.6 起各项归属如下：
 
 | 目录 | 归谁 | 内容 | 升级时 |
 |---|---|---|---|
-| `base/` | 包 | manifest、skills、hooks、rules | 整份替换 |
-| `knowledge/` | 业务 | 业务知识及其加载清单 | 由 `/story adapt` 按演进记录适配 |
-| `adapters/` | 业务 | 需求系统对接层 | 由 `/story adapt` 按演进记录适配 |
+| `base/` | 外网 Extension | 机制与临时适配样例 | 整份替换 |
+| `manifest.yaml` | 业务工程根清单 | 机制登记、项目身份与知识激活清单 | 保留原位，adapt 就地合并 |
+| `knowledge/` | 业务工程 | 项目正式知识 | 由本工程 adapt 按需适配 |
+| `adapters/` | 内网对接层维护者 | 发行包选定的需求系统对接实现 | 业务项目随 base 一起替换 |
 | `adaptation.yaml` | 业务 | 已适配版本等状态 | 由 adapt 写 |
 
-- Extensions 发布的包就是 `base/`，结构与业务工程里的 `base/` 一致。
-- Maison 发行包另外带上内网对接层 `adapters/`（首装时用），以及样例 `examples/knowledge/`。
-- 业务工程的 `paths.extension_dir` 指向 `doc/extensions/base`，Framework 从这里读 manifest、skills 和 hooks。
-- 新业务还没有自己的知识，adapt 会读取发行包里的样例作为参考。样例留在包里，不进业务代码仓。模型会照着样例写，所以样例要选达到金样水平的内容。
-- 外网 Extensions 仓的 Demo 用于外网开发和测试，它的替身对接层只留在 Demo 里。
+- 外网只发布 `extensions/base/`。正式知识样板和替身对接层只在外网 demo 中供开发测试使用，外网发布物没有同级的 knowledge 或 adapters。
+- 内网发布仓的 Extensions 部分只有 `base/` 和 `adapters/`。导入外网版本时只换 base；对接层独立接收内网 tag。内网发行包把这两个目录一起交给业务工程。
+- 业务工程的 `paths.extension_dir` 保持 `doc/extensions`，原知识登记继续相对根 manifest 解析。
+- adapt 从已装的 `base/examples/knowledge/` 参考写法，依据本工程事实生成或更新知识。随包 `base/.gitignore` 忽略 `/examples/`，适配成功后清理本次安装的样例。
 
 这一目录是 Extensions 2.x 的整改目标，由王义康在 Extensions 2.x 的 Spec 里设计并实施，前提见 §10。主要改动有三项：
 
 - 拆出 `base/`、`knowledge/`、`adapters/` 三个目录；
 - Extensions 的脚本从 `../adapters/` 加载对接层；
-- adapt 支持"本工程替换 base 之后自升级"，首装时从发行包目录读取样例。
+- 业务工程替换 base 和 adapters 后沿已有 Story 入口就地执行 adapt，由它按新版登记刷新宿主跳板。
 
 **1.x 线的过渡做法**：
 
@@ -243,24 +243,24 @@ maison-2.1.0.zip（另附 maison-2.1.0.zip.sha256）
    ├─ framework-3.2.0.zip            发布仓打出的 Framework 包，含 web-app、android-app
    ├─ framework-3.2.0.manifest.json
    └─ extensions/
-      ├─ base/                        Extensions 包；升级时只用它
-      ├─ adapters/                    内网需求系统对接层；首装时复制
-      └─ examples/knowledge/          样例知识；adapt 读取参考，留在包里
+      ├─ base/                        外网机制包，内含 examples/knowledge/ 和 .gitignore
+      └─ adapters/                    内网对接层，首装和升级均随 base 交付
 ```
 
 ### 6.3 装好后的业务工程（2.x）
 
 ```text
-<业务工程>/                                 必须是 Git 根
+<业务工程>/                                 可位于 Git 根或仓内子目录
 ├─ framework/                               解压 framework-3.2.0.zip 得到
 │  └─ harness/node_modules/                 init 时 npm install 生成，不入库
-├─ framework.config.json                    init 生成：项目名、project_profile、架构分层；paths.extension_dir 指向 doc/extensions/base
+├─ framework.config.json                    init 生成：项目名、project_profile、架构分层；paths.extension_dir 指向 doc/extensions
 ├─ framework.local.json                     个人工具链路径，不入库
 ├─ AGENTS.md、CLAUDE.md 等                   init 生成宿主入口；adapt 写 Extensions 标记区
 └─ doc/
    ├─ architecture.md、module-catalog.yaml   init 生成骨架，业务填写
    ├─ usage.json                            使用记录
    └─ extensions/
+      ├─ manifest.yaml               留在扩展根
       ├─ base/
       ├─ knowledge/
       ├─ adapters/
@@ -273,19 +273,19 @@ maison-2.1.0.zip（另附 maison-2.1.0.zip.sha256）
 
 1. 从发布说明确认要装的版本和支持范围，核对发行包的 sha256。
 2. 把 `framework-<版本>.zip` 解压到工程根，得到 `framework/`。
-3. 运行 framework-init，选对工程类型。init 会安装 Harness 依赖、扫描工程、确定计划，并生成 `framework.config.json` 和宿主入口。
-4. 把发行包里的 `extensions/base/`、`extensions/adapters/` 复制到 `doc/extensions/` 下。
-5. 在业务工程里打开会话，执行 `/story adapt`。adapt 会参考发行包里的 `extensions/examples/knowledge/` 生成知识，写入 `adaptation.yaml`，把 `paths.extension_dir` 设为 `doc/extensions/base`，并核对对接层和入口。
+3. 在业务工程运行 framework-init，选定宿主，复制内网包的 base、adapters。根 manifest 保持原位，首次可按正式接口做一次最小配置。
+4. 2.0.6 的宿主 Story 入口须直接指向 base 内的源文件。现有 900c 在这个布局上尚不能仅靠根 manifest 登记 ID 完成首次物化，正式接法见下节链接；此处是目标流程。
+5. 在业务工程里执行 `/story adapt`，生成或更新项目知识与登记、核对对接及入口，成功后清理临时样例并记录版本。2.0.6 的入口准备命令与升级分工见[首装设计](../../spec/2.0.6/draft/2026-11-23-目录调整与就地适配.md#首次取得-story-入口)。
 6. 在 `framework.local.json` 里填写个人工具链路径。
 7. 按安装说明里的接入验收项确认可用，再合入业务主线。
 
-Framework 要先于 Extensions 安装，因为 Extensions 的宿主入口由 Framework 按 manifest 生成。
+首次物化的有效结果是宿主能从新会话进入 base 中的 Story。
 
 升级：
 
-1. 解压新的 Framework 包，替换 `framework/`，执行 framework-init UPDATE。
-2. 替换 `doc/extensions/base/`，执行 `/story adapt`。adapt 按 `adaptation.yaml` 之后的演进条目适配知识和对接层；发布说明里标明对接层有新版本时，adapt 按对应条目处理。
-3. 业务自己的知识、规则、配置保持原样。
+1. 若本轮同时更新 Framework，替换其发行文件；把同一内网发行包的 base、adapters 替换到业务工程。
+2. 项目完成 Framework 更新并取得指向新版 base 的宿主入口后，执行 `/story adapt`，按新版包完成业务适配。
+3. 上述目录替换保留项目知识、根 manifest、适配游标和业务配置；adapt 按实际事项更新知识及登记。
 4. 2.x 不接续 1.x 的在途需求：在途需求在 1.x 工程上做完，新需求进 2.x。
 
 ## 7. 一轮发版的四步
@@ -326,7 +326,7 @@ sequenceDiagram
 |---|---|
 | 谁 | 王义康在外网适配发布并带入快照，发布负责人执行 |
 | 在哪 | 外网对应分支（`story-1.0` 或 `story`）→ 发布仓同一条线 |
-| 做什么 | 导入 `extensions/base/` 和 `examples/`，更新 `来源.md`，重跑基准场景集。旧版 Extensions 兼容新 Framework 时，由王义康写明，本步沿用第 1 步的结果 |
+| 做什么 | 只导入 `extensions/base/`，保留内网 adapters，更新 `来源.md`，重跑基准场景集。旧版 Extensions 兼容新 Framework 时，由王义康写明，本步沿用第 1 步的结果 |
 | 产出 | 第二份基准结果 |
 | 完成 | 本线的 Framework 和 Extensions 组合已确定，基准结果已记录 |
 
@@ -429,8 +429,7 @@ flowchart TB
 | Web、Android 的 fixture 能在源码测试中运行 | fixture 扫描根只登记了 hmos-app、generic（Maison `harness/tests/run-tests.ts`）；发布件里的 `npm test` 是 `check:global`，不跑 fixture | 盛强 |
 | 发布仓能直接执行 `release:pack`、`release:verify` | 打包按目录收集文件（Maison `scripts/release-pack-rules.mjs`）；这套命令在发布仓里能否跑通、打包依赖能否在内网安装，需要核实 | 盛强核实，需要时说明发布仓里的打包方式 |
 | Android 多仓、二进制依赖的工程结构 | 需要 Framework 新增核心能力；Maison 的 Android 适配计划排在 3.2.0，只能进 2.x 线 | 盛强按版本计划交付 |
-| 在扩展根之外登记知识 | `paths.extension_dir` 指向 `base/` 后，Framework 能读到 manifest、skills、hooks；但知识只能经 manifest 登记，引用路径不得含 `..`，必须落在扩展根内（Maison `harness/extension-loader.ts` 的 `safeResolve`、`harness/scripts/utils/project-relative-path.ts`），所以 `doc/extensions/knowledge/` 登记不进去 | 王义康提需求，盛强设计排期 |
-| Extensions 2.x 目录整改 | 见 §6.1；依赖上一项 | 王义康 |
+| Extensions 2.x 目录整改 | 2.0.6 保留扩展根 manifest 和现有知识登记；须核机制迁入 base 后的 Story 宿主入口与升级组合（§6.1） | 王义康 |
 
 这些就绪之前：
 
@@ -455,7 +454,7 @@ flowchart TB
 | 首轮发布负责人 | 团队 |
 | 对接层维护者，以及从哪个业务工程提取首个版本 | 团队 |
 | Web、Android Profile 的正式名称 | 盛强 |
-| Extensions 2.x 目录整改所在版本；Framework 支持扩展根之外登记知识的排期 | 王义康、盛强 |
+| Extensions 2.0.6 目录调整后的宿主入口与升级组合验证 | 王义康 |
 | 基准场景集、全功能场景集的具体内容 | 首轮发布负责人与部件作者 |
 | 1.x 何时停止维护 | 需求方与发布负责人，看业务迁移进度 |
 | 黄志强、潘雨晨的分工；做公共能力需要外网和强模型条件 | 团队 |
@@ -473,6 +472,7 @@ flowchart TB
 | 11-05 | "你设计的走向了过于简单的极端，没有充分考虑实际场景的复杂度"；必须覆盖：fwk 新版本更新发布仓并基准测试、ext 适配合入并基准测试、profile 从发布仓取 fwk 开发后提交、发布仓全功能测试并发布，"上述 1-4 可能同时并行发生在 maison 的 1.x（稳定发布分支）、2.x（新特性开发分支）" | 分仓、两条线、四步发版（§4、§7、§8） |
 | 11-05 | "发布仓不应该归档 zip 实体，而是源码，要发布还是走发布仓的打包流程"；"发布仓是一个聚合态的 Maision 全功能代码仓，它本身不直接演进特性，但是要提供源码管理、功能验证、打包发布的能力"；profile 与 framework 的协作"类似当前 story 跟 framework 的协作"；story 后续也同步源码到发布仓；对接层作为内网部件随包发布 | 发布仓聚合源码并打包（§5.1）；平台仓带 demo（§5.2）；对接层仓（§5.3） |
 | 11-05 | 改造 Extensions 为 knowledge、adapters、base，"以后只替换 base"；"story 的发布包结构，不是应该跟业务仓的 Extensions 里的结构一样吗"；base 里的样例"会提交到业务代码仓，这个有点问题" | 发布包与业务工程同构，升级为替换 base 后执行 adapt，样例留在包里（§6） |
+| 11-23 | 外网包只交 base，内网发布仓导入时保留 adapters；业务项目替换 base 和 adapters，再执行 adapt | 本轮裁定更新 11-05 的范围。现行流程见 §6，样例随 base，业务 manifest 保持原位 |
 | 11-05 | "文档里不要叫 story 吧，应该是 extensions"；"文档有多轮迭代的打补丁问题，请重新整理" | 部件统称 Extensions；本文整体重写 |
 
 ### 13.2 被更正的判断
@@ -488,8 +488,8 @@ flowchart TB
 | 发布仓归档上游 Framework ZIP 和 Demo | 用户要求发布仓放源码，并由它自己打包 | §5.1 |
 | 平台从上游 ZIP 手工组装自测工程 | 与 Extensions 已在用的协作方式不一致 | 平台仓带 demo，按发布仓打出的包同步（§5.2） |
 | Extensions 以正式 Demo 作为发布形态 | Demo 是开发测试工程 | 发布 `base/`，随 Maison 发行包交付（§6.1） |
-| 样例知识放进 `base/`、不登记加载 | 会提交到业务代码仓 | 样例留在发行包里，adapt 从包读取（§6.1） |
-| Extensions 三分目录需要 Framework 整体改扩展约定 | 混淆了"运行时 Framework 从哪里读"和"升级怎么做"；升级由 adapt 完成 | Framework 只需支持在扩展根之外登记知识（§10） |
+| 样例随包会进入业务提交 | 2.0.6 样例放在 base/examples/knowledge/ | 随 base 交付 .gitignore，适配成功后删除安装样例（§6.1） |
+| 迁移 manifest 导致知识越出扩展根 | 2.0.6 已确定 manifest 保持原位 | 原知识登记有效，待验的是机制搬迁后的 Skill 入口（§10） |
 
 ### 13.3 核到的事实
 

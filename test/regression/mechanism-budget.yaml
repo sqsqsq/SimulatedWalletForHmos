@@ -503,6 +503,227 @@ packages:
         reason: "一行 Story description 替换只在公开入口确实消费时实施，条件额度 G1/X1；当前无产品实投。夹具、统计和离线合并交回 G0/X0，保持历史差额与控制值。"
         source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md"
 
+      - band: ">150%"
+        by: "维护设计者 Codex（用户授权）"
+        date: "2026-11-20"
+        at_ref: "7ad735d8"
+        scope: "S27/S28/S10 交回裁定；保留 S27 条件额度，S29 收件及交接返修"
+        previous_invested_limit_g: 8439
+        actual_invested_g: 8568
+        confirmed_overrun_g: 0
+        unapproved_overrun_g: 130
+        invested_limit_g: 8439
+        next_steps:
+          S29: {g: 0, x: 0}
+        reason: "本段实投 G0/X0；已发生认可额度 G8438，另有 S27 条件 G1 未使用。历史未追认 G130，与含未用额度的上限差 G129 分列。正式 pin 维持 900c。"
+        source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md"
+
+      - band: ">150%"
+        by: "维护设计者 Codex（用户授权）"
+        date: "2026-11-20"
+        at_ref: "63c967d7"
+        scope: "S08 原生路线已核，批准本仓作者入口接入，与 S29/S10 同期"
+        previous_invested_limit_g: 8439
+        actual_invested_g: 8568
+        confirmed_overrun_g: 0
+        unapproved_overrun_g: 130
+        invested_limit_g: 8446
+        next_steps:
+          S08: {g: 7, x: 3}
+          S29: {g: 0, x: 0}
+          S10: {g: 0, x: 0}
+        reason: "900c/f894 实证先转交再修订、同请求后继、Plan 收口与真实中断恢复。用现有设计页明确接续，替换旧顺序；按 CU 读当前 run 与阶段事实的观察器属测试域。原 G1 条件额度保留；不追加历史超额。"
+        source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md"
+
+      - band: ">150%"
+        by: "维护设计者 Codex（用户授权）"
+        date: "2026-11-21"
+        at_ref: "d5a2997d"
+        scope: "S08/S29/S10 实际裁定，S30/S31 同期返修"
+        previous_invested_limit_g: 8446
+        actual_invested_g: 8574
+        confirmed_overrun_g: 0
+        unapproved_overrun_g: 130
+        invested_limit_g: 8451
+        next_steps:
+          S30: {g: 6, x: 6}
+          S31: {g: 0, x: 0}
+          S10: {g: 0, x: 0}
+        reason: "S08 G6/X3 认可，原额未用 G1 退出。已发生认可 G8444；含 S27 条件 G1 与 S30 原提示替换 G6，累计上限 G8451。历史 G130 维持。"
+        source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md"
+
+      - band: ">150%"
+        by: "维护设计者 Codex（用户授权）"
+        date: "2026-11-21"
+        at_ref: "fb0d67b3"
+        scope: "S30/S31/S10 联合复评，原生收口与中断通过，S32/S33 并行"
+        previous_invested_limit_g: 8451
+        actual_invested_g: 8579
+        confirmed_overrun_g: 0
+        unapproved_overrun_g: 130
+        invested_limit_g: 8451
+        next_steps:
+          S32: {g: 1, x: 1}
+          S33: {g: 0, x: 0}
+          S10: {g: 0, x: 0}
+        reason: "S30 实投 G5/X6 全部认可，S31/S10 为 G0/X0；收回 S30 未用 G1。已发生认可 G8449，含 S32 原行置换 G1 及 S27 条件 G1，共 G8451。"
+        source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md"
+
+      - band: ">150%"
+        by: "维护设计者 Codex（用户授权）"
+        date: "2026-11-21"
+        at_ref: "bbeff501"
+        scope: "S32/S33 收口、S10 批末归属与中央契约测试复验"
+        previous_invested_limit_g: 8451
+        actual_invested_g: 8580
+        confirmed_overrun_g: 0
+        unapproved_overrun_g: 130
+        invested_limit_g: 8451
+        next_steps:
+          S34: {g: 0, x: 0}
+          S10: {g: 0, x: 0}
+        reason: "认可 S32 原行替换 G1/X1，S33 与 S10 均 G0/X0；已发生认可 G8450，保留 S27 条件 G1，历史 G130 不变。"
+        source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md"
+
+      - band: ">150%"
+        by: "维护设计者 Codex（用户授权）"
+        date: "2026-11-21"
+        at_ref: "8ee6815f"
+        scope: "S34 本仓受管副本退场与 S10 规定组合实核"
+        previous_invested_limit_g: 8451
+        actual_invested_g: 8580
+        confirmed_overrun_g: 0
+        unapproved_overrun_g: 130
+        invested_limit_g: 8451
+        reason: "S34/S10 G0/X0；已发生认可 G8450，另留 S27 条件 G1。两条受管 burst 在批末超时，S10 待中央处置和 05 采用。"
+        source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md"
+
+      - band: ">150%"
+        by: "维护设计者 Codex（用户批准06批）"
+        date: "2026-11-21"
+        at_ref: "8ee6815f"
+        scope: "06 批三项既有指令替换"
+        previous_invested_limit_g: 8451
+        actual_invested_g: 8580
+        confirmed_overrun_g: 0
+        unapproved_overrun_g: 130
+        invested_limit_g: 8458
+        next_steps:
+          S35: {g: 0, x: 0}
+          S36: {g: 7, x: 11}
+          S37: {g: 0, x: 0}
+        reason: "S36 三项预计 G2/X3、G3/X4、G2/X4；保留 S27 条件 G1，不追认历史差额。"
+        source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md"
+
+      - band: ">150%"
+        by: "维护设计者 Codex（用户授权）"
+        date: "2026-11-21"
+        at_ref: "e74050ee"
+        scope: "S37 核 S36 三处提示实际替换与模型配置"
+        previous_invested_limit_g: 8458
+        actual_invested_g: 8587
+        confirmed_overrun_g: 0
+        unapproved_overrun_g: 130
+        invested_limit_g: 8458
+        reason: "S36 实投 G7/X14 全部认可，已发生认可 G8457，保留 S27 条件 G1。A/B 离线补证及模型配置 G0/X0，06 尚待补证。"
+        source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md"
+
+      - band: ">150%"
+        by: "维护设计者 Codex（用户委托）"
+        date: "2026-11-21"
+        at_ref: "e74050ee"
+        scope: "07 批全量发布审查后的修复额度"
+        previous_invested_limit_g: 8458
+        actual_invested_g: 8587
+        confirmed_overrun_g: 0
+        unapproved_overrun_g: 130
+        invested_limit_g: 8472
+        next_steps:
+          S40: {g: 5, x: 1}
+          S41: {g: 6, x: 4}
+          S42: {g: 3, x: 7}
+        reason: "07 批新增预计 G14/X12，S38/S39/S43/S44 为 G0/X0。保留 S27 条件 G1，历史 G130 不变。"
+        source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md"
+
+      - band: ">150%"
+        by: "维护设计者 Codex（用户授权）"
+        date: "2026-11-22"
+        at_ref: "a451a70b"
+        scope: "S36-B、S39—S41 联合复评与原步返修；放行 S42"
+        previous_invested_limit_g: 8472
+        actual_invested_g: 8604
+        unapproved_overrun_g: 134
+        confirmed_overrun_g: 5
+        invested_limit_g: 8487
+        next_steps:
+          S39: {g: 0, x: 0}
+          S40: {g: 5, x: 3}
+          S41: {g: 8, x: 6}
+          S42: {g: 3, x: 7}
+        reason: "实投 G17/X8 中认可 S40 G2、S41 G11（较该步原 G6 多认可 G5），未追认 G4；已发生认可 G8470。返修 G13 及原 S42 G3、S27 条件 G1。"
+        source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md"
+
+      - band: ">150%"
+        by: "维护设计者 Codex（用户授权）"
+        date: "2026-11-22"
+        at_ref: "0c2ec340"
+        scope: "06 收口、07 S39—S42 汇合复评及原步返修"
+        previous_invested_limit_g: 8487
+        actual_invested_g: 8629
+        confirmed_overrun_g: 5
+        unapproved_overrun_g: 138
+        invested_limit_g: 8499
+        next_steps:
+          S39: {g: 0, x: 0}
+          S41: {g: 5, x: 4}
+          S42: {g: 2, x: 1}
+        reason: "本轮 G25/X34 认可 G21，其中 S41 较原步额度多认 G2，S42 多认 G3。已发生认可 G8491，留 S27 条件 G1；历史及本轮未追认累计 G138。"
+        source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md"
+
+      - band: ">150%"
+        by: "维护设计者 Codex（用户授权）"
+        date: "2026-11-23"
+        at_ref: "702a0c0b"
+        scope: "S44 汇合复评与 S10 送审观察器"
+        previous_invested_limit_g: 8499
+        actual_invested_g: 8634
+        confirmed_overrun_g: 0
+        unapproved_overrun_g: 138
+        invested_limit_g: 8497
+        next_steps:
+          S39: {g: 0, x: 0}
+          S10: {g: 0, x: 0}
+        reason: "S41 G3/X3、S42 G2/X1 已认可，释放 G2；认可 G8496，另留 S27 条件 G1。S39、S10 局部返修不计机制增量。"
+        source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md"
+
+      - band: ">150%"
+        by: "维护设计者 Codex（用户授权）"
+        date: "2026-11-23"
+        at_ref: "3d9e46cf"
+        scope: "S39 发布标记与 S10 回执空值复评"
+        previous_invested_limit_g: 8497
+        actual_invested_g: 8634
+        confirmed_overrun_g: 0
+        unapproved_overrun_g: 138
+        invested_limit_g: 8497
+        next_steps:
+          S39: {g: 0, x: 0}
+        reason: "S39/S10 均 G0/X0，S10 送审观察器通过。已发生认可 G8496，保留 S27 条件 G1。"
+        source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md"
+
+      - band: ">150%"
+        by: "维护设计者 Codex（用户授权）"
+        date: "2026-11-23"
+        at_ref: "4a65f796"
+        scope: "S39 发布目录三态复核，07 批收口"
+        previous_invested_limit_g: 8497
+        actual_invested_g: 8634
+        confirmed_overrun_g: 0
+        unapproved_overrun_g: 138
+        invested_limit_g: 8497
+        reason: "本段 adapter 与测试 G0/X0。已发生认可 G8496，另留 S27 条件 G1。"
+        source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md"
+
 requirement:
   id: 2.0.1-完整适配
   status: in_progress
