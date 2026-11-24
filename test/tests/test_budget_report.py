@@ -205,5 +205,120 @@ class SecondParentBaseline(unittest.TestCase):
         self.assertEqual((1, 0), (r["invested"]["total"]["G"], r["invested"]["total"]["X"]))
 
 
+class BaseLayoutMigration(unittest.TestCase):
+    """2.0.6 目录搬迁到 `base/` 后的逻辑对齐、排除边界与双副本重复计量独立算例。
+
+    演变（有效行）：
+      base   hooks/a.mjs (3行: A B C)
+             skills/x.md (2行: row1 row2)
+             manifest.yaml (2行: name: d / version: 1)
+             adaptation.yaml (1行: adapted_for: 1)
+             knowledge/k.md (排除)
+             skills/story/scripts/adapters/story.js (排除)
+             → 总量 8 行（hooks_mjs 3, prompts_md 2, data 3）
+      c1_pure_move:
+             全部机制同字节搬入 base/（manifest.yaml -> base/package-manifest.yaml），
+             旧路径删除，adaptation.yaml 退出外网交付（X1），
+             另增排除项 base/.gitignore、base/examples/knowledge/facts/a.md、
+             base/skills/story-adaptation/reference/upgrade-changes.md、adapters/story.js
+             → 总量 7 行（hooks_mjs 3, prompts_md 2, data 2）；相对 base 逻辑 G0 / X1（仅 adaptation.yaml）
+      c2_move_and_edit:
+             在 base/hooks/a.mjs 改写 2 行并新增 1 行（B->B2, C->C2, +D → G3/X2）
+             → 总量 8 行；相对 c1 G3/X2；相对 base G3/X3（a.mjs G3/X2 + adaptation.yaml X1）
+      c3_duplicate_old_copy:
+             在 c1 基础上恢复旧路径 hooks/a.mjs（与 base/hooks/a.mjs 同时存活）
+             → 两份分别计量，hooks_mjs 变为 6 行、总量 10 行；报 duplicates["hooks/a.mjs"]
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        root = cls.root = Path(cls.tmp.name)
+        run(root, "init", "-q", "-b", "main")
+        write(root, "hooks/a.mjs", "A\nB\nC\n")
+        write(root, "skills/x.md", "row1\nrow2\n")
+        write(root, "manifest.yaml", "name: d\nversion: 1\n")
+        write(root, "adaptation.yaml", "adapted_for: 1\n")
+        write(root, "knowledge/k.md", "k1\n")
+        write(root, "skills/story/scripts/adapters/story.js", "console.log(1);\n")
+        run(root, "add", "-A"); run(root, "commit", "-qm", "base")
+        cls.base = run(root, "rev-parse", "HEAD")
+
+        # c1: 纯搬迁到 base/ + adaptation.yaml 退出 + 排除项
+        for old in ("hooks/a.mjs", "skills/x.md", "manifest.yaml", "adaptation.yaml",
+                    "knowledge/k.md", "skills/story/scripts/adapters/story.js"):
+            (root / "extensions" / old).unlink()
+        write(root, "base/hooks/a.mjs", "A\nB\nC\n")
+        write(root, "base/skills/x.md", "row1\nrow2\n")
+        write(root, "base/package-manifest.yaml", "name: d\nversion: 1\n")
+        write(root, "base/.gitignore", "/examples/\n")
+        write(root, "base/examples/knowledge/facts/a.md", "ex1\nex2\n")
+        write(root, "base/skills/story-adaptation/reference/upgrade-changes.md", "u1\nu2\n")
+        write(root, "adapters/story.js", "console.log(2);\n")
+        run(root, "add", "-A"); run(root, "commit", "-qm", "c1_pure_move")
+        cls.c1 = run(root, "rev-parse", "HEAD")
+
+        # c2: 搬迁后改三行（改两行 + 增一行 → G3/X2）
+        write(root, "base/hooks/a.mjs", "A\nB2\nC2\nD\n")
+        run(root, "add", "-A"); run(root, "commit", "-qm", "c2_move_and_edit")
+        cls.c2 = run(root, "rev-parse", "HEAD")
+
+        # c3: 旧副本与新路径并存
+        write(root, "hooks/a.mjs", "A\nB\nC\n")
+        run(root, "add", "-A"); run(root, "commit", "-qm", "c3_dup")
+        cls.c3 = run(root, "rev-parse", "HEAD")
+
+        cls.ledger = root / "ledger.yaml"
+        cls.ledger.write_text(yaml.safe_dump({
+            "release": {"id": "2.0.6", "baseline_ref": cls.base, "control_g": 20},
+            "requirement": {"status": "in_progress"},
+            "packages": [{"id": "pkg", "start_ref": cls.base, "approved_g": 10,
+                          "scopes": {"钩子": ["hooks/*"], "元数据": ["manifest.yaml", "adaptation.yaml"]}}],
+        }, allow_unicode=True), encoding="utf-8")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_pure_move_reports_relocation_with_zero_logical_g_and_only_adaptation_exits(self):
+        r = br.build(self.root, self.ledger, self.base, self.c1, "pkg", None)
+        e = r["endpoint"]
+        self.assertEqual((8, 7), (r["totals"]["base"]["total"], r["totals"]["to"]["total"]))
+        self.assertEqual((0, 1), (e["total"]["G"], e["total"]["X"]))
+        self.assertEqual("removed", e["files"]["adaptation.yaml"]["status"])
+        self.assertEqual(1, e["files"]["adaptation.yaml"]["X"])
+        self.assertEqual("moved", e["files"]["base/hooks/a.mjs"]["status"])
+        self.assertEqual("hooks/a.mjs", e["files"]["base/hooks/a.mjs"]["moved_from"])
+        self.assertEqual("moved", e["files"]["base/package-manifest.yaml"]["status"])
+        self.assertEqual("manifest.yaml", e["files"]["base/package-manifest.yaml"]["moved_from"])
+        self.assertEqual(3, len(e["moved"]))
+        for excluded in ("base/.gitignore", "base/examples/knowledge/facts/a.md",
+                         "base/skills/story-adaptation/reference/upgrade-changes.md", "adapters/story.js"):
+            self.assertNotIn(excluded, e["files"])
+        self.assertEqual((0, 1), (r["invested"]["total"]["G"], r["invested"]["total"]["X"]))
+        self.assertIn("base/package-manifest.yaml", br.markdown(r))
+        self.assertIn("manifest.yaml", br.markdown(r))
+
+    def test_move_plus_three_changed_rows_reports_exact_gx(self):
+        r = br.build(self.root, self.ledger, self.base, self.c2, "pkg", None)
+        e = r["endpoint"]
+        self.assertEqual((3, 3), (e["total"]["G"], e["total"]["X"]))
+        self.assertEqual((3, 2), (e["files"]["base/hooks/a.mjs"]["G"], e["files"]["base/hooks/a.mjs"]["X"]))
+        self.assertEqual("moved_changed", e["files"]["base/hooks/a.mjs"]["status"])
+        self.assertEqual("hooks/a.mjs", e["files"]["base/hooks/a.mjs"]["moved_from"])
+        self.assertEqual((3, 2), (r["package"]["endpoint"]["by_scope"]["钩子"]["G"],
+                                  r["package"]["endpoint"]["by_scope"]["钩子"]["X"]))
+
+    def test_keeping_old_copy_counts_both_and_reports_duplicate(self):
+        r = br.build(self.root, self.ledger, self.base, self.c3, "pkg", None)
+        self.assertEqual(11, r["totals"]["to"]["total"])
+        self.assertEqual(7, r["totals"]["to"]["by_category"]["hooks_mjs"])
+        self.assertIn("hooks/a.mjs", r["endpoint"]["duplicates"])
+        self.assertEqual(["base/hooks/a.mjs", "hooks/a.mjs"],
+                         r["identity"]["duplicate_counted"]["hooks/a.mjs"])
+        self.assertEqual(4, r["endpoint"]["files"]["base/hooks/a.mjs"]["G"])
+        self.assertIn("重复并存", br.markdown(r))
+
+
 if __name__ == "__main__":
     unittest.main()

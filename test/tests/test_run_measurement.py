@@ -1745,5 +1745,122 @@ class TruncatedPublicCallsAreCompletedByTheSameNativeCall(unittest.TestCase):
         got = self.measure(input_cut=False, output_cut=True)
         self.assertEqual((1, {}), (got["gate_unknown_by_kind"]["review_check"], got["review_results"]))
 
+
+class S02IsolationAndReviewDispatchCounting(unittest.TestCase):
+    """2.0.6 S02：隔离越界（相对路径按 cwd 解析、动态拼接/会话库访问、仅路径文字与实际读取分流）、
+    常驻审查子代理跨 send_message 多轮派发与多次 settled 配对，以及执行脚本不误判读源码。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.run_dir = Path(self._tmp.name)
+
+    def _run_measure(self, records: list[dict], *, workspace: str | None = None) -> dict:
+        if workspace is not None:
+            (self.run_dir / "state.json").write_text(json.dumps({"workspace": workspace}), encoding="utf-8")
+        path = self.run_dir / "events.jsonl"
+        path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in _events(*records)) + "\n", encoding="utf-8")
+        return measure_run.measure(path, run_dir=self.run_dir)
+
+    def test_executing_script_with_open_in_args_is_not_counted_as_reading_checker_source(self) -> None:
+        got = self._run_measure([{
+            "tool_name": "pwsh",
+            "tool_input": {"command": 'python doc/extensions/skills/story/scripts/core/story_flow.py decide --answer "用户未确认 open(door) 策略"'},
+            "tool_output": "ok",
+        }])
+        self.assertEqual(0, got["reads_checker_source"])
+
+    def test_relative_escape_and_legitimate_parent_return_inside_workspace(self) -> None:
+        ws = r"C:\Temp\sw-story\suite-1\car-key-sharing"
+        got = self._run_measure([
+            # 合法：cd framework/harness 后用 ../.. 回到本工作区根，不算越界
+            {"tool_name": "pwsh",
+             "tool_input": {"command": "cd framework/harness; npx ts-node scripts/harness-runner.ts --project-root ../.."},
+             "tool_output": "ok"},
+            # 仅出现路径文字无读取动作：归 mentions_only，不污染
+            {"tool_name": "pwsh",
+             "tool_input": {"command": "echo 'see ../auto-topup/doc/features for reference'"},
+             "tool_output": "see ../auto-topup/doc/features for reference"},
+            # 真实相对路径越界列旁案目录：confirmed_access → 污染
+            {"tool_name": "pwsh",
+             "tool_input": {"command": "Get-ChildItem ../auto-topup/doc/features -Recurse -File"},
+             "tool_output": "doc\\features\\AR90006\\AR\\story.md"},
+        ], workspace=ws)
+        iso = got["isolation_boundary"]
+        self.assertTrue(iso["contaminated"])
+        self.assertEqual(["whole"], iso["contaminated_segments"])
+        self.assertEqual(1, len(iso["findings"]))
+        self.assertEqual("relative_escape", iso["findings"][0]["kind"])
+        self.assertEqual("confirmed_access", iso["findings"][0]["access"])
+        self.assertEqual(3, iso["findings"][0]["line"])
+        self.assertIn("auto-topup/doc/features", iso["findings"][0]["resolved_path"])
+        self.assertEqual(1, len(iso["mentions_only"]))
+        self.assertEqual(2, iso["mentions_only"][0]["line"])
+
+    def test_dynamic_host_session_store_access_is_detected(self) -> None:
+        ws = r"C:\Temp\sw-story\suite-1\auto-topup"
+        got = self._run_measure([
+            {"tool_name": "pwsh",
+             "tool_input": {"command": "const dirs=fs.readdirSync(process.env.USERPROFILE+'\\\\.dsh\\\\sessions');"},
+             "tool_output": "session-1"},
+        ], workspace=ws)
+        iso = got["isolation_boundary"]
+        self.assertTrue(iso["contaminated"])
+        self.assertEqual("host_session_store_access", iso["findings"][0]["kind"])
+        self.assertEqual("confirmed_access", iso["findings"][0]["access"])
+
+    def test_persistent_subagent_dispatches_via_send_message_pair_each_settled_and_object(self) -> None:
+        if shutil.which("node") is None:
+            self.skipTest("环境里没有 node")
+        k1, k2 = "a" * 64, "b" * 64
+        r1 = "doc/features/AR1/AR/story-src/review/review-original.1.md"
+        r2 = "doc/features/AR1/AR/story-src/review/review-original.2.md"
+        p1 = f"# Story 独立人读审查 · 派审\n\n- 材料键：`{k1}`\n- 本次报告文件：`{r1}`\n\n## 先首读\n"
+        p2 = f"# Story 独立人读审查 · 派审（复核）\n\n- 材料键：`{k2}`\n- 本次报告文件：`{r2}`\n\n## 复核\n"
+        body1 = f"material_key: {k1}\nconclusion: fail\n\n## 发现\n- 缺分支"
+        body2 = f"material_key: {k2}\nconclusion: warn\n\n## 复核\n- 已修"
+        child_uuid = "50d697b7-3e12-46ed-be67-5f0995f54c8a"
+        q_uuid = "a113720c-c9b8-4208-b240-a2f50713bf11"
+        parent_rows = [
+            {"type": "subagent/catalog", "time": 1000, "data": {"childId": q_uuid, "label": "蓝图独立质询", "childCreatedAt": 1000}},
+            {"type": "tool/call", "time": 1000, "data": {"callId": "c1", "name": "subagent",
+             "arguments": json.dumps({"name": "questioner-1", "description": "蓝图独立质询", "prompt": "# 蓝图独立质询 · 派审\n"})}},
+            {"type": "tool/result", "time": 1010, "data": {"message": {"toolCallId": "c1", "content": [{"type": "text", "text": "started subagent questioner-1"}]}}},
+            {"type": "agent/inbox/spliced", "time": 2000, "data": {"inserted": [{"source": {"kind": "subagent-settled", "senderSessionId": q_uuid,
+             "summary": "Background subagent questioner-1 finished"}, "content": [{"type": "text", "text": "Background subagent questioner-1 finished\nIts closing message:\nok1"}]}]}},
+            {"type": "tool/call", "time": 3000, "data": {"callId": "c2", "name": "send_message",
+             "arguments": json.dumps({"agent": "questioner-1", "message": "复核第二轮"})}},
+            {"type": "agent/inbox/spliced", "time": 4000, "data": {"inserted": [{"source": {"kind": "subagent-settled", "senderSessionId": q_uuid,
+             "summary": "Background subagent questioner-1 finished"}, "content": [{"type": "text", "text": "Background subagent questioner-1 finished\nIts closing message:\nok2"}]}]}},
+            {"type": "subagent/catalog", "time": 5000, "data": {"childId": child_uuid, "label": "Story 独立人读审查", "childCreatedAt": 5000}},
+            {"type": "tool/call", "time": 5000, "data": {"callId": "c3", "name": "subagent",
+             "arguments": json.dumps({"name": "story-reviewer", "description": "Story 独立人读审查", "prompt": p1})}},
+            {"type": "tool/result", "time": 5010, "data": {"message": {"toolCallId": "c3", "content": [{"type": "text", "text": "started subagent story-reviewer"}]}}},
+            {"type": "agent/inbox/spliced", "time": 6000, "data": {"inserted": [{"source": {"kind": "subagent-settled", "senderSessionId": child_uuid,
+             "summary": "Background subagent story-reviewer finished"}, "content": [{"type": "text", "text": f"Background subagent story-reviewer finished\nIts closing message:\n{body1}"}]}]}},
+            {"type": "tool/call", "time": 7000, "data": {"callId": "c4", "name": "send_message",
+             "arguments": json.dumps({"agent": "story-reviewer", "message": p2})}},
+            {"type": "agent/inbox/spliced", "time": 8000, "data": {"inserted": [{"source": {"kind": "subagent-settled", "senderSessionId": child_uuid,
+             "summary": "Background subagent story-reviewer finished"}, "content": [{"type": "text", "text": f"Background subagent story-reviewer finished\nIts closing message:\n{body2}"}]}]}},
+        ]
+        child_rows = [
+            {"type": "tool/call", "time": 5500, "data": {"callId": "w1", "name": "write",
+             "arguments": json.dumps({"file_path": r1, "content": body1})}},
+            {"type": "tool/result", "time": 5510, "data": {"message": {"toolCallId": "w1", "isError": False, "content": [{"type": "text", "text": "ok"}]}}},
+            {"type": "tool/call", "time": 7500, "data": {"callId": "w2", "name": "write",
+             "arguments": json.dumps({"file_path": r2, "content": body2})}},
+            {"type": "tool/result", "time": 7510, "data": {"message": {"toolCallId": "w2", "isError": False, "content": [{"type": "text", "text": "ok"}]}}},
+        ]
+        _session(self.run_dir / "native-sessions" / "session-p" / "session.v4.jsonl.zstd", "session-p", parent_rows)
+        _session(self.run_dir / "native-sessions" / "session-p" / "children" / child_uuid / "session.v4.jsonl.zstd", child_uuid, child_rows)
+        got = self._run_measure([{"tool_name": "read", "tool_input": {"filePath": "doc/features/AR1/AR/story.md"}}])
+        d = got["delegations"]
+        self.assertEqual((2, 2), (d["questioning_dispatches"], d["questioning_settled"]))
+        self.assertEqual((2, 2, 2, 2), (d["story_review_dispatches"], d["story_review_objects"],
+                                        d["story_review_unique_reports"], d["story_review_full_replies"]))
+        self.assertEqual({"fail": 1, "warn": 1}, d["story_review_conclusions"])
+        self.assertEqual({"first_read": 1, "recheck": 1}, d["story_review_modes"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -72,15 +72,22 @@ replies:
     expected_phase: story
     text: 实现方案。
 
+  # 本单止于方案（Plan-only）：若模型问到是否直接修改共享组件代码或顺手进入编码，宿主不得扩权，保持原授权终点。
+  - id: plan-only-shared-code-boundary
+    expected_turn: 10
+    expected_kind: story_gate
+    expected_phase: plan
+    text: 本轮止于方案，只确认业务条件和验收；需要改共享代码时，记录方案和影响，保持原授权终点。
+
   # 以下两条是第二段（update）备料：本版不追加第二次 update（2026-11-08 用户决定并沿用），
   # 原备料保留供离线语义核对与后续使用；不投就不会发生，不能据此判产品漏处理。
   - id: update-material
-    expected_turn: 10
+    expected_turn: 11
     expected_kind: story_gate
     text: 本次没有其他材料。
 
   # 模型把评审意见里「36 小时内对方仍可开门」与「撤销起车辆侧即拒绝」的冲突摆出来问人时的立场。
   - id: grace-window-conflict
-    expected_turn: 11
+    expected_turn: 12
     expected_kind: story_gate
     text: 车辆侧撤销即拒绝不变，36 小时是对方设备上卡片收回的期限。

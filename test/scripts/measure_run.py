@@ -89,10 +89,10 @@ RULE_PATH_RE = re.compile(r"(framework/|doc/extensions/)")
 _SOURCE_DIRS = (
     r"(?<=[\s/])framework"
     r"|framework/(?:[\w-]+/)*harness(?:/(?!(?:prompts|reports|state|templates|schemas)\b)[\w-]+)*"
-    r"|doc/extensions/hooks(?:/[\w-]+)*"
-    r"|doc/extensions/skills(?:/[\w-]+)?"
-    r"|doc/extensions/skills(?:/[\w-]+)*/scripts(?:/[\w-]+)*")
-SOURCE_FILE_RE = re.compile(r"framework/[\w/.*-]+\.ts\b|doc/extensions/[\w/.*-]+\.(?:mjs|py)\b")
+    r"|doc/extensions/(?:base/)?hooks(?:/[\w-]+)*"
+    r"|doc/extensions/(?:base/)?skills(?:/[\w-]+)?"
+    r"|doc/extensions/(?:base/)?skills(?:/[\w-]+)*/scripts(?:/[\w-]+)*")
+SOURCE_FILE_RE = re.compile(r"framework/[\w/.*-]+\.ts\b|doc/extensions/(?:base/)?[\w/.*-]+\.(?:mjs|py)\b")
 CHECKER_PATH_RE = re.compile(rf"{SOURCE_FILE_RE.pattern}|(?:{_SOURCE_DIRS})/?(?=[\s|;)]|$)")
 
 #: 从 bash 命令里认出「在读文件」——bash 常被当成第二套 Read。
@@ -114,6 +114,10 @@ READ_VERB_RE = re.compile(
     r"^(?:cat|head|tail|sed|less|more|type|grep|rg|awk|findstr|get-content|gc|select-string|sls)\b",
     re.IGNORECASE)
 INLINE_READ_RE = re.compile(r"readFileSync|readFile\b|open\(")
+#: 执行外部脚本文件（非 `-e`/`-c`/`--eval` 内联脚本）：避免把带业务参数文本的脚本执行误当读源码
+EXEC_SCRIPT_RE = re.compile(
+    r"^(?:node|python3?|py|npx\s+(?:ts-node|tsx)|ts-node|tsx)\s+(?!-(?:e|c)\b|--eval\b)(?:[\"']?[^\s\"']+\.(?:mjs|js|py|ts)\b)",
+    re.IGNORECASE)
 #: 切段只认引号外、未转义的分隔符：grep 模式里的 `\|` 与引号里的 `|` 是模式的一部分，不是管道。
 SEGMENT_SEPARATORS = ("||", "&&", "|", ";", "\n")
 #: PowerShell 包了一层：`"…powershell.exe" -Command "rg …"`——剥掉外壳再切段
@@ -152,13 +156,15 @@ def _split_segments(command: str) -> list[str]:
 
 
 def _read_segments(command: str) -> list[str]:
-    """bash 命令里真正在读文件的那几段（读取动词打头，或段内有内联读文件）。"""
+    """bash 命令里真正在读文件的那几段（读取动词打头，或非执行脚本段内有内联读文件）。"""
     out = []
     for seg in _split_segments(command):
         if "-command" in seg.lower():
             seg = POWERSHELL_WRAPPER_RE.sub("", seg, count=1)
         s = seg.strip().strip("\"'").strip()
-        if READ_VERB_RE.match(s) or INLINE_READ_RE.search(s):
+        if READ_VERB_RE.match(s):
+            out.append(s)
+        elif INLINE_READ_RE.search(s) and not EXEC_SCRIPT_RE.match(s):
             out.append(s)
     return out
 
@@ -502,7 +508,14 @@ def _union_seconds(intervals: list[tuple[datetime, datetime]]) -> float | None:
     并发调用的区间相互交叠：相加会把一段时间算两次，逐个相减也会把交叠部分重复扣两次。
     这里先并集再量长度，跨来源（工具、子任务、返修）同样适用。
     """
-    spans = sorted((start, end) for start, end in intervals if start is not None and end is not None and end >= start)
+    def _norm(dt: datetime) -> datetime:
+        return dt.astimezone(timezone.utc) if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+    spans = sorted(
+        (_norm(start), _norm(end))
+        for start, end in intervals
+        if start is not None and end is not None and _norm(end) >= _norm(start)
+    )
     if not spans:
         return None
     total = 0.0
@@ -736,6 +749,21 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
                                    "tool_name": call["name"] or None})
         incomplete.sort(key=lambda item: item["index"])
 
+    isolation = scan_isolation_boundary(events, calls, run_dir or events_path.parent, sessions, cut)
+    story_regs = []
+    for call in sorted(calls, key=lambda c: c["end_index"] if c["end_index"] is not None else c["start_index"]):
+        if call["kind"] != "story_register":
+            continue
+        out = _result(call)
+        status = str((call["end"] or {}).get("tool_status") or "")
+        ok = (out is not None) and (not _gate_failed(call, out))
+        story_regs.append({
+            "line": call["start_index"] + 1,
+            "end_line": (call["end_index"] + 1) if call["end_index"] is not None else None,
+            "timestamp": (call["end"] or call["start"]).get("timestamp"),
+            "status": "completed" if ok else ("unknown" if out is None else "failed"),
+        })
+
     return {
         "events": len(events),
         "duration_min": duration_min,
@@ -758,6 +786,8 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
         "gate_fail_by_kind": gate_fail_by_kind,
         "gate_unknown_by_kind": gate_unknown_by_kind,
         "review_results": dict(review_results),
+        "story_registration_times": story_regs,
+        "isolation_boundary": isolation,
         "tool_calls_completed_from_native": sum("completed_from" in call for call in calls),
         "parent_counts": parent_counts,
         "child_counts": child_counts,
@@ -873,83 +903,445 @@ def _review_mode(prompt: str) -> str:
     return next((mode for head, mode in REVIEW_MODES if re.search(rf"^{re.escape(head)}$", prompt, re.MULTILINE)), "unknown")
 
 
-def native_delegations(sessions: dict, children: dict[Path, dict] | None = None) -> dict:
-    """原生会话里的委派：按派出去的正文与子会话实际产出认角色，不按工具名——专用 verifier 工具也可能被派了 Story 审查或蓝图质询，
-    派出去的是原生阶段审查请求才是阶段审查；给每个子会话的观察跨度与收尾状态。
-    Story 独审另给派审种类（载体写明的先首读 / 复核 / 补正）、收尾回复里的业务结论（`_reply_conclusion` 的
-    `review_conclusion`）与报告完整性的可核结论（`report_completeness`）。**任务收尾、取得回复文本、
-    报告可核完整是三件事实**：收尾通知里带着收尾标志不等于拿到了完整报告；「报告已写入」这类指针与
-    空回复的完整性都记 unknown，不按任务失败算。与父方的报告接收结论分开。没有保全原件时为 null。
+#: 宿主收尾通知 summary 里的子代理名：`Background subagent <name> finished ...`
+SETTLED_AGENT_RE = re.compile(r"Background subagent (\S+)\s+(?:finished|failed|stopped|completed)")
+#: 隔离扫描：识别 shell 里的目录切换与读取/列举动词、动态宿主会话库访问、相对跳出路径和绝对路径
+CD_CMD_RE = re.compile(r"^(?:cd|set-location|sl|push-location|pushd)\s+(?:-path\s+)?[\"']?([^\"';|&\n]+)[\"']?", re.IGNORECASE)
+ACCESS_VERB_RE = re.compile(
+    r"(?:(?:^|\s)(?:cat|head|tail|sed|less|more|type|grep|rg|awk|findstr|get-content|gc|select-string|sls|"
+    r"ls|dir|get-childitem|gci|find|tree|resolve-path|test-path|stat)\b|"
+    r"(?:^|[\s.(])(?:readfile|readfilesync|readdirsync|statsync|open\(|glob\.glob|os\.listdir|os\.walk|pathlib\.path|zstandard|zstd))",
+    re.IGNORECASE)
+HOST_SESSION_STORE_RE = re.compile(
+    r"(?:(?:userprofile|home|appdata)[^\n]{0,80}\.dsh|\.dsh[/\\](?:sessions|store)|"
+    r"dsh[/\\]store|session\.v4\.jsonl\.zstd)",
+    re.IGNORECASE)
+REL_ESCAPE_RE = re.compile(r"(?<![A-Za-z0-9_.:/-])(\.\.(?:[/\\][^\s\"'`;|&)>]+)+|\.\.(?=[/\\]?(?:\s|$|[\"'`;|&)>])))")
+ABS_WIN_PATH_RE = re.compile(r"(?<![A-Za-z0-9_])([A-Za-z]:[/\\][^\s\"'`;|&)>]+)")
+#: 宿主环境里合法的工具自身路径或公共二进制目录，不算访问旁案/主仓
+_BENIGN_ABS_PREFIXES = (
+    "c:/windows/", "c:/program files/", "c:/program files (x86)/",
+    "e:/tools/", "/usr/", "/bin/", "/opt/",
+)
+#: 输出失败或空提示，用来辅助判断是实际拿到外部内容还是仅尝试失败
+_ACCESS_FAILED_RE = re.compile(r"(?:cannot find path|no such file|does not exist|access is denied|filenotfounderror|enoent)", re.IGNORECASE)
 
-    **审查按实际任务计**：`task_id` 取原生 childId，`reply_received` 看收尾通知里有没有回复文本，
-    `report_completeness` 按同一次派审、同一对象、所配位置上成功写出的读者原件与整份 final 核
-    （见 `_closing_reply`、`_reply_conclusion` 与 `_report_completeness`），现行作者自选的报告标题不参与；
-    历史格式只对载体没有现行报告合同的历史派审按原身份读取。
-    `objects` 是派出去的审查对象键个数；汇总 `story_review_tasks / replies / full_replies / reports_unknown /
-    objects`。`children/` 目录数不参与计数。
-    `children` 是本 run 已经读过的子会话读数（measure 传同一份，避免重复解析）。"""
+
+def _norm_abs_posix(raw: str) -> str:
+    """将 Windows/POSIX 绝对路径归一为正斜杠并消除 `.`/`..`。"""
+    text = str(raw or "").strip().strip("\"'").replace("\\", "/")
+    if not text:
+        return ""
+    drive = ""
+    if re.match(r"^[A-Za-z]:", text):
+        drive = text[:2].lower()
+        rest = text[2:]
+    elif text.startswith("/"):
+        rest = text
+    else:
+        return ""
+    parts: list[str] = []
+    for seg in rest.split("/"):
+        if not seg or seg == ".":
+            continue
+        if seg == "..":
+            if parts:
+                parts.pop()
+            continue
+        parts.append(seg)
+    return f"{drive}/" + "/".join(parts)
+
+
+def _resolve_from_cwd(cwd_posix: str, rel: str) -> str:
+    clean = str(rel or "").strip().strip("\"'").replace("\\", "/")
+    if not clean:
+        return cwd_posix
+    if re.match(r"^[A-Za-z]:/", clean) or clean.startswith("/"):
+        return _norm_abs_posix(clean)
+    if not cwd_posix:
+        return ""
+    return _norm_abs_posix(f"{cwd_posix.rstrip('/')}/{clean}")
+
+
+def _inside_root(target: str, root: str) -> bool:
+    if not target or not root:
+        return False
+    t, r = target.rstrip("/").lower(), root.rstrip("/").lower()
+    return t == r or t.startswith(r + "/")
+
+
+def _workspace_root_for_run(run_dir: Path | None, sessions: dict) -> str | None:
+    """从保全的父会话 header.cwd、state.json 或 suite.json 取得本 Case 隔离工作区根。"""
+    for _parent, info in sessions.get("read") or []:
+        cwd = (info.get("header") or {}).get("cwd")
+        if cwd:
+            norm = _norm_abs_posix(str(cwd))
+            if norm:
+                return norm
+    if run_dir is not None:
+        state_file = run_dir / "state.json"
+        if state_file.is_file():
+            try:
+                ws = json.loads(state_file.read_text(encoding="utf-8")).get("workspace")
+                if ws:
+                    norm = _norm_abs_posix(str(ws))
+                    if norm:
+                        return norm
+            except (OSError, json.JSONDecodeError):
+                pass
+        # run_dir = <suite>/cases/<case>/<run>
+        suite_file = run_dir.parents[2] / "suite.json" if len(run_dir.parents) >= 3 else None
+        if suite_file and suite_file.is_file():
+            try:
+                suite = json.loads(suite_file.read_text(encoding="utf-8"))
+                case_name = run_dir.parent.name
+                ws = ((suite.get("case_states") or {}).get(case_name) or {}).get("workspace")
+                if ws:
+                    norm = _norm_abs_posix(str(ws))
+                    if norm:
+                        return norm
+            except (OSError, json.JSONDecodeError):
+                pass
+    return None
+
+
+def _allowed_external_roots(run_dir: Path | None, ws_root: str | None) -> list[str]:
+    """本 Case 合法外部路径：本 Case 自己的需求系统副本目录（sw-sys）。"""
+    allowed: list[str] = []
+    if run_dir is not None and len(run_dir.parents) >= 3:
+        suite_file = run_dir.parents[2] / "suite.json"
+        if suite_file.is_file():
+            try:
+                suite = json.loads(suite_file.read_text(encoding="utf-8"))
+                case_name = run_dir.parent.name
+                rec = (suite.get("case_states") or {}).get(case_name) or {}
+                for k in ("requirement_system_dir", "system_dir"):
+                    if rec.get(k):
+                        norm = _norm_abs_posix(str(rec[k]))
+                        if norm:
+                            allowed.append(norm)
+            except (OSError, json.JSONDecodeError):
+                pass
+    if ws_root and "/sw-story/" in ws_root.lower():
+        # 允许指向同 temp 根下的 sw-sys 需求系统目录（仅环境变量替身访问，不放行兄弟 case）
+        temp_parent = ws_root[:ws_root.lower().index("/sw-story/")]
+        allowed.append(f"{temp_parent}/sw-sys")
+    return allowed
+
+
+def _segment_of(index: int, cut: int | None) -> str:
+    if cut is None:
+        return "whole"
+    return "initial" if index < cut else "update"
+
+
+def scan_isolation_boundary(events: list[dict], calls: list[dict], run_dir: Path | None,
+                            sessions: dict, cut: int | None) -> dict:
+    """只读扫描隔离工作区越界：结合事件 cwd 解析相对路径、识别动态拼接/宿主会话库访问与绝对路径越界，
+    并区分实际读取/列举与仅出现路径文字；保留原事件行号与影响段，不修改原事件。"""
+    ws_root = _workspace_root_for_run(run_dir, sessions)
+    allowed_ext = _allowed_external_roots(run_dir, ws_root)
+    findings: list[dict] = []
+    mentions_only: list[dict] = []
+    seen: set[tuple[int, str, str]] = set()
+
+    def is_allowed(target: str) -> bool:
+        if not target:
+            return True
+        if ws_root and _inside_root(target, ws_root):
+            return True
+        if any(_inside_root(target, root) for root in allowed_ext):
+            return True
+        low = target.lower()
+        return any(low.startswith(prefix) for prefix in _BENIGN_ABS_PREFIXES)
+
+    def record(call: dict, kind: str, target: str, access: str, evidence: str) -> None:
+        line = call["start_index"] + 1
+        key = (line, kind, target.lower())
+        if key in seen:
+            return
+        seen.add(key)
+        item = {
+            "line": line,
+            "segment": _segment_of(call["start_index"], cut),
+            "tool": call["name"],
+            "kind": kind,
+            "access": access,
+            "resolved_path": target,
+            "evidence": evidence[:240],
+            "truncated_needs_host_check": bool(call["shortened"]),
+        }
+        if access == "text_mention_only":
+            mentions_only.append(item)
+        else:
+            findings.append(item)
+
+    def output_confirms_access(call: dict) -> str:
+        out = _output_text(call["end"]) if call["end"] is not None else ""
+        status = str((call["end"] or {}).get("tool_status") or "").lower()
+        if call["shortened"]:
+            return "confirmed_access" if out.strip() and not _ACCESS_FAILED_RE.search(out) else "attempted_access"
+        if status == "error" or _ACCESS_FAILED_RE.search(out):
+            return "attempted_access"
+        return "confirmed_access" if out.strip() else "attempted_access"
+
+    for call in calls:
+        name = call["name"]
+        ti = call["start"].get("tool_input") or {}
+        if name in {"read", "grep", "glob", "list", "ls", "view", "view_file"}:
+            paths = [str(ti.get(k)) for k in ("file_path", "filePath", "path", "directory") if ti.get(k)]
+            for raw in paths:
+                norm = _resolve_from_cwd(ws_root or "", raw) if ws_root else _norm_abs_posix(raw)
+                if norm and not is_allowed(norm):
+                    kind = "relative_escape" if not _is_absolute_path(_writer_path(raw)) else "absolute_escape"
+                    record(call, kind, norm, output_confirms_access(call), raw)
+        elif name in SHELL_TOOLS:
+            cmd = str(ti.get("command") or "")
+            if not cmd:
+                continue
+            has_access_verb = bool(ACCESS_VERB_RE.search(cmd))
+            # 1. 动态拼接 / 宿主私有会话库访问（如 $env:USERPROFILE\.dsh\sessions、.zstd）
+            if HOST_SESSION_STORE_RE.search(cmd):
+                access = output_confirms_access(call) if has_access_verb else "text_mention_only"
+                record(call, "host_session_store_access", "<host-dsh-session-store>", access, cmd)
+            # 2. 按段追踪 cd 后的 cwd，逐段解析相对路径与绝对路径
+            cur_cwd = ws_root or ""
+            for seg in _split_segments(cmd):
+                s = seg.strip()
+                if not s:
+                    continue
+                if "-command" in s.lower():
+                    s = POWERSHELL_WRAPPER_RE.sub("", s, count=1).strip().strip("\"'").strip()
+                cd_m = CD_CMD_RE.match(s)
+                if cd_m and cur_cwd:
+                    cur_cwd = _resolve_from_cwd(cur_cwd, cd_m.group(1))
+                    if cur_cwd and not is_allowed(cur_cwd):
+                        record(call, "relative_escape", cur_cwd, output_confirms_access(call), s)
+                    continue
+                seg_has_read = has_access_verb or bool(ACCESS_VERB_RE.search(s))
+                # 检查相对跳出路径（..）
+                if cur_cwd:
+                    for rel_m in REL_ESCAPE_RE.finditer(s):
+                        raw_rel = rel_m.group(1).rstrip(".,;:")
+                        resolved = _resolve_from_cwd(cur_cwd, raw_rel)
+                        if resolved and not is_allowed(resolved):
+                            # 仅 echo / Write-Output / 注释文本且没有读/列举动作 → 标 text_mention_only
+                            is_print_only = bool(re.match(r"^(?:echo|write-output|write-host|printf|#)\b", s, re.IGNORECASE))
+                            access = "text_mention_only" if (is_print_only and not seg_has_read) else (
+                                output_confirms_access(call) if seg_has_read else "text_mention_only")
+                            record(call, "relative_escape", resolved, access, s)
+                # 检查绝对路径
+                for abs_m in ABS_WIN_PATH_RE.finditer(s):
+                    raw_abs = abs_m.group(1).rstrip(".,;:'\"")
+                    resolved = _norm_abs_posix(raw_abs)
+                    if resolved and not is_allowed(resolved):
+                        is_print_only = bool(re.match(r"^(?:echo|write-output|write-host|printf|#)\b", s, re.IGNORECASE))
+                        access = "text_mention_only" if (is_print_only and not seg_has_read) else (
+                            output_confirms_access(call) if seg_has_read else "text_mention_only")
+                        record(call, "absolute_escape", resolved, access, s)
+
+    contaminated_segments = sorted({f["segment"] for f in findings})
+    return {
+        "workspace_root": ws_root,
+        "contaminated": bool(findings),
+        "contaminated_segments": contaminated_segments,
+        "policy_note": "受污染段停止正式效果评价，仅保留事后诊断（TEST §6.2）" if findings else None,
+        "findings": findings,
+        "mentions_only": mentions_only,
+    }
+
+
+def _resolve_agent_uuid(agent_name: str | None, description: str, catalog: dict[str, dict],
+                        settled_list: list[dict], used_uuids: set[str]) -> str | None:
+    """将 subagent 调用的 agent 名/描述对齐到原生 catalog 的 UUID childId。"""
+    if agent_name and agent_name in catalog:
+        return agent_name
+    if agent_name:
+        for s in settled_list:
+            m = SETTLED_AGENT_RE.search(str(s.get("summary") or ""))
+            if m and m.group(1) == agent_name and s.get("childId"):
+                return str(s["childId"])
+    if description:
+        for cid, entry in catalog.items():
+            if cid not in used_uuids and str(entry.get("label") or "") == description:
+                return cid
+    return agent_name
+
+
+def native_delegations(sessions: dict, children: dict[Path, dict] | None = None) -> dict:
+    """原生会话里的委派与派审：按派出去的正文与子会话实际产出认角色，支持常驻子代理经 `send_message`
+    复用后的逐轮派发与逐次 `settled` 配对，按对象材料键分别列派发、报告与有效完成；缺关联留 unknown。
+    没有保全原件时为 null。"""
     children = children or {}
     if not sessions["present"]:
         return {"delegations": None}
     rows, problems = [], list(sessions["problems"])
-    observed: list[list] = []  # 可核子任务区间（原生登记到收尾的 ms 时刻），跨父会话汇总
+    observed: list[list] = []  # 可核子任务区间（原生登记/派发到收尾的 ms 时刻），跨父会话汇总
     for parent, info in sessions["read"]:
         catalog = {c["childId"]: c for c in info.get("children") or []}
-        settled = {s["childId"]: s for s in info.get("settled") or [] if s.get("childId")}
-        observed.extend([[entry.get("createdAt"), settled[child]["time"]]
-                         for child, entry in catalog.items()
-                         if child in settled and settled[child].get("time") and entry.get("createdAt")])
+        settled_all = list(info.get("settled") or [])
+        settled_by_uuid: dict[str, list[dict]] = defaultdict(list)
+        for s in settled_all:
+            if s.get("childId"):
+                settled_by_uuid[str(s["childId"])].append(s)
+        for cid in settled_by_uuid:
+            settled_by_uuid[cid].sort(key=lambda x: (x.get("time") is None, x.get("time") or 0))
+        # 收集整份会话的派发调用（初始 subagent/task/verifier + 后续 send_message）
+        agent_to_uuid: dict[str, str] = {}
+        uuid_role: dict[str, tuple[str, str | None, str]] = {}  # uuid -> (role, basis, label)
+        used_uuids: set[str] = set()
+        dispatches: list[dict] = []
         for call in info.get("calls") or []:
             name = call.get("name")
-            if name not in DELEGATING_TOOLS and name != "verifier":
-                continue
-            started = next((m.group(1) for r in call.get("results") or [] for m in [STARTED_RE.search(r.get("text") or "")] if m), None)
-            prompt = str(_args(call).get("prompt") or "")
-            role = next((r for pattern, r in CARRIER_ROLES if pattern.search(prompt)), None)
-            basis = "派出去的是产品生成的载体" if role else None
-            if role is None and STAGE_REQUEST_RE.search(str(call.get("args") or "")):
-                role, basis = "stage_verifier", "派出去的是原生阶段审查请求"
-            child_file = parent.parent / "children" / str(started) / "session.v4.jsonl.zstd" if started else None
-            # 子会话只解析一次：measure 传进来的就是这份读数；独立调用时按派出去时登记的子会话读。
-            child = children.get(child_file) if child_file is not None else None
-            if child is None and child_file is not None and child_file.is_file():
-                child = _native(child_file)
-            if role is None and child and not child.get("error"):
-                role = _child_role(child)
-                basis = "子会话写了蓝图设计产物" if role else None
-            entry = catalog.get(started or "") or {}
-            done = settled.get(started or "")
-            span_sec = ((done["time"] - entry["createdAt"]) / 1000
-                        if done and done.get("time") and entry.get("createdAt") else None)
+            if name in DELEGATING_TOOLS or name == "verifier":
+                args = _args(call)
+                started = next((m.group(1) for r in call.get("results") or []
+                                for m in [STARTED_RE.search(r.get("text") or "")] if m), None)
+                agent_name = str(args.get("name") or started or "") or None
+                desc = str(args.get("description") or "")
+                prompt = str(args.get("prompt") or "")
+                cid = _resolve_agent_uuid(agent_name, desc, catalog, settled_all, used_uuids)
+                if cid:
+                    used_uuids.add(cid)
+                    if agent_name:
+                        agent_to_uuid[agent_name] = cid
+                role = next((r for pattern, r in CARRIER_ROLES if pattern.search(prompt)), None)
+                basis = "派出去的是产品生成的载体" if role else None
+                if role is None and STAGE_REQUEST_RE.search(str(call.get("args") or "")):
+                    role, basis = "stage_verifier", "派出去的是原生阶段审查请求"
+                child_file = parent.parent / "children" / str(cid) / "session.v4.jsonl.zstd" if cid else None
+                child = children.get(child_file) if child_file is not None else None
+                if child is None and child_file is not None and child_file.is_file():
+                    child = _native(child_file)
+                if role is None and child and not child.get("error"):
+                    role = _child_role(child)
+                    basis = "子会话写了蓝图设计产物" if role else None
+                entry = catalog.get(cid or "") or {}
+                label = entry.get("label") or desc
+                if cid:
+                    uuid_role[cid] = (role or "unresolved", basis, label)
+                dispatches.append({
+                    "tool": name, "cid": cid, "agent": agent_name or cid, "prompt": prompt,
+                    "role": role or "unresolved", "basis": basis, "label": label,
+                    "child": child, "start_time": call.get("time") or entry.get("createdAt"),
+                })
+            elif name == "send_message":
+                args = _args(call)
+                agent_name = str(args.get("agent") or "") or None
+                prompt = str(args.get("message") or "")
+                cid = agent_to_uuid.get(agent_name or "") or _resolve_agent_uuid(agent_name, "", catalog, settled_all, used_uuids)
+                if cid and agent_name:
+                    agent_to_uuid[agent_name] = cid
+                carrier_role = next((r for pattern, r in CARRIER_ROLES if pattern.search(prompt)), None)
+                prev_role, prev_basis, prev_label = uuid_role.get(cid or "", ("unresolved", None, agent_name or ""))
+                role = carrier_role or prev_role
+                basis = "经 send_message 续派产品载体" if carrier_role else (
+                    f"续派同一子代理（{prev_basis}）" if prev_basis else "续派同一子代理")
+                # 仅把已知审查员/蓝图作者/含产品载体的续派计入委派轮次（避免无关聊天污染）
+                if role not in ("questioning", "story_review", "figure_review", "stage_verifier", "blueprint_author"):
+                    continue
+                child_file = parent.parent / "children" / str(cid) / "session.v4.jsonl.zstd" if cid else None
+                child = children.get(child_file) if child_file is not None else None
+                if child is None and child_file is not None and child_file.is_file():
+                    child = _native(child_file)
+                dispatches.append({
+                    "tool": name, "cid": cid, "agent": agent_name or cid, "prompt": prompt,
+                    "role": role, "basis": basis, "label": prev_label or agent_name or "",
+                    "child": child, "start_time": call.get("time"),
+                })
+
+        # 按同一 cid 的派发时间顺序逐轮配对 settled 通知
+        by_cid: dict[str, list[dict]] = defaultdict(list)
+        for d in dispatches:
+            by_cid[str(d["cid"] or f"__anon_{id(d)}")].append(d)
+        for cid, group in by_cid.items():
+            s_queue = list(settled_by_uuid.get(cid, []))
+            s_idx = 0
+            for idx_in_group, d in enumerate(group):
+                t_start = d["start_time"]
+                t_next = group[idx_in_group + 1]["start_time"] if idx_in_group + 1 < len(group) else None
+                done = None
+                if s_idx < len(s_queue):
+                    # 优先选在 [t_start, t_next) 区间内的首个未消费 settled
+                    while s_idx < len(s_queue):
+                        cand = s_queue[s_idx]
+                        ct = cand.get("time")
+                        if t_start is not None and ct is not None and ct < t_start:
+                            s_idx += 1
+                            continue
+                        if t_next is not None and ct is not None and ct >= t_next:
+                            break
+                        done = cand
+                        s_idx += 1
+                        break
+                d["done"] = done
+                if t_start is not None and done and done.get("time") is not None and done["time"] >= t_start:
+                    observed.append([t_start, done["time"]])
+            # 兜底：若该 cid 没有任何 call 时间戳但 catalog 有 createdAt 与 settled，仍保留首末跨度
+            if not any(d.get("done") for d in group) and cid in catalog and cid in settled_by_uuid:
+                cat_t = catalog[cid].get("createdAt")
+                last_t = settled_by_uuid[cid][-1].get("time")
+                if cat_t and last_t:
+                    observed.append([cat_t, last_t])
+
+        for d in dispatches:
+            done = d.get("done")
+            t_start = d["start_time"]
+            span_sec = ((done["time"] - t_start) / 1000
+                        if done and done.get("time") is not None and t_start is not None and done["time"] >= t_start
+                        else None)
             span = round(span_sec / 60, 1) if span_sec is not None else None
             summary = str((done or {}).get("summary") or "")
             reply = _closing_reply(done)
+            prompt = d["prompt"]
             objects = sorted({key for key in CARRIER_KEY_RE.findall(prompt)}) if prompt else []
-            row = {"role": role or "unresolved", "basis": basis, "label": entry.get("label") or str(_args(call).get("description") or ""),
-                   "child_id": started, "task_id": started, "observed_span_min": span,
+            report_files = DISPATCH_REPORT_RE.findall(prompt) if prompt else []
+            row = {"role": d["role"], "basis": d["basis"], "label": d["label"],
+                   "agent": d["agent"], "dispatch_tool": d["tool"],
+                   "child_id": d["cid"], "task_id": d["cid"], "observed_span_min": span,
                    "observed_span_sec": round(span_sec, 1) if span_sec is not None else None,
                    "reply_received": reply["reply_received"], "objects": objects if objects else None,
+                   "report_file": report_files[0] if len(report_files) == 1 else None,
                    "settled": "failed" if "failed" in summary else "finished" if "finished" in summary else "unknown"}
             if row["role"] == "story_review":
                 row["review_mode"] = _review_mode(prompt)
                 row["review_conclusion"] = _reply_conclusion(prompt, reply, done)
-                row["report_completeness"] = _report_completeness(prompt, reply, row["review_conclusion"], child)
+                row["report_completeness"] = _report_completeness(prompt, reply, row["review_conclusion"], d["child"])
             rows.append(row)
+
     conclusions = Counter(r["review_conclusion"]["value"] for r in rows if "review_conclusion" in r)
     modes = Counter(r["review_mode"] for r in rows if "review_mode" in r)
     reviews = [r for r in rows if r["role"] == "story_review"]
+    questionings = [r for r in rows if r["role"] == "questioning"]
     review_objects = {key for r in reviews for key in (r["objects"] or [])}
-    # 可核子任务区间见上面的 observed：原生登记到收尾通知的 ms 时刻，供耗时并集；
-    # 没有收尾通知的不算区间。
+    unique_reports = {(key, r.get("report_file")) for r in reviews for key in (r["objects"] or [])}
+    by_object: dict[str, dict] = {}
+    for r in reviews:
+        obj_key = (r["objects"] or ["unknown"])[0]
+        bucket = by_object.setdefault(obj_key, {"dispatches": 0, "reports": [], "settled": 0, "complete": 0, "conclusions": []})
+        bucket["dispatches"] += 1
+        if r.get("report_file") and r["report_file"] not in bucket["reports"]:
+            bucket["reports"].append(r["report_file"])
+        if r["settled"] != "unknown":
+            bucket["settled"] += 1
+        if r["report_completeness"]["value"] == "complete":
+            bucket["complete"] += 1
+        bucket["conclusions"].append(r["review_conclusion"]["value"])
+
     return {"delegations": {
         "observed_intervals": observed,
         "by_role": dict(Counter(r["role"] for r in rows)),
+        "questioning_dispatches": len(questionings),
+        "questioning_settled": sum(1 for r in questionings if r["settled"] != "unknown"),
         "story_review_tasks": len(reviews),
+        "story_review_dispatches": len(reviews),
         "story_review_settled": sum(1 for r in reviews if r["settled"] != "unknown"),
         "story_review_replies": sum(1 for r in reviews if r["reply_received"]),
         "story_review_full_replies": sum(1 for r in reviews if r["report_completeness"]["value"] == "complete"),
         "story_review_reports_unknown": sum(1 for r in reviews if r["report_completeness"]["value"] == "unknown"),
         "story_review_objects": len(review_objects),
+        "story_review_unique_reports": len(unique_reports),
+        "story_review_by_object": by_object,
         "story_review_conclusions": dict(conclusions),
         "story_review_modes": dict(modes),
         "items": rows, "problems": problems}}
@@ -1274,19 +1666,23 @@ def render(result: dict) -> str:
         f"    反复 FAIL 的 check：{result['repeated_check_fails'] or '（本轮没有 FAIL）'}   目标 同一 id ≤2 轮",
         f"    审查结论（review --action check，每次调用的结论值）：{result['review_results'] or '（没有观察到）'}",
         "",
-        "  ── 委派（按原生会话认角色；按实际任务算，不按目录数）──",
+        "  ── 委派（按原生会话认角色；按实际派发轮次算，不按目录数）──",
         *(["    没有保全的原生会话：委派角色未取得（不是没有委派）"] if result.get("delegations") is None else [
             f"    按角色：{result['delegations']['by_role'] or '（没有委派）'}",
             f"    Story 独审任务 {result['delegations']['story_review_tasks']} 个"
             f"（完整回复 {result['delegations']['story_review_full_replies']} 个，"
             f"审查对象 {result['delegations']['story_review_objects']} 个）",
+            f"    派发轮次：蓝图质询 {result['delegations'].get('questioning_dispatches', 0)} 次"
+            f"（收尾 {result['delegations'].get('questioning_settled', 0)} 次）"
+            f"｜Story 独审 {result['delegations'].get('story_review_dispatches', result['delegations']['story_review_tasks'])} 次"
+            f"（不同报告 {result['delegations'].get('story_review_unique_reports', 0)} 份）",
             f"    回复事实：已收尾 {result['delegations']['story_review_settled']} 个"
             f"｜取得回复文本 {result['delegations']['story_review_replies']} 个"
             f"｜未核证完整报告 {result['delegations']['story_review_reports_unknown']} 个"
             "（单列，不是任务失败；完整回复只计可核完整的那几份）",
             f"    Story 独审回复写明的总体结论：{result['delegations']['story_review_conclusions'] or '（没有 Story 独审）'}"
             "（与收尾状态、父方报告接收结论分开计）",
-            *(f"    - {i['role']}｜{i['label']}｜观察跨度 {i['observed_span_min'] if i['observed_span_min'] is not None else '未知'} 分钟"
+            *(f"    - {i['role']}｜{i['label']}（{i.get('dispatch_tool', 'subagent')}）｜观察跨度 {i['observed_span_min'] if i['observed_span_min'] is not None else '未知'} 分钟"
               f"（含等待，不是纯推理）｜收尾 {i['settled']}｜回复文本 {'有' if i['reply_received'] else '无'}"
               + (f"｜完整报告 {'可核' if i['report_completeness']['value'] == 'complete' else '未核证'}"
                  f"（{_completeness_note(i)}）" if "report_completeness" in i else "")
@@ -1294,6 +1690,18 @@ def render(result: dict) -> str:
                  + (f"（{i['review_conclusion']['why']}）" if i['review_conclusion']['why'] else "")
                  if "review_conclusion" in i else "") for i in result["delegations"]["items"]),
             *(f"    读不了：{p}" for p in result["delegations"]["problems"])]),
+        "",
+        "  ── 隔离边界（只读扫描；受污染段停止正式评价）──",
+        *(["    未检出外部访问"
+           + (f"（仅提及路径文字 {len(result['isolation_boundary'].get('mentions_only') or [])} 条）"
+              if (result.get("isolation_boundary") or {}).get("mentions_only") else "")]
+          if not (result.get("isolation_boundary") or {}).get("contaminated") else [
+            f"    **已受污染**：{len(result['isolation_boundary']['findings'])} 处外部访问"
+            f"（影响段：{', '.join(result['isolation_boundary']['contaminated_segments'])}；"
+            f"仅路径文字 {len(result['isolation_boundary'].get('mentions_only') or [])} 条）",
+            *(f"    - L{f['line']} [{f['segment']}] {f['tool']} {f['kind']}（{f['access']}）→ {f['resolved_path']}"
+              + (" [截断待核]" if f.get("truncated_needs_host_check") else "")
+              for f in result["isolation_boundary"]["findings"])]),
         "",
         "  ── 时间去哪了（可核区间取并集；间隔估计不是实测 span）──",
         f"    墙钟 {result['duration_min']} 分钟（首末事件）"

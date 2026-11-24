@@ -38,21 +38,41 @@ def classify(path: Path) -> str | None:
     return classify_rel(rel)
 
 
+def canonical_rel(rel: str) -> str:
+    """将 2.0.6 `base/` 布局下的机制路径映射回逻辑相对名，供搬迁对比与统一分类；旧路径保持原样。"""
+    if rel == "base/package-manifest.yaml":
+        return "manifest.yaml"
+    if rel.startswith("base/"):
+        return rel[len("base/"):]
+    return rel
+
+
 def classify_rel(rel: str) -> str | None:
     """同 classify，入参是相对 extensions/ 的 posix 路径——读 git 快照时没有盘上路径。"""
     path = Path(rel)
-    if rel.startswith(("knowledge/", "skills/story/scripts/adapters/")):
+    if rel.startswith((
+        "knowledge/",
+        "adapters/",
+        "skills/story/scripts/adapters/",
+        "base/examples/knowledge/",
+        "base/adapters/",
+        "base/skills/story/scripts/adapters/",
+    )):
         return None
-    if rel == "skills/story-adaptation/reference/upgrade-changes.md":
+    if rel in (
+        "skills/story-adaptation/reference/upgrade-changes.md",
+        "base/skills/story-adaptation/reference/upgrade-changes.md",
+    ):
         return None
-    if "node_modules" in path.parts or "__pycache__" in path.parts or rel.startswith("adapt/"):
+    if "node_modules" in path.parts or "__pycache__" in path.parts or rel.startswith(("adapt/", "base/adapt/")):
         return None
-    # 点开头的目录是工作件，不随包交付
-    if any(seg.startswith(".") for seg in rel.split("/")[:-1]):
+    # 点开头的目录或文件（如 .gitignore、.adapt-* 工作件）不计入机制行
+    if any(seg.startswith(".") for seg in rel.split("/")):
         return None
-    suf = path.suffix
+    logical = canonical_rel(rel)
+    suf = Path(logical).suffix
     if suf in (".mjs", ".js"):
-        return "hooks_mjs" if rel.startswith("hooks/") else "scripts_mjs"
+        return "hooks_mjs" if logical.startswith("hooks/") else "scripts_mjs"
     if suf == ".py":
         return "scripts_py"
     if suf == ".md":
@@ -140,6 +160,18 @@ class CountingScope(unittest.TestCase):
             ("skills/story/scripts/adapters/adapter.py", None),
             ("skills/story/scripts/adapters/config.yaml", None),
             ("skills/story/scripts/core/helper.js", "scripts_mjs"),
+            ("base/package-manifest.yaml", "data"),
+            ("base/hooks/spec/post_check.mjs", "hooks_mjs"),
+            ("base/skills/story-adaptation/scripts/adapt-scan.mjs", "scripts_mjs"),
+            ("base/skills/story/scripts/core/story_flow.py", "scripts_py"),
+            ("base/skills/story/SKILL.md", "prompts_md"),
+            ("base/rules/spec-rules.overlay.yaml", "data"),
+            ("base/.gitignore", None),
+            ("base/examples/knowledge/facts/project.md", None),
+            ("base/skills/story-adaptation/reference/upgrade-changes.md", None),
+            ("adapters/story.js", None),
+            ("base/adapters/story.js", None),
+            ("base/skills/story/scripts/adapters/story.js", None),
         ):
             with self.subTest(rel=rel):
                 self.assertEqual(expected, classify(EXT / rel))

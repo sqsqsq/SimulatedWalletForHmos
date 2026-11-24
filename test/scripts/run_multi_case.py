@@ -4068,6 +4068,31 @@ def write_case_observation_record(suite: dict[str, Any],
     lines.extend([
         "", "## 观测证据", "",
         "完整的 15 秒交互观测、120 秒自动观测和回复记录见 `observations.jsonl`。",
+    ])
+    run_id = record.get("run_id")
+    run_events = case_root / str(run_id) / "events.jsonl" if run_id else None
+    if run_events and run_events.is_file():
+        try:
+            import measure_run  # noqa: PLC0415
+            m = measure_run.measure(run_events, run_dir=run_events.parent)
+            iso = m.get("isolation_boundary") or {}
+            lines.extend(["", "## 隔离边界与审阅观测（只读回放）", ""])
+            if iso.get("contaminated"):
+                segs = "、".join(iso.get("contaminated_segments") or [])
+                lines.append(f"- **隔离越界**：检测到 {len(iso.get('findings') or [])} 处外部访问（受污染段：`{segs}`）；{iso.get('policy_note')}")
+                for f in (iso.get("findings") or [])[:10]:
+                    lines.append(f"  - L{f['line']} [{f['segment']}] `{f['tool']}` {f['kind']}（{f['access']}）→ `{f['resolved_path']}`")
+            else:
+                lines.append(f"- 隔离越界：未检出外部访问（仅提及路径文字 {len(iso.get('mentions_only') or [])} 条）")
+            deleg = m.get("delegations")
+            if deleg:
+                lines.append(
+                    f"- 派审统计：蓝图质询派发 {deleg.get('questioning_dispatches', 0)} 次（收尾 {deleg.get('questioning_settled', 0)}）；"
+                    f"Story 独审派发 {deleg.get('story_review_dispatches', 0)} 次、不同对象 {deleg.get('story_review_objects', 0)} 个、"
+                    f"不同报告 {deleg.get('story_review_unique_reports', 0)} 份、完整可核 {deleg.get('story_review_full_replies', 0)} 份")
+        except Exception as exc:  # noqa: BLE001
+            lines.extend(["", "## 隔离边界与审阅观测（只读回放）", "", f"- 回放失败（保留现场）：`{exc}`"])
+    lines.extend([
         "", "## 错误与遗留", "",
         f"```json\n{json.dumps(record.get('last_error'), ensure_ascii=False, indent=2)}\n```",
     ])

@@ -101,10 +101,23 @@ def lf(data: bytes) -> bytes:
 
 
 def module_of(rel: str, depth: int | None) -> str:
-    parts = rel.split("/")[:-1]
+    parts = meter.canonical_rel(rel).split("/")[:-1]
     if depth is not None:
         parts = parts[:depth]
     return "/".join(parts) or "(根)"
+
+
+def group_by_canonical(s: Snapshot) -> dict[str, list[str]]:
+    """按逻辑相对名归组计量文件；同一逻辑名出现多个物理路径时保留全部实际路径。"""
+    groups: dict[str, list[str]] = {}
+    for rel in s.counted():
+        groups.setdefault(meter.canonical_rel(rel), []).append(rel)
+    return groups
+
+
+def duplicate_map(s: Snapshot) -> dict[str, list[str]]:
+    """同一逻辑职责在快照中同时存活多份物理路径（例如旧坐标与 base/ 副本并存）。"""
+    return {k: rels for k, rels in sorted(group_by_canonical(s).items()) if len(rels) > 1}
 
 
 def file_diff(a: list[str], b: list[str]) -> dict:
@@ -127,11 +140,15 @@ def file_diff(a: list[str], b: list[str]) -> dict:
     return {"G": g, "X": x, "relocated": relocated, "gone": gone}
 
 
-def retained_rows(base: Snapshot, start: Snapshot, rel: str) -> set[int]:
+def retained_rows(base: Snapshot, start: Snapshot, start_rel: str) -> set[int]:
     """start 里与版本基线逐行对齐（equal）的行号：退出它们算「退出上一正式版保留行」。"""
+    base_rel = start_rel
+    if base_rel not in base.files:
+        cands = group_by_canonical(base).get(meter.canonical_rel(start_rel), [])
+        base_rel = cands[0] if len(cands) == 1 else start_rel
     keep = set()
     for op, i1, i2, j1, j2 in difflib.SequenceMatcher(
-            a=base.rows(rel), b=start.rows(rel), autojunk=False).get_opcodes():
+            a=base.rows(base_rel), b=start.rows(start_rel), autojunk=False).get_opcodes():
         if op == "equal":
             keep.update(range(j1, j2))
     return keep
@@ -147,38 +164,83 @@ def add(acc: dict, d: dict) -> None:
             acc[k] = acc.get(k, 0) + v
 
 
+def _match_scope(rel: str, scopes: dict) -> str:
+    canon = meter.canonical_rel(rel)
+    hit = [n for n, globs in scopes.items() if any(fnmatch.fnmatch(rel, g) or fnmatch.fnmatch(canon, g) for g in globs)]
+    return hit[0] if len(hit) == 1 else "(共享)" if hit else "(未归属)"
+
+
 def compare(a: Snapshot, b: Snapshot, depth: int | None, scopes: dict | None = None,
             origin_base: Snapshot | None = None) -> dict:
-    """两端逐文件差分，按类型 / 模块 / 文件 / 责任项汇总；给 origin_base 时再拆 X 的来源。"""
+    """两端逐文件差分，按类型 / 模块 / 文件 / 责任项汇总；给 origin_base 时再拆 X 的来源。
+
+    单对单跨目录搬迁（如 `hooks/a.mjs` → `base/hooks/a.mjs`、`manifest.yaml` → `base/package-manifest.yaml`）
+    按逻辑相对名对齐计算真实内容差分，并在结果中保留实际文件路径与 `moved_from`；
+    任一端出现同一逻辑名多份并存时，禁止合掉旧副本，按物理路径各自独立计量并记入 `duplicates`。
+    """
     by_cat = {c: zero() for c in CATS}
     by_mod, by_scope, files = {}, {}, {}
-    for rel in sorted(set(a.counted()) | set(b.counted())):
-        cat = meter.classify_rel(rel)
-        if a.files.get(rel) == b.files.get(rel):
-            continue
-        d = file_diff(a.rows(rel), b.rows(rel))
-        status = "added" if rel not in a.files else "removed" if rel not in b.files else "changed"
+    moved: list[dict] = []
+    a_groups, b_groups = group_by_canonical(a), group_by_canonical(b)
+    duplicates = {k: {"base": a_groups.get(k, []), "to": b_groups.get(k, [])}
+                  for k in sorted(set(a_groups) | set(b_groups))
+                  if len(a_groups.get(k, [])) > 1 or len(b_groups.get(k, [])) > 1}
+
+    def record(out_rel: str, a_rel: str | None, b_rel: str | None, moved_from: str | None = None) -> None:
+        cat = meter.classify_rel(out_rel)
+        a_bytes = a.files.get(a_rel) if a_rel is not None else None
+        b_bytes = b.files.get(b_rel) if b_rel is not None else None
+        if moved_from is None and a_bytes == b_bytes:
+            return
+        d = {"G": 0, "X": 0, "relocated": 0, "gone": []} if a_bytes == b_bytes else file_diff(
+            a.rows(a_rel) if a_rel is not None else [],
+            b.rows(b_rel) if b_rel is not None else [],
+        )
+        if moved_from is not None:
+            status = "moved_changed" if (d["G"] or d["X"]) else "moved"
+        else:
+            status = "added" if a_rel is None else "removed" if b_rel is None else "changed"
         row = {"category": cat, "status": status, "G": d["G"], "X": d["X"], "relocated": d["relocated"],
                "files_added": status == "added", "files_removed": status == "removed",
-               "files_changed": status == "changed" and bool(d["G"] or d["X"])}
+               "files_changed": status in ("changed", "moved_changed") and bool(d["G"] or d["X"])}
+        if moved_from is not None:
+            row["moved_from"] = moved_from
+            row["canonical"] = meter.canonical_rel(out_rel)
+            moved.append({"from": moved_from, "to": out_rel, "canonical": row["canonical"],
+                          "category": cat, "G": d["G"], "X": d["X"]})
         if origin_base is not None:
-            keep = retained_rows(origin_base, a, rel)
+            keep = retained_rows(origin_base, a, a_rel) if a_rel is not None else set()
             row["X_retained"] = sum(1 for i in d["gone"] if i in keep)
             row["X_version_added"] = d["X"] - row["X_retained"]
         row = {k: int(v) if isinstance(v, bool) else v for k, v in row.items()}
         if not (row["G"] or row["X"] or status != "changed"):
-            continue
-        files[rel] = row
+            return
+        files[out_rel] = row
         add(by_cat[cat], row)
-        add(by_mod.setdefault(module_of(rel, depth), zero()), row)
+        add(by_mod.setdefault(module_of(out_rel, depth), zero()), row)
         if scopes is not None:
-            hit = [n for n, globs in scopes.items() if any(fnmatch.fnmatch(rel, g) for g in globs)]
-            name = hit[0] if len(hit) == 1 else "(共享)" if hit else "(未归属)"
-            add(by_scope.setdefault(name, zero()), row)
+            add(by_scope.setdefault(_match_scope(out_rel, scopes), zero()), row)
+
+    for key in sorted(set(a_groups) | set(b_groups)):
+        a_rels, b_rels = a_groups.get(key, []), b_groups.get(key, [])
+        if len(a_rels) == 1 and len(b_rels) == 1:
+            p_old, p_new = a_rels[0], b_rels[0]
+            if p_old == p_new:
+                record(p_new, p_old, p_new)
+            else:
+                record(p_new, p_old, p_new, moved_from=p_old)
+        else:
+            for rel in sorted(set(a_rels) | set(b_rels)):
+                record(rel, rel if rel in a_rels else None, rel if rel in b_rels else None)
+
     total = zero()
     for c in CATS:
         add(total, by_cat[c])
     out = {"total": total, "by_category": by_cat, "by_module": dict(sorted(by_mod.items())), "files": files}
+    if moved:
+        out["moved"] = moved
+    if duplicates:
+        out["duplicates"] = duplicates
     if scopes is not None:
         out["by_scope"] = by_scope
     return out
@@ -360,6 +422,9 @@ def build(repo: Path, ledger_path: Path, base_ref: str | None, to_ref: str, pid:
         "delivered_files": {"total": len(delivered), "sha256": digest(b, delivered)},
         "excluded_files": len(delivered) - len(counted),
     }
+    dups = duplicate_map(b)
+    if dups:
+        identity["duplicate_counted"] = dups
     totals = {"base": sizes(a, depth), "to": sizes(b, depth)}
     totals["net"] = totals["to"]["total"] - totals["base"]["total"]
     pkg = package_report(repo, ledger, pid, to, a, cache, depth) if pid else None
@@ -368,6 +433,8 @@ def build(repo: Path, ledger_path: Path, base_ref: str | None, to_ref: str, pid:
     if pkg:
         report["package"] = pkg
     report["control"] = control(ledger, base, b, endpoint, peak, pkg, repo, depth)
+    if dups:
+        report["control"]["duplicate_counted"] = dups
     check(report)
     return report
 
@@ -411,6 +478,15 @@ def markdown(r: dict) -> str:
               "## 按模块（endpoint）", "", "| 模块 | 当前 | G | X | relocated |", "|---|---:|---:|---:|---:|"]
     for m, v in e["by_module"].items():
         lines.append(f"| {m} | {t['to']['by_module'].get(m, 0)} | {v['G']} | {v['X']} | {v['relocated']} |")
+    if e.get("moved"):
+        lines += ["", "## 搬迁文件（实际地址与移动来源）", "", "| 实际地址 | 移动来源 | 类型 | G | X |", "|---|---|---|---:|---:|"]
+        for mv in e["moved"]:
+            lines.append(f"| {mv['to']} | {mv['from']} | {mv['category']} | {mv['G']} | {mv['X']} |")
+    if i.get("duplicate_counted") or e.get("duplicates"):
+        dups = i.get("duplicate_counted") or {k: v["to"] for k, v in (e.get("duplicates") or {}).items()}
+        lines += ["", "## 重复并存（旧新副本分别计量）", ""]
+        for canon, paths in dups.items():
+            lines.append(f"- `{canon}`：{', '.join(paths)}")
     c = r["control"]
     lines += ["", "## control（只报告）", ""]
     if "version" in c:
