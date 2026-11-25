@@ -435,6 +435,11 @@ class IdentityAndUpgrade(InPlaceAdaptCase):
             text = (target / rel).read_text(encoding="utf-8")
             self.assertIn("agent-maison:instance-extension-bridge", text, rel)
             self.assertIn("doc/extensions/base/skills/", text, rel)
+        # S29 R3：stand-in 缺对接文件时 --check 必须报缺件，补齐后通过
+        missing_chk = self.adapt("--check", target)
+        self.assertEqual(1, missing_chk.returncode, self.out(missing_chk))
+        self.assertIn("story.js", self.out(missing_chk))
+        self.write_adapters(target, "stand-in-demo")
         self.assertEqual(0, self.adapt("--check", target).returncode)
         self.commit(target, "升到 2.0.6")
         again = self.adapt("--apply", target)

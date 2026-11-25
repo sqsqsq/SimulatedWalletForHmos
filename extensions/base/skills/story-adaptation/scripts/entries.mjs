@@ -135,7 +135,11 @@ export default function initSkillBridgeHook(hookCtx) {
   const skills = packageSkills(ctx.extRoot, ctx.native.require('yaml'));
   if (!skills.length) return { ok: true, message: 'Story base 未声明可物化 Skill' };
   const foreigns = [...new Set(bridgeArtifacts(ctx, skills).map(a => foreignConflict(ctx, a)).filter(Boolean))];
-  if (foreigns.length) return { ok: false, message: `Story base 桥冲突，未覆盖他属入口：${foreigns.join('；')}` };
+  if (foreigns.length) {
+    const msg = `Story base 桥冲突（受影响宿主未获得本包桥，已保留他属入口原字节）：${foreigns.join('；')}`;
+    process.stderr.write(`[entries] ${msg}\n`);
+    return { ok: false, message: msg };
+  }
   const bridge = ctx.native.module('scripts/utils/instance-skill-bridge.ts');
   const protectedOwners = snapshotOtherOwners(ctx, skills);
   const rows = ctx.adapters.map(agentAdapter => ({
@@ -172,7 +176,7 @@ export function candidateProblems(root, fill) {
 }
 
 /** 写前核（只读）：返回要退出的旧入口、桥目标路径与冲突。 */
-export function entryPlan(root, skills = null) {
+export function entryPlan(root, skills = null, { includeEntries = true } = {}) {
   const ctx = context(root);
   const { native, extRoot } = ctx;
   const YAML = native.require('yaml');
@@ -190,7 +194,7 @@ export function entryPlan(root, skills = null) {
     else conflicts.push(`${item.target}：与已装版本登记的入口源不同（改过或源已缺失），保留不动`);
   }
   const section = read(path.join(extRoot, ...OLD_SECTION.split('/')));
-  const entries = renderedEntries(ctx);
+  const entries = includeEntries ? renderedEntries(ctx) : [];
   const pendingEntries = [];
   for (const { target, rendered } of entries) {
     const current = read(path.join(native.root, target));

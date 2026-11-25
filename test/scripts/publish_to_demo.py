@@ -179,12 +179,65 @@ def pack_external_base(source: Path, dest_root: Path) -> list[str]:
 
 
 def import_external_base(source: Path, target: Path, *, prepare_init: bool = True) -> dict:
-    """发行导入入口：将外网 base/ 解包至目标工程 `<ext>/base/`，并在需要时运行一次性 `--prepare-init` 预置根清单。"""
+    """发行导入入口：先在隔离暂存区核新包与目标写面/旧清单/桥归属（零写入），全过后再解包 base/ 并预置根清单。"""
     target = Path(target).resolve()
-    cfg = json.loads((target / "framework.config.json").read_text(encoding="utf-8"))
+    cfg_path = target / "framework.config.json"
+    if not cfg_path.is_file():
+        return {"files": [], "prepared": False, "returncode": 2, "stdout": "",
+                "stderr": f"[import] 找不到 {cfg_path}：空仓首次接入请先执行 framework-init CREATE 或按最小根清单登记 docs.post_check"}
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
     ext_dir = (cfg.get("paths") or {}).get("extension_dir") or EXTENSION_DIR
     ext_root = target / ext_dir
-    files = pack_external_base(source, ext_root)
+    with tempfile.TemporaryDirectory(prefix="story-import-stage-") as td:
+        stage_root = Path(td)
+        try:
+            files = pack_external_base(source, stage_root)
+        except InputError as exc:
+            return {"files": [], "prepared": False, "returncode": 2, "stdout": "", "stderr": f"[import] {exc}"}
+        staged_base = stage_root / "base"
+        # 1) 目标已有 base/ 时，先核其未提交/未跟踪改动与 examples/ 人工文件（写前阻断，零字节改写）
+        existing_base = ext_root / "base"
+        if existing_base.is_dir():
+            st = subprocess.run(["git", "-C", str(target), "-c", "core.quotepath=false",
+                                 "status", "--porcelain", "-uall", "--", f"{ext_dir}/base"],
+                                capture_output=True, text=True, encoding="utf-8", errors="replace")
+            if st.returncode == 0 and st.stdout.strip():
+                return {"files": [], "prepared": False, "returncode": 2, "stdout": "",
+                        "stderr": f"[import] 停：目标 {ext_dir}/base/ 存在未提交或未跟踪改动，导入前请先处理：\n{st.stdout.strip()}"}
+            ex_dir = existing_base / "examples"
+            if ex_dir.is_dir():
+                mf_file = ex_dir / ".manifest.json"
+                expected = (json.loads(mf_file.read_text(encoding="utf-8")).get("files") if mf_file.is_file() else None) or {}
+                kept = []
+                for f in sorted(p for p in ex_dir.rglob("*") if p.is_file() and p.name != ".manifest.json"):
+                    rel = f.relative_to(ex_dir).as_posix()
+                    if rel not in expected or _lf_sha256(f) != expected[rel]:
+                        kept.append(f"{ext_dir}/base/examples/{rel}")
+                if kept:
+                    return {"files": [], "prepared": False, "returncode": 2, "stdout": "",
+                            "stderr": f"[import] 停：目标 {ext_dir}/base/examples/ 含未归属或已改动文件，拒绝覆盖：{', '.join(kept)}"}
+        # 2) 用隔离暂存区中的新版 adapt-scan.mjs 在写入前跑完整 --prepare-init --dry-run 预检
+        if prepare_init:
+            shutil.copy2(cfg_path, stage_root / "framework.config.json")
+            fw_src = target / "framework"
+            fw_dst = stage_root / "framework"
+            if fw_src.is_dir() and not fw_dst.exists():
+                import os
+                if os.name == "nt":
+                    subprocess.run(["cmd", "/c", "mklink", "/J", str(fw_dst), str(fw_src)], check=True, capture_output=True)
+                else:
+                    fw_dst.symlink_to(fw_src, target_is_directory=True)
+            staged_scan = staged_base / "skills" / "story-adaptation" / "scripts" / "adapt-scan.mjs"
+            pre = subprocess.run(
+                ["node", str(staged_scan), "--prepare-init", "--target", str(target),
+                 "--source-base", str(staged_base), "--dry-run"],
+                cwd=str(target), capture_output=True, text=True, encoding="utf-8", errors="replace",
+            )
+            if pre.returncode != 0:
+                return {"files": [], "prepared": False, "returncode": pre.returncode,
+                        "stdout": pre.stdout, "stderr": pre.stderr}
+        # 3) 写前核全部通过后再写入目标 base/ 与原位根清单
+        pack_external_base(stage_root, ext_root)
     if not prepare_init:
         return {"files": files, "prepared": False, "returncode": 0, "stdout": "", "stderr": ""}
     scan = ext_root / "base" / "skills" / "story-adaptation" / "scripts" / "adapt-scan.mjs"

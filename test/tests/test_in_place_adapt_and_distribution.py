@@ -16,7 +16,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "test" / "scripts"))
 import publish_to_demo as pub  # noqa: E402
-from ext_workspace import DEV_SOURCE, git_init_excluding_framework, link_framework  # noqa: E402
+from ext_workspace import DEV_SOURCE, ensure_framework, git_init_excluding_framework, link_framework  # noqa: E402
 
 DEMO = REPO_ROOT / "demo"
 
@@ -758,6 +758,242 @@ process.stdout.write(JSON.stringify(mod.default({ feature: '_global', phase: 'do
         self.assertFalse((eext / "base/examples").exists())
         self.assertTrue((eext / "base/.gitignore").is_file())
         self.assertEqual("2.0.6", yaml.safe_load((eext / "adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"])
+
+    def test_s29_import_preflight_real_205_bindings_inner_hooks_and_standin_file_gate(self) -> None:
+        """S29 R1/R2/R3：导入写前保护（脏 base + 未跟踪稿 + 同名他属桥零写入）、真实 2.0.5 六阶段 skill:story-knowledge 绑定退出
+        与 hooks/business-observe.mjs 登记及文件双保留、stand-in 缺件仍拦 --check/--mark-adapted/--apply 自动完成。"""
+        # R1：目标已有 base/（含已改跟踪 Skill + 未跟踪稿）+ 同名他属桥 → import_external_base 零字节写入
+        p1 = self.root / "s29-dirty-import"
+        make_consumer(p1, "S29Dirty", ["codex"])
+        e1 = p1 / "doc" / "extensions"
+        pub.pack_external_base(DEV_SOURCE, e1)
+        init_commit(p1)
+        tracked_skill = e1 / "base/skills/story/SKILL.md"
+        dirty_text = tracked_skill.read_text(encoding="utf-8") + "\n<!-- local unsaved edit -->\n"
+        tracked_skill.write_text(dirty_text, encoding="utf-8")
+        untracked_draft = e1 / "base/local-draft.md"
+        untracked_draft.write_text("# unsaved draft\n", encoding="utf-8")
+        r_dirty = pub.import_external_base(DEV_SOURCE, p1, prepare_init=True)
+        self.assertFalse(r_dirty["prepared"])
+        self.assertEqual(2, r_dirty["returncode"])
+        self.assertEqual(dirty_text, tracked_skill.read_text(encoding="utf-8"), "导入失败却覆盖了已改的受跟踪 Skill")
+        self.assertTrue(untracked_draft.is_file(), "导入失败却删除了未跟踪稿")
+
+        # 恢复脏文件但放置同名他属桥 → import_external_base 仍零字节改写目标 base/ 与 manifest.yaml
+        run_git(p1, "checkout", "--", "doc/extensions/base/skills/story/SKILL.md")
+        untracked_draft.unlink()
+        other_src = e1 / "other-ext/skills/story"
+        other_src.mkdir(parents=True)
+        (other_src / "SKILL.md").write_text("---\nname: story\ndescription: other\n---\n# other\n", encoding="utf-8")
+        emit_other = """
+const [root] = process.argv.slice(1);
+const path = require('node:path');
+const { createRequire } = require('node:module');
+const fw = path.join(root, 'framework');
+const req = createRequire(path.join(fw, 'harness', 'package.json'));
+req('ts-node').register({ project: path.join(fw, 'harness', 'tsconfig.json'), transpileOnly: true });
+req('./scripts/utils/instance-skill-bridge.ts').emitInstanceSkillBridge({
+  repoRoot: root, frameworkDir: fw, agentAdapter: 'codex',
+  extensionDirRel: 'doc/extensions/other-ext', declaredSkillIds: ['story'],
+});
+"""
+        subprocess.run(["node", "-e", emit_other, str(p1)], check=True, capture_output=True)
+        foreign_story = p1 / ".codex/skills/story/SKILL.md"
+        foreign_bytes = foreign_story.read_bytes()
+        init_commit(p1)
+        r_col = pub.import_external_base(DEV_SOURCE, p1, prepare_init=True)
+        self.assertFalse(r_col["prepared"])
+        self.assertEqual(2, r_col["returncode"])
+        self.assertEqual(foreign_bytes, foreign_story.read_bytes())
+        self.assertFalse((e1 / "manifest.yaml").exists())
+
+        # R2：真实 2.0.5 原清单（含六阶段 {kind: skill, ref: story-knowledge}）+ 合法 hooks/business-observe.mjs 登记与文件
+        p2 = self.root / "s29-real-205"
+        make_consumer(p2, "S29Real205", ["codex"])
+        e2 = p2 / "doc" / "extensions"
+        # 复制完整 2.0.5 旧机制骨架（从当前 base 映射到旧根 + 添加 hooks/business-observe.mjs）
+        for sub in ("hooks", "rules", "skills"):
+            shutil.copytree(DEV_SOURCE / "base" / sub, e2 / sub)
+        biz_hook_body = "export default () => ({ ok: true, message: 'inner-biz-hook-ok' });\n"
+        (e2 / "hooks/business-observe.mjs").write_text(biz_hook_body, encoding="utf-8")
+        kf = e2 / "knowledge/facts/biz-profile.md"
+        kf.parent.mkdir(parents=True)
+        kf.write_text("---\nname: biz-profile\nkind: facts\nform: facets\napplies_when: 核业务边界时。\n---\n\n## 定位\n\n- 2.0.5。\n", encoding="utf-8")
+        (e2 / "adapters").mkdir(parents=True)
+        (e2 / "adapters/story.js").write_text("// real story\n", encoding="utf-8")
+        (e2 / "adapters/token.js").write_text("// real token\n", encoding="utf-8")
+        # 真实 2.0.5 原清单：含六阶段 phase_bindings skill:story-knowledge 与 hooks/business-observe.mjs
+        (e2 / "manifest.yaml").write_text(
+            'schema_version: "1.1"\nname: s29-real-205\nversion: "2.0.5"\ndescription: real 2.0.5\n'
+            'provides:\n  skills:\n    - story\n    - story-adaptation\n    - story-knowledge\n    - story-stats\n'
+            '  skill_assets:\n    component-design:\n      knowledge: hooks/blueprint/author.md\n'
+            '  knowledge:\n    - knowledge/facts/biz-profile.md\n'
+            '  hooks:\n    spec:\n      pre_phase:\n        - hooks/shared/story-view.mjs\n'
+            '      post_check:\n        - hooks/spec/post_check.mjs\n        - hooks/business-observe.mjs\n'
+            '      pre_verifier:\n        - hooks/shared/pre_verifier.mjs\n'
+            '  phase_rules_overlays:\n    spec: rules/spec-rules.overlay.yaml\n'
+            'phase_bindings:\n'
+            '  spec: &ak\n    before_phase_work:\n      - {kind: skill, ref: story-knowledge}\n'
+            '  plan: *ak\n  coding: *ak\n  review: *ak\n  ut: *ak\n  testing: *ak\n',
+            encoding="utf-8",
+        )
+        (e2 / "adaptation.yaml").write_text('adapted_for: "2.0.5"\n', encoding="utf-8")
+        (p2 / "doc/usage.json").write_text('{"schema": 1, "requirements": {}}\n', encoding="utf-8")
+        init_commit(p2)
+
+        r2_imp = pub.import_external_base(DEV_SOURCE, p2, prepare_init=True)
+        self.assertTrue(r2_imp["prepared"], r2_imp["stdout"] + r2_imp["stderr"])
+        mf2 = yaml.safe_load((e2 / "manifest.yaml").read_text(encoding="utf-8"))
+        self.assertIn("hooks/business-observe.mjs", mf2["provides"]["hooks"]["spec"]["post_check"])
+        self.assertNotIn("hooks/spec/post_check.mjs", mf2["provides"]["hooks"]["spec"]["post_check"])
+        for ph in ("spec", "plan", "coding", "review", "ut", "testing"):
+            refs = [b["ref"] for b in mf2["phase_bindings"][ph]["before_phase_work"]]
+            self.assertEqual(["base/skills/story-knowledge/SKILL.md"], refs, ph)
+        scan2 = e2 / "base/skills/story-adaptation/scripts/adapt-scan.mjs"
+        r2_apply = subprocess.run(["node", str(scan2), "--apply"], cwd=str(p2), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(0, r2_apply.returncode, r2_apply.stdout + r2_apply.stderr)
+        self.assertTrue((e2 / "hooks/business-observe.mjs").is_file(), "业务 hook 文件被误删")
+        self.assertEqual(biz_hook_body, (e2 / "hooks/business-observe.mjs").read_text(encoding="utf-8"))
+        self.assertFalse((e2 / "hooks/spec/post_check.mjs").exists(), "旧机制 hook 未退出")
+        self.assertFalse((e2 / "rules").exists())
+        self.assertFalse((e2 / "skills").exists())
+        r2_chk = subprocess.run(["node", str(scan2), "--check"], cwd=str(p2), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(0, r2_chk.returncode, r2_chk.stdout + r2_chk.stderr)
+
+        # R3：stand-in 缺两件或仅缺一件时，--check / --mark-adapted / --apply 自动完成均不放行，保住游标与样例
+        p3 = self.root / "s29-standin-gap"
+        make_consumer(p3, "S29StandIn", ["codex"])
+        e3 = p3 / "doc" / "extensions"
+        pub.pack_external_base(DEV_SOURCE, e3)
+        (e3 / "adaptation.yaml").write_text('adapters: stand-in\nadapted_for: "2.0.5"\n', encoding="utf-8")
+        init_commit(p3)
+        scan3 = e3 / "base/skills/story-adaptation/scripts/adapt-scan.mjs"
+        self.assertEqual(0, subprocess.run(["node", str(scan3), "--apply"], cwd=str(p3), capture_output=True).returncode)
+        # 缺两件：--apply 未自动清样例、未升游标，--check 退 1，--mark-adapted 退 2
+        self.assertTrue((e3 / "base/examples").is_dir())
+        self.assertEqual("2.0.5", yaml.safe_load((e3 / "adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"])
+        self.assertEqual(1, subprocess.run(["node", str(scan3), "--check"], cwd=str(p3), capture_output=True).returncode)
+        self.assertEqual(2, subprocess.run(["node", str(scan3), "--mark-adapted"], cwd=str(p3), capture_output=True).returncode)
+        # 仅补 story.js（缺 token.js）：仍拦
+        (e3 / "adapters").mkdir(parents=True)
+        (e3 / "adapters/story.js").write_text("// stand-in story\n", encoding="utf-8")
+        self.assertEqual(1, subprocess.run(["node", str(scan3), "--check"], cwd=str(p3), capture_output=True).returncode)
+        self.assertEqual(2, subprocess.run(["node", str(scan3), "--mark-adapted"], cwd=str(p3), capture_output=True).returncode)
+        # 补齐 token.js：--check 与 --mark-adapted 均通过，清理样例并写 2.0.6
+        (e3 / "adapters/token.js").write_text("// stand-in token\n", encoding="utf-8")
+        self.assertEqual(0, subprocess.run(["node", str(scan3), "--check"], cwd=str(p3), capture_output=True).returncode)
+        self.assertEqual(0, subprocess.run(["node", str(scan3), "--mark-adapted"], cwd=str(p3), capture_output=True).returncode)
+        self.assertFalse((e3 / "base/examples").exists())
+        self.assertEqual("2.0.6", yaml.safe_load((e3 / "adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"])
+
+        # R1 补充：无 framework.config.json 的空仓 --prepare-init 退出 2 且零写入、提示走最小根登记 / framework-init CREATE
+        p_empty = self.root / "s29-empty-no-cfg"
+        p_empty.mkdir(parents=True)
+        r_empty = pub.import_external_base(DEV_SOURCE, p_empty, prepare_init=True)
+        self.assertEqual(2, r_empty["returncode"])
+        self.assertIn("framework-init CREATE", r_empty["stderr"])
+        self.assertFalse((p_empty / "doc/extensions").exists())
+
+        # R1 补充：实际 init-orchestrate.ts 遇同名他属桥即使退出 0，stderr 与后续 --check 仍显式点出缺桥宿主与冲突来源
+        p_init_col = self.root / "s29-live-init-collision"
+        make_consumer(p_init_col, "S29InitCol", ["codex"])
+        ec = p_init_col / "doc/extensions"
+        pub.pack_external_base(DEV_SOURCE, ec)
+        init_commit(p_init_col)
+        sc = ec / "base/skills/story-adaptation/scripts/adapt-scan.mjs"
+        self.assertEqual(0, subprocess.run(["node", str(sc), "--prepare-init"], cwd=str(p_init_col), capture_output=True).returncode)
+        # 放置同名他属桥后直接运行正式 framework-init UPDATE（模拟手工越过预检直接跑 init）
+        other_c = ec / "other-ext/skills/story"
+        other_c.mkdir(parents=True)
+        (other_c / "SKILL.md").write_text("---\nname: story\ndescription: other\n---\n# other\n", encoding="utf-8")
+        subprocess.run(["node", "-e", emit_other, str(p_init_col)], check=True, capture_output=True)
+        col_bytes = (p_init_col / ".codex/skills/story/SKILL.md").read_bytes()
+        clean_env = {k: v for k, v in os.environ.items() if k != "NODE_OPTIONS"}
+        r_init = subprocess.run(
+            ["npx", "ts-node", "scripts/init-orchestrate.ts", "--scope", "project", "--project-root", str(p_init_col),
+             "--execute", "--smart-auto", "--materialized-adapters", "codex"],
+            cwd=str(p_init_col / "framework/harness"), capture_output=True, text=True, encoding="utf-8", errors="replace",
+            shell=os.name == "nt", env=clean_env,
+        )
+        self.assertEqual(col_bytes, (p_init_col / ".codex/skills/story/SKILL.md").read_bytes(), "init 覆盖了同名他属桥")
+        self.assertIn("codex", (r_init.stdout + r_init.stderr).lower())
+        r_chk_col = subprocess.run(["node", str(sc), "--check"], cwd=str(p_init_col), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(1, r_chk_col.returncode)
+        self.assertIn(".codex/skills/story/SKILL.md", r_chk_col.stderr)
+
+    def test_s29_real_198_demo_isolated_copy_upgrades_end_to_end(self) -> None:
+        """S29 R2：用当前仓 1.9.8 demo 原清单与原桥的隔离副本（自固定提交 6735fc79 取出）实跑
+        import_external_base → 项目级 framework-init UPDATE → 宿主 /story adapt 全链，验证 13 份知识与替身就位、旧机制退场。"""
+        import io
+        import tarfile
+        p = self.root / "s29-real-198-demo"
+        p.mkdir(parents=True)
+        arc = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "archive", "6735fc79", "--", "demo"],
+            check=True, capture_output=True,
+        )
+        with tarfile.open(fileobj=io.BytesIO(arc.stdout), mode="r:*") as tf:
+            for m in tf.getmembers():
+                if not m.name.startswith("demo/"):
+                    continue
+                rel = m.name[len("demo/"):]
+                if not rel or rel == "framework" or rel.startswith("framework/"):
+                    continue
+                dst = p / rel
+                if m.isdir():
+                    dst.mkdir(parents=True, exist_ok=True)
+                elif m.isfile():
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    dst.write_bytes(tf.extractfile(m).read())
+        from design_fixture import framework_under_test
+        fw_src = framework_under_test()
+        shutil.copytree(fw_src, p / "framework", ignore=shutil.ignore_patterns("node_modules", "reports", "state"))
+        (p / "framework/harness/state").mkdir(parents=True, exist_ok=True)
+        (p / "framework/harness/reports").mkdir(parents=True, exist_ok=True)
+        nm_dst = p / "framework/harness/node_modules"
+        nm_src = fw_src / "harness/node_modules"
+        if os.name == "nt":
+            subprocess.run(["cmd", "/c", "mklink", "/J", str(nm_dst), str(nm_src)], check=True, capture_output=True)
+        else:
+            nm_dst.symlink_to(nm_src, target_is_directory=True)
+        cfg = json.loads((p / "framework.config.json").read_text(encoding="utf-8"))
+        cfg["materialized_adapters"] = ["codex", "opencode"]
+        (p / "framework.config.json").write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        init_commit(p)
+        # 1) 写前核 + 解包 base + 原位预置根清单
+        r_imp = pub.import_external_base(DEV_SOURCE, p, prepare_init=True)
+        self.assertTrue(r_imp["prepared"], r_imp["stdout"] + r_imp["stderr"])
+        ext = p / "doc/extensions"
+        mf = yaml.safe_load((ext / "manifest.yaml").read_text(encoding="utf-8"))
+        self.assertEqual("wallet-sdk-demo", mf["name"])
+        self.assertEqual("2.0.6", mf["version"])
+        self.assertEqual(13, len([x for x in mf["provides"]["knowledge"] if isinstance(x, str)]))
+        # 2) 项目级 framework-init UPDATE 刷新宿主桥指向 base/skills
+        clean_env = {k: v for k, v in os.environ.items() if k != "NODE_OPTIONS"}
+        r_init = subprocess.run(
+            ["npx", "ts-node", "scripts/init-orchestrate.ts", "--scope", "project", "--project-root", str(p),
+             "--execute", "--smart-auto", "--materialized-adapters", "codex,opencode"],
+            cwd=str(p / "framework/harness"), capture_output=True, text=True, encoding="utf-8", errors="replace",
+            shell=os.name == "nt", env=clean_env,
+        )
+        self.assertEqual(0, r_init.returncode, r_init.stdout + r_init.stderr)
+        self.assertIn("doc/extensions/base/skills/story/SKILL.md", (p / ".codex/skills/story/SKILL.md").read_text(encoding="utf-8"))
+        self.assertIn("doc/extensions/base/skills/story-adaptation/SKILL.md", (p / ".codex/skills/story-adaptation/SKILL.md").read_text(encoding="utf-8"))
+        self.assertIn("doc/extensions/base/skills/story/SKILL.md", (p / ".opencode/skill/story/SKILL.md").read_text(encoding="utf-8"))
+        self.assertFalse((p / ".claude/commands/story.md").exists(), "1.9.8 旧 claude bridge 未退出")
+        self.assertFalse((p / ".cac/commands/story.md").exists(), "1.9.8 旧 cac bridge 未退出")
+        # 3) 从桥指向的脚本执行 /story adapt --apply → 补齐 2.0.6 demo 替身 → --check
+        scan = ext / "base/skills/story-adaptation/scripts/adapt-scan.mjs"
+        r_apply = subprocess.run(["node", str(scan), "--apply"], cwd=str(p), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(0, r_apply.returncode, r_apply.stdout + r_apply.stderr)
+        for old_dir in ("bridges", "hooks", "rules", "skills"):
+            self.assertFalse((ext / old_dir).exists(), f"1.9.8 旧目录未退出：{old_dir}")
+        # stand-in 尚无同级 adapters 时 --check 必须拦截（R3）
+        self.assertEqual(1, subprocess.run(["node", str(scan), "--check"], cwd=str(p), capture_output=True).returncode)
+        # 放入 2.0.6 demo 完整替身 → --check 过
+        shutil.copytree(REPO_ROOT / "test/fixtures/demo-extension/adapters", ext / "adapters")
+        r_chk = subprocess.run(["node", str(scan), "--check"], cwd=str(p), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(0, r_chk.returncode, r_chk.stdout + r_chk.stderr)
 
 
 if __name__ == "__main__":

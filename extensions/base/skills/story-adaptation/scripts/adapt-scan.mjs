@@ -28,7 +28,12 @@ const MODES = ['--prepare-init', '--apply', '--check', '--mark-adapted', '--stat
 
 const ADAPTERS = 'adapters';
 const LEGACY_ADAPTERS = 'skills/story/scripts/adapters';
-const LEGACY_DIRS = ['hooks', 'rules', 'skills'];
+const LEGACY_DIRS = ['bridges', 'hooks', 'rules', 'skills'];
+const RETIRED_STORY = new Set([
+  'bridges/agents-skill-story.md', 'bridges/cac-command-story.md', 'bridges/claude-command-story.md', 'bridges/codex-skills-story.md', 'bridges/cursor-skill-story.md', 'bridges/opencode-skill-story.md',
+  'hooks/plan/author.mjs', 'hooks/spec/author.mjs', 'hooks/shared/knowledge-use.mjs', 'hooks/shared/knowledge-use/document.mjs', 'hooks/shared/knowledge-use/projection.mjs', 'hooks/shared/knowledge-use/validation.mjs',
+  'skills/story/AGENTS.section.md', 'skills/story/phases/spec.md', 'skills/story/rules/ar_design_init.md', 'skills/story/rules/scope_gate.md', 'skills/story/scripts/core/flow/submission.py', 'skills/story/scripts/core/story/review.mjs', 'skills/story/templates/plan-sections.md', 'skills/story/templates/spec-sections.md',
+]);
 const KNOWLEDGE = 'knowledge';
 const CHANGES = 'skills/story-adaptation/reference/upgrade-changes.md';
 const BLOCKS = ['知识', '对接层'];
@@ -82,12 +87,30 @@ function yamlStr(value) {
   return /^[A-Za-z0-9_./-]+$/.test(s) && !['true', 'false', 'null'].includes(s) ? s : JSON.stringify(s);
 }
 
-const isStoryReg = p => /^(?:base\/)?(?:hooks|rules|skills)\//.test(String(p ?? '').trim());
+function storyOwnedSet(tgtDoc) {
+  const owned = new Set(RETIRED_STORY);
+  for (const p of walk(BASE_DIR)) if (/^(?:hooks|rules|skills)\//.test(p)) { owned.add(p); owned.add(`base/${p}`); }
+  for (const b of tgtDoc?.provides?.bridges ?? []) if (b?.source) owned.add(String(b.source).trim());
+  return owned;
+}
 
-/** 合成运行时唯一根 manifest：本包机制登记取自 `base/package-manifest.yaml`（不含 provides.skills），name/description/业务 knowledge 及业务自定义登记归目标。 */
+function manifestRefs(doc) {
+  const refs = new Set();
+  const add = v => { if (typeof v === 'string' && v.trim()) refs.add(v.trim()); };
+  for (const a of Object.values(doc?.provides?.skill_assets ?? {})) Object.values(a ?? {}).forEach(add);
+  for (const e of Object.values(doc?.provides?.hooks ?? {})) for (const l of Object.values(e ?? {})) (l ?? []).forEach(add);
+  Object.values(doc?.provides?.phase_rules_overlays ?? {}).forEach(add);
+  for (const s of Object.values(doc?.phase_bindings ?? {})) for (const l of Object.values(s ?? {})) (l ?? []).forEach(b => add(b?.ref));
+  return refs;
+}
+
+/** 合成运行时唯一根 manifest：按真实所有权合并本包机制，保留目标身份、业务 knowledge 与业务自定义登记，同步退出被接替的旧技能绑定。 */
 function composeManifest(pkgText, tgtText, identity) {
   const pkg = parseYaml(pkgText) ?? {};
   const tgt = tgtText ? (parseYaml(tgtText) ?? {}) : {};
+  const owned = storyOwnedSet(tgt);
+  const isStoryReg = p => owned.has(String(p ?? '').trim());
+  const isStoryBind = b => isStoryReg(b?.ref) || (b?.kind === 'skill' && PKG_SKILLS.includes(String(b?.ref ?? '')));
   const name = typeof tgt.name === 'string' && tgt.name.trim() ? tgt.name.trim() : identity.name;
   const description = typeof tgt.description === 'string' && tgt.description.trim()
     ? tgt.description.trim() : identity.description;
@@ -114,7 +137,7 @@ function composeManifest(pkgText, tgtText, identity) {
   });
   const overlays = { ...Object.fromEntries(Object.entries(tgt.provides?.phase_rules_overlays ?? {}).filter(([, p]) => !isStoryReg(p))), ...(provides.phase_rules_overlays ?? {}) };
   const bindings = merge2(pkg.phase_bindings, tgt.phase_bindings, (r, ph, sl, items, own) => {
-    const kept = (items ?? []).filter(b => own || !isStoryReg(b?.ref));
+    const kept = (items ?? []).filter(b => own || !isStoryBind(b));
     if (!kept.length) return;
     const cur = (r[ph] ??= {})[sl] ?? [];
     for (const b of kept) if (!cur.some(x => x.kind === b.kind && x.ref === b.ref)) cur.push(b);
@@ -316,17 +339,16 @@ function dirtyPaths(root) {
 
 function adaptersStatus() {
   const dir = join(TDIR, ADAPTERS);
-  const story = existsSync(join(dir, 'story.js'));
-  const token = existsSync(join(dir, 'token.js'));
+  const story = existsSync(join(dir, 'story.js')), token = existsSync(join(dir, 'token.js'));
   const standIn = TARGET_ADAPTATION.doc.adapters === 'stand-in';
-  const status = standIn ? 'stand_in' : story && token ? 'present' : story || token ? 'partial' : 'missing';
+  const status = story && token ? (standIn ? 'stand_in' : 'present') : story || token ? 'partial' : 'missing';
   return { dir: `${extDir(TARGET)}/${ADAPTERS}`, story, token, standIn, status };
 }
 
 function adapterGap(ad = adaptersStatus()) {
-  if (ad.standIn || ad.status === 'present') return null;
+  if (ad.story && ad.token) return null;
   const miss = [!ad.story && 'story.js', !ad.token && 'token.js'].filter(Boolean);
-  return `对接层未就位（${ad.status}，${ad.dir} 缺 ${miss.join('、')}）——补齐真实对接文件并在真实环境核验`;
+  return `对接层未就位（${ad.standIn ? 'stand-in/' : ''}${ad.status}，${ad.dir} 缺 ${miss.join('、')}）——补齐对接文件并核验`;
 }
 
 function planAdapterMigration() {
@@ -341,9 +363,15 @@ function planAdapterMigration() {
   return { copy, conflicts };
 }
 
-function pruneEmpty(dir) {
+function pruneEmpty(dir, dropPycache = false) {
   if (!existsSync(dir)) return;
-  for (const e of readdirSync(dir, { withFileTypes: true })) if (e.isDirectory()) pruneEmpty(join(dir, e.name));
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) {
+      if (dropPycache && e.name === '__pycache__') rmSync(p, { recursive: true, force: true });
+      else pruneEmpty(p, dropPycache);
+    }
+  }
   if (!readdirSync(dir).length) rmdirSync(dir);
 }
 
@@ -377,9 +405,12 @@ if (argv.includes('--package')) {
   die('本版采用业务工程内就地适配，已退出跨工程 --package 参数：请把 base/ 解包到目标工程 <ext>/base/ 后直接运行其中的 adapt-scan.mjs', 2);
 }
 const TARGET = opt('--target') ? findRoot(opt('--target')) : findRoot(SCRIPT_BASE);
-if (!TARGET) die(`找不到业务工程根（向上未找到 framework.config.json）：${opt('--target') ?? SCRIPT_BASE}`);
+if (!TARGET) {
+  die(`找不到业务工程根（向上未找到 framework.config.json）：${opt('--target') ?? SCRIPT_BASE}；`
+    + '空仓首次接入请先执行 framework-init CREATE，或按首装最小根清单写入 docs.post_check 后再初始化', 2, 'config');
+}
 const TDIR = join(TARGET, ...extDir(TARGET).split('/'));
-const BASE_DIR = opt('--target') ? join(TDIR, 'base') : SCRIPT_BASE;
+const BASE_DIR = opt('--source-base') ? resolve(opt('--source-base')) : (opt('--target') ? join(TDIR, 'base') : SCRIPT_BASE);
 const pkgManifest = join(BASE_DIR, 'package-manifest.yaml');
 if (!existsSync(pkgManifest)) die(`机制包缺少 package-manifest.yaml：${pkgManifest}`, 2, 'package');
 
@@ -613,12 +644,15 @@ if (mode === '--mark-adapted') {
 }
 
 if (mode === '--apply' || mode === '--prepare-init') {
-  const prep = mode === '--prepare-init';
+  const prep = mode === '--prepare-init', dryRun = argv.includes('--dry-run');
   if (!repoInfo(TARGET).ok) {
     die(`目标不在 git 仓库内：${TARGET}\n  这一次要改写或清理旧机制与宿主入口，没存档的改动被盖掉就找不回来了。`);
   }
   const currentManifest = existsSync(tgtManifest) ? read(tgtManifest) : '';
+  const tgtDoc = currentManifest ? (parseYaml(currentManifest) ?? {}) : {};
+  const owned = storyOwnedSet(tgtDoc);
   const composedText = composeManifest(PKG_MANIFEST_TEXT, currentManifest, freshIdentity(TARGET));
+  const bizRefs = manifestRefs(parseYaml(composedText) ?? {});
   const composedName = manifestValue(composedText, 'name');
   if (!SLUG.test(composedName ?? '')) {
     die(`目标 manifest 的 name（${composedName}）不是小写 slug：Framework 按它识别扩展，`
@@ -632,8 +666,9 @@ if (mode === '--apply' || mode === '--prepare-init') {
         copyFileSync(join(BASE_DIR, ...p.split('/')), join(dir, 'base', ...p.split('/')));
       }
       writeFileSync(join(dir, 'manifest.yaml'), composedText, 'utf8');
-      const skip = new Set(['base', ...LEGACY_DIRS, 'manifest.yaml', ADAPTATION]);
+      const skip = new Set(['base', 'manifest.yaml', ADAPTATION]);
       for (const p of walk(TDIR, TDIR, skip)) {
+        if (owned.has(p) || p.startsWith(`${LEGACY_ADAPTERS}/`)) continue;
         mkdirSync(dirname(join(dir, ...p.split('/'))), { recursive: true });
         copyFileSync(join(TDIR, ...p.split('/')), join(dir, ...p.split('/')));
       }
@@ -647,12 +682,18 @@ if (mode === '--apply' || mode === '--prepare-init') {
     die('包或目标的知识登记要先修好。目标一个字节未写', 2);
   }
   let plan;
-  try { plan = entryPlan(TARGET, PKG_SKILLS); } catch (e) { die(`宿主入口核不了（${e.message}）`); }
+  try { plan = entryPlan(TARGET, PKG_SKILLS, { includeEntries: !prep }); } catch (e) { die(`宿主入口核不了（${e.message}）`); }
 
   const extRel = extDir(TARGET);
-  const legacyFiles = prep ? [] : LEGACY_DIRS.flatMap(d => walk(join(TDIR, d)).map(p => `${extRel}/${d}/${p}`));
+  const legacyAll = LEGACY_DIRS.flatMap(d => walk(join(TDIR, d)).map(p => `${d}/${p}`));
+  const legacyOwn = legacyAll.filter(p => owned.has(p) || p.startsWith(`${LEGACY_ADAPTERS}/`));
+  const unknownLegacy = legacyAll.filter(p => !owned.has(p) && !p.startsWith(`${LEGACY_ADAPTERS}/`) && !bizRefs.has(p));
+  const legacyFiles = prep ? [] : legacyOwn.map(p => `${extRel}/${p}`);
   const adapterPlan = prep ? { copy: [], conflicts: [] } : planAdapterMigration();
-  const writeSurface = new Set(prep ? [] : [...legacyFiles, ...plan.pendingEntries, ...plan.retire, ...plan.pendingBridges]);
+  const writeSurface = new Set(prep ? [...plan.retire] : [...legacyFiles, ...plan.pendingEntries, ...plan.retire, ...plan.pendingBridges]);
+  if (opt('--source-base') && existsSync(join(TDIR, 'base'))) {
+    for (const p of walk(join(TDIR, 'base'), join(TDIR, 'base'), new Set(), true)) writeSurface.add(`${extRel}/base/${p}`);
+  }
   if (existsSync(tgtManifest) && lf(currentManifest) !== lf(composedText)) writeSurface.add(`${extRel}/manifest.yaml`);
   if (TARGET_ADAPTATION.text !== null && existsSync(join(TDIR, ADAPTATION))) writeSurface.add(`${extRel}/${ADAPTATION}`);
   if (!prep && (missingGitignoreLines(TARGET).length || usageBlockedBy(TARGET).startsWith('.gitignore:'))) writeSurface.add('.gitignore');
@@ -663,6 +704,11 @@ if (mode === '--apply' || mode === '--prepare-init') {
     console.error(`[adapt-scan] 停：写入面上有 ${dirty.length} 处未提交改动，升级会盖掉它们：`);
     dirty.forEach(p => console.error(`  ${p}`));
     die('先提交或暂存自己的改动再升级——本命令不替你动工作区（不 stash、不提交）', 2);
+  }
+  if (!prep && unknownLegacy.length) {
+    console.error(`[adapt-scan] 停：旧机制目录下发现 ${unknownLegacy.length} 处未归属且未在 manifest 登记的文件，保留不动：`);
+    unknownLegacy.forEach(p => console.error(`  ${extRel}/${p}`));
+    die('请确认去留（归属业务则登记或移至自有目录，无用则删除）再升级。目标一个字节未写', 2);
   }
   if (adapterPlan.conflicts.length) {
     console.error(`[adapt-scan] 停：对接层存在 ${adapterPlan.conflicts.length} 处同名内容冲突：`);
@@ -677,6 +723,10 @@ if (mode === '--apply' || mode === '--prepare-init') {
     console.error(`[adapt-scan] 停：宿主入口有 ${plan.conflicts.length} 处 Framework 物化会覆盖或不接管的内容：`);
     plan.conflicts.forEach(c => console.error(`  ${c}`));
     die('这些内容要保留就挪到它自己的位置，确认可弃就删掉，再升级。目标一个字节未写', 2);
+  }
+  if (dryRun) {
+    console.log('[adapt-scan] 写前预检通过（dry-run，目标零字节写入）');
+    process.exit(0);
   }
   const written = [];
   const removed = [];
@@ -699,7 +749,8 @@ if (mode === '--apply' || mode === '--prepare-init') {
     }
   }
   if (prep) {
-    console.log(`[adapt-scan] 已预置根清单（写入 ${written.length} 个文件：${written.join('、') || '无变更'}），`
+    for (const p of plan.retire) { const abs = join(TARGET, ...p.split('/')); if (existsSync(abs)) { rmSync(abs, { force: true }); removed.push(p); } }
+    console.log(`[adapt-scan] 已预置根清单（写入 ${written.length} 个文件：${written.join('、') || '无变更'}${removed.length ? `，退出已核旧桥 ${removed.length} 个` : ''}），`
       + '已合入 docs.post_check 稳定登记并保留业务登记；可直接执行项目级 framework-init（CREATE/UPDATE）生成／刷新宿主桥');
     process.exit(0);
   }
@@ -710,12 +761,11 @@ if (mode === '--apply' || mode === '--prepare-init') {
     copyFileSync(join(legacyAdapters, ...p.split('/')), to);
     written.push(`${ADAPTERS}/${p}`);
   }
-  for (const d of LEGACY_DIRS) {
-    const abs = join(TDIR, d);
-    if (!existsSync(abs)) continue;
-    for (const p of walk(abs)) removed.push(`${d}/${p}`);
-    rmSync(abs, { recursive: true, force: true });
+  for (const p of legacyOwn) {
+    const abs = join(TDIR, ...p.split('/'));
+    if (existsSync(abs)) { rmSync(abs, { force: true }); removed.push(p); }
   }
+  for (const d of LEGACY_DIRS) pruneEmpty(join(TDIR, d), true);
   {
     const f = join(TARGET, '.gitignore');
     const have = existsSync(f) ? read(f) : '';
@@ -755,8 +805,10 @@ if (mode === '--apply' || mode === '--prepare-init') {
 // ── --check ───────────────────────────────────────────────────────────────
 const bad = [];
 if (!existsSync(join(BASE_DIR, '.gitignore'))) bad.push('① 机制包缺 base/.gitignore');
+const ownedForCheck = storyOwnedSet(existsSync(tgtManifest) ? (parseYaml(read(tgtManifest)) ?? {}) : {});
 for (const d of LEGACY_DIRS) {
-  if (existsSync(join(TDIR, d))) bad.push(`① 扩展根残留旧机制目录 ${d}/——跑 --apply 退出旧布局`);
+  const left = walk(join(TDIR, d)).map(p => `${d}/${p}`).filter(p => ownedForCheck.has(p) || p.startsWith(`${LEGACY_ADAPTERS}/`));
+  if (left.length) bad.push(`① 扩展根残留旧机制文件（${d}/ 共 ${left.length} 个，如 ${left[0]}）——跑 --apply 退出旧布局`);
 }
 const scriptsAt = join(BASE_DIR, 'skills', 'story', 'scripts');
 if (existsSync(scriptsAt)) {
