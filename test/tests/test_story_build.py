@@ -108,8 +108,8 @@ def _chapter_bodies(story_path) -> dict:
 
 
 def _is_empty_chapter(body: str) -> bool:
-    """空章：正文恰是那一句。它已明说这件事不在本需求里，读者的问题也就不存在。"""
-    return body.strip() == "本需求不涉及。"
+    """不涉及章：正文以不涉及结论起头。"""
+    return body.strip().startswith("本需求不涉及")
 
 
 def _chapter_quote(body: str) -> str:
@@ -225,8 +225,8 @@ class TestArchiveRedlines(StoryBuildCase):
 
     def test_repo_path_in_story_is_named(self) -> None:
         self.init_audit()
-        self.rewrite_story("本需求不涉及。\n\n## 术语",
-                           "详见 doc/features/REQ-DEMO/AR/design.md。\n\n## 术语")
+        self.rewrite_story("## 背景\n\n提交后等待回执期间需保持可见等待态，避免重复提交。",
+                           "## 背景\n\n详见 doc/features/REQ-DEMO/AR/design.md。")
         self.assert_check_names("仓内路径")
 
 
@@ -2736,7 +2736,15 @@ class TestRequiredStructureIsMinimalButReal(StoryBuildCase):
         self.init_audit()
 
     def set_chapter(self, title: str, body: str) -> None:
-        self.rewrite_story(f"## {title}\n\n本需求不涉及。", f"## {title}\n\n{body}")
+        text = self.story()
+        updated, n = re.subn(
+            rf"(?ms)^## {re.escape(title)}\n.*?(?=\n## |\Z)",
+            f"## {title}\n\n{body.strip()}\n",
+            text,
+            count=1,
+        )
+        self.assertEqual(1, n, f"未在 story.md 找到章节「{title}」")
+        self.story_path.write_text(updated, encoding="utf-8")
 
     def test_one_bare_id_column_is_not_acceptance_evidence(self) -> None:
         self.set_chapter("验收", "| 编号 |\n|---|\n| AC-1 |\n")

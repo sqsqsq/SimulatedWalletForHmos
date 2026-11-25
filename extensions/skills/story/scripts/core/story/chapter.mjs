@@ -150,22 +150,7 @@ export function chapterProblems(ctx, chapter, candidateBody, getView = null, whe
   const at = where ?? (n => `「${chapter.title}」第 ${n} 行`);
   // 机器区（如交付章的审查状态）不是作者写的：空不空、是不是「不涉及」只看作者的部分
   const authored = authoredText(body);
-  if (!norm(authored)) {
-    out.push(`「${chapter.title}」：只有标题没有正文`
-      + `——不涉及的章写「${EMPTY_SECTION_TEXT}」一句才算明说过的结论；空着分不清「判过了不涉及」与「还没写」`);
-    return out;
-  }
-  // 明说过「不涉及」的章到此为止：它没有结构可言，也没有解析的必要——
-  // 空章照样解析的话，一次 check 会为九个空章各切一遍文。
-  // 例外只有一种：写作设计还为这一章选着表或图，两个明确声明冲突，交作者二选一。
-  if (norm(authored) === norm(EMPTY_SECTION_TEXT)) {
-    const picked = pickedStructureNames(chapter);
-    if (picked.length) {
-      out.push(`「${chapter.title}」：正文写的是「${EMPTY_SECTION_TEXT}」，写作设计骨架却还为它选着`
-        + `${picked.join('、')}——章提交按写作设计骨架核结构，骨架里不涉及的章写成一行「- 不涉及：<理由>」，两处说法要一致`);
-    }
-    return out;
-  }
+  if (!norm(authored) || norm(authored) === norm(EMPTY_SECTION_TEXT)) return [`「${chapter.title}」：${norm(authored) ? `只写了通用空句「${EMPTY_SECTION_TEXT}」` : '只有标题没有正文'}——不涉及的章也在原位写明本需求不适用的具体依据，不能交空章或无依据空句`];
   const view = getView ? getView() : parseChapter(body);
   // 围栏没闭合：这一行之后的正文全被当成围栏里的东西——判据看不见它，
   // 读者那边整段变成代码块。
@@ -393,7 +378,7 @@ export function cmdChapter(ctx) {
   const body = readText(path.resolve(from));
   if (body === null) fail(`${from}：读不到——章提交从这个文件读本章正文`);
   if (!body.trim()) {
-    fail(`${from}：是空的——章按正文判，本需求不涉及的章写「${EMPTY_SECTION_TEXT}」一句`);
+    fail(`${from}：是空的——章按正文判，不涉及的章也在原位写明本需求不适用的具体依据`);
   }
 
   // **原样读**：这一步是按区间把原文拼回去，读进来少一个 BOM，写回去就少一个 BOM，

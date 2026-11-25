@@ -207,7 +207,7 @@ export function chapterSeedRows(ch, facts, { diagramHint, formHint, guide } = {}
   const sk = ch.structure?.skeleton;
   const notes = (n) => (guide && n?.notes?.length ? [...n.notes.map(guide), ''] : []);
   if (ch.appendix) return [...notes(sk), ...appendixSeedRows(ch, facts, guide)];
-  if (sk && sk.notApplicable !== null) return [...notes(sk), EMPTY_SECTION_TEXT];
+  if (sk && sk.notApplicable !== null) return [...notes(sk), sk.notApplicable.trim() ? `本需求不涉及：${sk.notApplicable.trim().replace(/[。.]$/, '')}。` : '本需求不涉及：{{写明本需求不适用的具体依据}}'];
   const same = (a, b) => normalizeHeading(a ?? '') === normalizeHeading(b ?? '');
   // 一个位置可以有几种形式：图各留一行作图提示，表与列表各留一行「这里要完成什么」。
   // 两者都不生成内容——列、节点与项目由写章的人按原文定。

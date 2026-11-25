@@ -1080,6 +1080,25 @@ class TheMaterializedContractIsReused(ChainCase):
         ghost_out = self.probe(fresh=True)
         self.assertIn("HomeRepository.notDefinedMethod", ghost_out["gate"], ghost_out["gate"])
 
+        # 4) S22 R2：合法表同节并排「| 统计点以及责任方法 | 场景 |」数据表：门禁与独审均报精确行号、原表头与原表行，不被合法表掩盖
+        self.variant(
+            "plan/plan.md",
+            "# Plan\n\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n| 编号 | 落点 |\n|---|---|\n| OBS-02 | HomeRepository.refreshBalance |\n\n"
+            "### 设计模式选型与角色\n\n决策树节点表落在 HomeRepository。\n\n"
+            "### 埋点\n\n| 统计点与责任方法说明 | 备注 |\n|---|---|\n| 辅助说明 | 仅注释 |\n\n"
+            "| 统计点 | 责任方法 | 结果 |\n|---|---|---|\n"
+            "| 余额刷新 / 保存结果 | HomeRepository.refreshBalance | 成功 |\n\n"
+            "| 统计点以及责任方法 | 场景 |\n|---|---|\n"
+            "| 余额刷新 / 保存结果 HomeRepository.refreshBalance | 返回首页 |\n",
+        )
+        mixed_beside_valid = self.probe(fresh=True)
+        self.assertIn("第 25 行", mixed_beside_valid["gate"], mixed_beside_valid["gate"])
+        self.assertIn("| 统计点以及责任方法 | 场景 |", mixed_beside_valid["gate"], mixed_beside_valid["gate"])
+        self.assertNotIn("统计点与责任方法说明", mixed_beside_valid["gate"], mixed_beside_valid["gate"])
+        self.assertIn("表头结构歧义", mixed_beside_valid["review"], mixed_beside_valid["review"])
+        self.assertIn("| 统计点以及责任方法 | 场景 |", mixed_beside_valid["review"], mixed_beside_valid["review"])
+        self.assertIn("返回首页", mixed_beside_valid["review"], mixed_beside_valid["review"])
+
 
 class S19PlanDirectEntryPreparesUseCasesAndKeepsAuthorization(ChainCase):
     """S19 R3：蓝图带 use_cases 权威的未冻结 CU 即使已有 contracts.yaml，直入 Plan 仍提示 prepare-blueprint-design --phase plan
@@ -1145,6 +1164,72 @@ class S19PlanDirectEntryPreparesUseCasesAndKeepsAuthorization(ChainCase):
         out = self.probe(fresh=True)
         self.assertNotIn("use_cases_invalid", out["gate"], out["gate"])
         self.assertNotIn("没有实体扛着", out["gate"], out["gate"])
+
+
+class S22PlanAuthorityMissingStopsAndRoutesToDesignOwner(ChainCase):
+    """S22 R3：验收含重试/分支要求（原生触发 change_unit_use_cases_required），但蓝图自身缺少 use_cases 权威
+    （原生 deriveBlueprintSkillInput 返回 state='invalid'）时，已有 contracts.yaml 不得再误导执行
+    prepare-blueprint-design 或冻结范围，须停在准备/冻结之前并按原生报错交回设计负责方（component-design），
+    同时保住已有 contracts.yaml 不动。"""
+    USE_CASES = False
+    STEPS = ()
+
+    def _run_task(self, action: str) -> str:
+        proc = subprocess.run(
+            ["node", str(self.root / "doc/extensions/hooks/shared/knowledge-task.mjs"),
+             "--project-root", str(self.root), "--feature", CU, "--action", action, "--audience", "author"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
+        )
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        return proc.stdout
+
+    def test_invalid_use_cases_authority_does_not_prompt_prepare_and_keeps_contracts_untouched(self) -> None:
+        # 1) 先物化 contracts.yaml（此时蓝图无 use_cases 义务，正常预览不提示 prepare-blueprint-design）
+        prep = subprocess.run(
+            ["npx", "ts-node", "scripts/prepare-blueprint-design.ts", "--feature", CU, "--phase", "plan",
+             "--project-root", str(self.root)],
+            cwd=str(self.root / "framework" / "harness"),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", shell=True, timeout=180,
+        )
+        self.assertEqual(0, prep.returncode, prep.stdout + prep.stderr)
+        contracts_file = self.unit / "contracts.yaml"
+        self.assertTrue(contracts_file.is_file())
+        before_bytes = contracts_file.read_bytes()
+
+        no_uc_preview = self._run_task("plan")
+        self.assertNotIn("prepare-blueprint-design.ts", no_uc_preview)
+        self.assertNotIn("蓝图设计权威无效或缺失", no_uc_preview)
+
+        # 2) 在蓝图自身 acceptance.boundaries 加入会触发原生 change_unit_use_cases_required 的重试分支边界
+        #    （蓝图没有 use_cases 权威），并同步刷新 CU 的蓝图摘要 -> 原生 deriveBlueprintSkillInput 返回 state='invalid'
+        bp_path = self.root / "doc" / "features" / BLUEPRINT / "blueprint" / "component-blueprint.yaml"
+        old_sha = sha(bp_path)
+        bp_text = bp_path.read_text(encoding="utf-8")
+        import re as _re  # noqa: PLC0415
+        m = _re.search(r"^([ \t]+)boundaries: \[\]\n", bp_text, _re.M)
+        self.assertIsNotNone(m, "蓝图里未找到 boundaries: []")
+        ind = m.group(1)
+        bp_text = bp_text[:m.start()] + (
+            f"{ind}boundaries:\n"
+            f"{ind}- id: BD-001\n"
+            f"{ind}  scenario: 刷新网络超时后用户点击重试按钮，重试超限后停止重试并提示人工刷新\n"
+            f"{ind}  expected: 展示失败态且不再发起重复请求\n"
+        ) + bp_text[m.end():]
+        bp_path.write_text(bp_text, encoding="utf-8")
+        new_sha = sha(bp_path)
+        cu_yaml = self.unit / "change-unit.yaml"
+        cu_yaml.write_text(cu_yaml.read_text(encoding="utf-8").replace(old_sha, new_sha), encoding="utf-8")
+
+        blocked_preview = self._run_task("plan")
+        self.assertIn("预览，执行范围未冻结", blocked_preview)
+        self.assertIn("蓝图设计权威无效或缺失", blocked_preview)
+        self.assertIn("设计负责方", blocked_preview)
+        self.assertIn("停止在准备与冻结之前", blocked_preview)
+        self.assertNotIn("prepare-blueprint-design.ts --feature", blocked_preview,
+                         "权威缺失时不得再误导执行 prepare-blueprint-design")
+        self.assertNotIn("先准备范围（没有候选先走原生 prepare-scope", blocked_preview,
+                         "权威缺失时不得继续引导冻结范围")
+        self.assertEqual(before_bytes, contracts_file.read_bytes(), "阻断时必须保住已有 contracts.yaml 不动")
 
 
 if __name__ == "__main__":

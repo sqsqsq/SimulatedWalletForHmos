@@ -1710,6 +1710,79 @@ class ReviewTaskReachesTheVerifierPart3(ReviewTaskReachesTheVerifierCase):
         ind = re.sub(r"'\s*\n\s*\+\s*'", "", (DEV_EXT / "skills/story/scripts/core/story/independent-review.mjs").read_text(encoding="utf-8"))
         self.assertIn("先说明单凭稿件能读懂的行为，再核它与有效事实、授权和目标的一致性。指出具体错句、影响和修正责任。设计自身的实质冲突给出出处；已审取舍不例行重开。", ind)
 
+    def test_s21_unused_image_is_check_on_doubt_while_adopted_or_referenced_stays_mandatory_and_byte_bound(self) -> None:
+        """S21 R3：未用图保留身份与字节绑定（改真实图字节令旧 PASS 报告 subject_stale），阅读级别标为按问题回查，
+        与对象表总则和图像规则一致；被设计采用或正文实际引用的图、同字节别名均保持正确阅读义务。"""
+        img_dir = self.root / "doc/features" / FEATURE / "AR/story-src/images"
+        img_dir.mkdir(parents=True, exist_ok=True)
+        png_a = b"\x89PNG\r\n\x1a\nUNUSED-V1"
+        png_a_v2 = b"\x89PNG\r\n\x1a\nUNUSED-V2"
+        png_used = b"\x89PNG\r\n\x1a\nUSED-V1"
+        (img_dir / "old.png").write_bytes(png_a)
+        (img_dir / "old-copy.png").write_bytes(png_a)
+        (img_dir / "active.png").write_bytes(png_used)
+        src = self.root / "doc/features" / FEATURE / "AR/story-src"
+        (src / "materials.json").write_text(json.dumps({
+            "schema": 5, "sources": [], "inbox": [],
+            "materials": [
+                {"kind": "image", "paths": ["AR/story-src/images/old.png", "AR/story-src/images/old-copy.png"],
+                 "caption": "旧版草图", "unused": "本单界面已改版，不再沿用旧图"},
+                {"kind": "image", "paths": ["AR/story-src/images/active.png"],
+                 "caption": "新版主界面", "unused": ""},
+            ],
+            "origins": [], "files": [],
+        }, ensure_ascii=False), encoding="utf-8")
+
+        probe = (
+            "const m = await import(process.argv[1]);"
+            "const t = await import(process.argv[2]);"
+            "const obj = m.reviewObject(process.argv[3], process.argv[4]);"
+            "const key = m.materialKey(process.argv[3], obj.rows);"
+            "const task = t.readerReviewTask(process.argv[3], process.argv[4], obj);"
+            "process.stdout.write(JSON.stringify({ rows: obj.rows, alias: [...obj.alias.entries()], key, task }));"
+        )
+        obj_mod = (DEV_EXT / "skills/story/scripts/core/story/review-object.mjs").resolve().as_uri()
+        task_mod = (DEV_EXT / "hooks/shared/reader-review-task.mjs").resolve().as_uri()
+
+        def run_probe() -> dict:
+            p = subprocess.run(["node", "--input-type=module", "-e", probe, obj_mod, task_mod, str(self.root), FEATURE],
+                               capture_output=True, text=True, encoding="utf-8", timeout=60)
+            self.assertEqual(0, p.returncode, p.stderr)
+            return json.loads(p.stdout)
+
+        d1 = run_probe()
+        old_row = next(r for r in d1["rows"] if r["path"].endswith("old.png"))
+        copy_row = next(r for r in d1["rows"] if r["path"].endswith("old-copy.png"))
+        active_row = next(r for r in d1["rows"] if r["path"].endswith("active.png"))
+        self.assertFalse(old_row["required_read"], "未用图不应标为必读")
+        self.assertFalse(copy_row["required_read"], "未用图的同字节副本不应标为必读")
+        self.assertTrue(active_row["required_read"], "已采用/在用图必须标为必读")
+        self.assertTrue(any(k.endswith("old-copy.png") and v.endswith("old.png") for k, v in d1["alias"]), d1["alias"])
+        # 任务书总则与行标一致：未用图带「按问题回查」与同字节别名，在用图不带「按问题回查」
+        self.assertIn("未采用库存阅读稿、未用图、蓝图/接口转写与知识原文仅保留固定版本绑定", d1["task"])
+        old_line = next(l for l in d1["task"].splitlines() if "old.png` —— 登记的图" in l)
+        copy_line = next(l for l in d1["task"].splitlines() if "old-copy.png` —— 登记的图" in l)
+        active_line = next(l for l in d1["task"].splitlines() if "active.png` —— 登记的图" in l)
+        self.assertIn("（按问题回查）", old_line)
+        self.assertIn("（按问题回查）", copy_line)
+        self.assertIn("同一内容", copy_line)
+        self.assertNotIn("（按问题回查）", active_line)
+
+        # 未用图真实字节变化 -> materialKey 立即失效
+        (img_dir / "old.png").write_bytes(png_a_v2)
+        d2 = run_probe()
+        self.assertNotEqual(d1["key"], d2["key"], "未用图字节变化必须令 materialKey 失效")
+        (img_dir / "old.png").write_bytes(png_a)
+
+        # 未用图若被 Story 正文实质引用 -> 自动升级为 required_read=True（不放过口头标不用却实际引用的图）
+        story_file = self.root / "doc/features" / FEATURE / "AR/story.md"
+        orig_story = story_file.read_bytes()
+        self.addCleanup(story_file.write_bytes, orig_story)
+        story_file.write_text(orig_story.decode("utf-8") + "\n![被正文引用的旧图](story-src/images/old.png)\n", encoding="utf-8")
+        d3 = run_probe()
+        old_row_ref = next(r for r in d3["rows"] if r["path"].endswith("old.png"))
+        self.assertTrue(old_row_ref["required_read"], "正文实际引用的图必须升级为必读")
+
     def test_the_task_does_not_mention_a_publisher(self) -> None:
         """报告由调用方原样写出，没有钩子代它发布——任务书里不该还有那一环。"""
         text = self.inject()

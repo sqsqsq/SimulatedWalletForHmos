@@ -216,6 +216,41 @@ class PlanRowsAreFoundByTheirColumns(unittest.TestCase):
         self.assertEqual(1, len(dup_issues), dup_issues)
         self.assertIn("第 7 行", dup_issues[0])
         self.assertIn("责任方法", dup_issues[0])
+        self.assertIn("出现 2 个「责任方法」列", dup_issues[0])
+
+    def test_s22_mixed_connector_and_valid_plus_mixed_tables_are_diagnosed_without_wordlist(self) -> None:
+        """S22 R2：去掉有限连接词黑名单；未拆两职责却承载统计点/方法数据的表（含「统计点以及责任方法」），
+        无论单独出现还是并排在合法表之后均报精确行号、原表头与原表行预览，且行不计入已覆盖；纯说明表继续放行。"""
+        # 1) 仅有「统计点以及责任方法」混合表
+        mixed_only = (
+            "# 计划\n\n## 宿主扩展（可选）\n\n### 埋点\n\n"
+            "| 统计点以及责任方法 | 场景 |\n|---|---|\n"
+            "| 余额刷新 HomeRepository.refreshBalance | 返回首页 |\n"
+        )
+        self.assertEqual([], run("m.planStatRows(plan)", plan=mixed_only))
+        only_issues = run("m.planStatTableIssues(plan)", plan=mixed_only)
+        self.assertEqual(1, len(only_issues), only_issues)
+        self.assertIn("第 7 行", only_issues[0])
+        self.assertIn("| 统计点以及责任方法 | 场景 |", only_issues[0])
+        self.assertIn("HomeRepository.refreshBalance", only_issues[0])
+
+        # 2) 合法逐点表 + 纯说明表 + 追加的混合数据表：合法表不掩盖混合表，纯说明表不误报
+        combo = (
+            "# 计划\n\n## 宿主扩展（可选）\n\n### 埋点\n\n"
+            "| 统计点与责任方法说明 | 备注 |\n|---|---|\n"
+            "| 仅记录主链路结果 | 辅助说明，无方法调用 |\n\n"
+            "| 统计点 | 责任方法 | 结果 |\n|---|---|---|\n"
+            "| 余额刷新 | HomeRepository.refreshBalance | 成功 |\n\n"
+            "| 统计点以及责任方法 | 场景 |\n|---|---|\n"
+            "| 余额刷新 HomeRepository.refreshBalance | 返回首页 |\n"
+        )
+        rows = run("m.planStatRows(plan)", plan=combo)
+        self.assertEqual([["余额刷新", ["HomeRepository.refreshBalance"]]], [[r["point"], r["methods"]] for r in rows])
+        combo_issues = run("m.planStatTableIssues(plan)", plan=combo)
+        self.assertEqual(1, len(combo_issues), combo_issues)
+        self.assertIn("第 15 行", combo_issues[0])
+        self.assertIn("| 统计点以及责任方法 | 场景 |", combo_issues[0])
+        self.assertNotIn("统计点与责任方法说明", combo_issues[0])
 
 
 

@@ -301,7 +301,8 @@ export function reviewObject(projectRoot, feature, { withTask = true, source = n
       f.role === 'answer' ? '人答原件（必读：当时的问法与原话）' : '人答原件的记录', true,
       f.role === 'answer' ? { kind: 'text' } : { kind: 'metadata', read: false });
   }
-  // 图片按对象列，逐路径按字节认同一内容：同字节的落点是别名（第一个落点作规范路径），内容不同的落点各自核读
+  // 图片按对象列，逐路径按字节认同一内容：同字节的落点是别名（第一个落点作规范路径），内容不同的落点各自核读；未用图按问题回查
+  const usedImg = new Set([...(bytesOf(path.join(root, 'AR', 'story.md'))?.toString('utf8') ?? '').matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)].map(x => path.posix.normalize(`AR/${x[1].trim().replace(/\\/g, '/')}`)));
   for (const m of set?.images ?? []) {
     const unused = String(m.unused ?? '').trim();
     const label = `登记的图 ${m.caption || '（没写说明）'}${unused ? `，作者登记不用：${unused}` : ''}`;
@@ -315,7 +316,7 @@ export function reviewObject(projectRoot, feature, { withTask = true, source = n
     [...groups].forEach(([digest, paths], i) => {
       const canonical = rel(at(paths[0]));
       const apart = i ? '；与同条登记的其它落点内容不同，单独核读' : '';
-      for (const r of paths) add(at(r), 'source', `${label}（${r}${apart}）`, true, { kind: 'image', canonical });
+      for (const r of paths) add(at(r), 'source', `${label}（${r}${apart}）`, true, { kind: 'image', canonical, read: !unused || paths.some(p => adopted.has(p) || usedImg.has(p)) });
     });
   }
   for (const [r, f] of adopted) {

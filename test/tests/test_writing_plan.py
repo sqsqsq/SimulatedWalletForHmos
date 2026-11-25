@@ -399,7 +399,8 @@ class TheSkeletonBecomesTheDraft(PlanCase):
         self.cmd("skeleton")
         draft = self.draft("03").read_text(encoding="utf-8")
         self.assertIn("骨架：不涉及：范围已在背景里交代", draft)
-        self.assertIn("本需求不涉及。", draft)
+        self.assertIn("本需求不涉及：范围已在背景里交代。", draft)
+        self.assertNotIn("\n本需求不涉及。\n", draft)
         self.assertNotIn("\n### ", draft)
 
     def test_submit_and_check_hold_the_skeleton(self) -> None:
@@ -531,10 +532,7 @@ class TheSkeletonBecomesTheDraftPart3(PlanCase):
         self.assertEqual(0, self.put("异常与恢复", inside)[0])
 
     def test_not_applicable_body_conflicts_with_a_skeleton_that_lists_structure(self) -> None:
-        """骨架还列着小节或表图、正文却写「不涉及」：两个明确声明冲突，章提交与全篇 check 都点名。
-
-        骨架里的表图恰好与合同要求重合时同样算列过。骨架改成「不涉及」之后，照原语义合法。
-        """
+        """骨架列了表图却提交空模板或不适用正文时必须拦住；骨架改成「- 不涉及：<理由>」后，写具体依据的简短单句合法。"""
         cases = {
             "小节与表": ("功能说明", "06-features", FEATURES),
             "小节图": ("异常与恢复", "07-exceptions", "#### 跨方恢复\n- 答：x\n形式：图"),
@@ -547,24 +545,30 @@ class TheSkeletonBecomesTheDraftPart3(PlanCase):
                 self.write_plan(with_chapter(chapter_id, block))
                 self.cmd("skeleton")
                 src = self.root / "chapter.md"
+                # 1) 裸空句「本需求不涉及。」不再享有专用豁免，直接被拒且不落盘
                 src.write_bytes("本需求不涉及。\n".encode("utf-8"))
                 story_before = self.story_path.read_bytes()
                 code, out = self.cmd("chapter", "--chapter", title, "--from", str(src))
                 self.assertEqual(1, code, out)
-                self.assertIn("两处说法要一致", out)
-                self.assertIn("- 不涉及：", out, "没说骨架里不涉及怎么写")
-                self.assertEqual(story_before, self.story_path.read_bytes(), "冲突却写了盘")
+                self.assertIn("通用空句", out)
+                self.assertEqual(story_before, self.story_path.read_bytes(), "空句却写了盘")
 
                 story = self.story_path.read_text(encoding="utf-8")
                 self.story_path.write_text(story.replace(f"<!-- 待写：{title} -->", "本需求不涉及。"),
                                            encoding="utf-8")
                 _, out = self.cmd("check")
-                self.assertIn("两处说法要一致", out, "全篇 check 与章提交不是同一条检查")
+                self.assertIn("通用空句", out, "全篇 check 与章提交不是同一条检查")
 
+                # 2) 带具体依据的单句在骨架仍列结构时仍被结构检查拦住；骨架改「- 不涉及：<理由>」后合法
                 self.story_path.write_bytes(story_before)
+                src.write_bytes("本需求不涉及：本需求没有这部分。\n".encode("utf-8"))
+                code, out = self.cmd("chapter", "--chapter", title, "--from", str(src))
+                self.assertEqual(1, code, out)
+                self.assertEqual(story_before, self.story_path.read_bytes(), "冲突却写了盘")
+
                 self.write_plan(with_chapter(chapter_id, "- 不涉及：本需求没有这部分"))
                 code, out = self.cmd("chapter", "--chapter", title, "--from", str(src))
-                self.assertEqual(0, code, f"骨架写了不涉及之后「不涉及」该照原语义合法：{out}")
+                self.assertEqual(0, code, f"骨架写了不涉及且正文给出本需求依据后应当合法：{out}")
 
     def test_a_structure_both_required_and_listed_is_reported_and_seeded_once(self) -> None:
         """合同要求与骨架重合：同一个缺口只报一次，起点只给一次。"""
@@ -985,6 +989,92 @@ class TheDesignIsRegisteredWithTheStory(PlanCase):
         self.register()
         _, out = self.cmd("check")
         self.assertNotIn("在成文登记之后改过", out, "重新登记之后设计仍被点名")
+
+
+class S21InapplicableDraftReasonAndHeadingChapterName(PlanCase):
+    """S21 R2：从真实 skeleton -> chapter -> prepare -> check --registering / --deliver 走三组对照：
+    1) 空输入与通用空模板（裸「本需求不涉及。」/ 占位模板）均被拒且空输入不再提示写裸空句；
+    2) 骨架自带依据直接落进草稿正文，提交后完整稿可见具体依据且保十个固定章位；
+    3) 正常多级（### / ####）通过，跳级报错顺带标明所属章名。"""
+
+    def test_three_groups_from_skeleton_to_deliver_and_heading_jump_names_chapter(self) -> None:
+        for rel in ("skills/story/contracts/story-chapters.json", "rules/story-reader-rules.yaml"):
+            dst = self.root / "doc" / "extensions" / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(DEV_EXT / rel, dst)
+        contract = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
+        order = [c["id"] for c in contract["chapters"]]
+        titles = {c["id"]: c["title"] for c in contract["chapters"]}
+        self.write_plan()
+        code, out = self.cmd("skeleton")
+        self.assertEqual(0, code, out)
+
+        # 组 1：空输入提示不再指导只写固定空句；空模板与裸空句均被 chapter 拒绝
+        empty_file = self.root / "empty.md"
+        empty_file.write_text("   \n", encoding="utf-8")
+        code, out = self.cmd("chapter", "--chapter", "03-scope", "--from", str(empty_file))
+        self.assertEqual(1, code, out)
+        self.assertNotIn("写「本需求不涉及。」一句", out)
+        self.assertIn("具体依据", out)
+
+        for bad_tpl in ("本需求不涉及。", "本需求不涉及：{{写明本需求不适用的具体依据}}"):
+            code, out = self.put("03-scope", bad_tpl)
+            self.assertEqual(1, code, (bad_tpl, out))
+
+        # 组 2：直接使用 skeleton 产出的 03-scope 底稿（正文已含具体依据，无裸空句）提交，并提交其余 9 章
+        scope_draft = self.draft("03")
+        draft_text = scope_draft.read_text(encoding="utf-8")
+        self.assertIn("本需求不涉及：范围已在背景里交代。", draft_text)
+        code, out = self.cmd("chapter", "--chapter", "03-scope", "--from", str(scope_draft))
+        self.assertEqual(0, code, out)
+
+        # 组 3：功能说明写合法多级标题（### -> ####）；附录沿用夹具四节结构
+        fixture_appendix = (FIXTURE / "doc" / "features" / FEATURE / "AR" / "story.md").read_text(encoding="utf-8").split("## 附录\n", 1)[1].strip()
+        for cid in order:
+            if cid == "03-scope":
+                continue
+            if cid == "06-features":
+                body = "### 提交等待\n\n提交后界面停在等待态。\n\n#### 回执到达\n\n收到受理单编号后转为已回执。"
+            elif cid == "10-appendix":
+                body = fixture_appendix
+            else:
+                body = minimal_body(titles[cid], f"「{titles[cid]}」的实际正文。")
+            code, out = self.put(cid, body)
+            self.assertEqual(0, code, (cid, out))
+        self.story_path.write_text(
+            self.story_path.read_text(encoding="utf-8").replace(f"# {FEATURE}\n", f"# {FEATURE} 甲需求\n", 1),
+            encoding="utf-8",
+        )
+
+        # prepare 铺编号并生成审查对象；完整稿可见具体不涉及理由且固定 1..10 章位齐
+        code, out = self.cmd("review", "--action", "prepare", "--reader", "task")
+        self.assertEqual(0, code, out)
+        full_story = self.story_path.read_text(encoding="utf-8")
+        self.assertIn("## 3. 范围\n\n本需求不涉及：范围已在背景里交代。", full_story)
+        self.assertIn("### 6.1 提交等待", full_story)
+        self.assertIn("#### 6.1.1 回执到达", full_story)
+        self.assertEqual(10, sum(1 for l in full_story.splitlines() if l.startswith("## ")))
+
+        # 写入合法 PASS 审查报告并接收，登记后 --registering 与 --deliver 均通过
+        design_kit.write_review(self.root, FEATURE, "pass")
+        code, out = self.cmd("review", "--action", "prepare", "--reader", "task")
+        self.assertEqual(0, code, out)
+        code, out = self.cmd("check", "--registering")
+        self.assertEqual(0, code, out)
+        flow_path = self.src / "story-flow.json"
+        flow = json.loads(flow_path.read_text(encoding="utf-8"))
+        flow["status"] = "story_written"
+        flow["story_basis"] = design_kit.registered_basis(self.root, FEATURE)
+        flow_path.write_text(json.dumps(flow, ensure_ascii=False, indent=2), encoding="utf-8")
+        code, out = self.cmd("check", "--deliver")
+        self.assertEqual(0, code, out)
+
+        # 跳级反例：去掉 ### 父级直接写 ####，层级报错顺带标明章名「功能说明」
+        bad_story = full_story.replace("### 6.1 提交等待\n\n提交后界面停在等待态。\n\n#### 6.1.1 回执到达", "#### 回执到达")
+        self.story_path.write_text(bad_story, encoding="utf-8")
+        code, out = self.cmd("check", "--registering")
+        self.assertEqual(1, code, out)
+        self.assertIn("「功能说明」标题层级跳级", out)
 
 
 if __name__ == "__main__":

@@ -176,10 +176,10 @@ class OneParsePerChapterPerRun(unittest.TestCase):
             timeout=120, env=env)
         self.assertEqual(0, proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
         count = len(self.log.read_text(encoding="utf-8")) if self.log.exists() else 0
-        # 这份夹具里只有两章有正文（功能说明、附录），其余是「本需求不涉及。」空章；
-        # 附录那一章一次 check 里被问十来次（五个小节、名字集合、spec 契约比对）。
-        self.assertEqual(2, count,
-                         f"解析了 {count} 次：每章一次的话应当是 2 次（有正文的那两章）")
+        # 这份夹具十章都有正文或显式依据，每章只解析一次；
+        # 附录那一章一次 check 里被问十来次（五个小节、名字集合、spec 契约比对），仍只算 1 次。
+        self.assertEqual(10, count,
+                         f"解析了 {count} 次：十章各一次的话应当是 10 次（不应为附录等章重复解析）")
 
 
 class FencesCloseOnlyOnTheirOwnMarker(ViewCase):

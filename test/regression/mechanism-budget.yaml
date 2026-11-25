@@ -388,7 +388,26 @@ packages:
         actual_batch: {G: 160, X: 42}
         cumulative_version_estimate: {G: 641, X: 747}
         source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/03-批次-知识与施工接续/评审意见/2026-11-24-194950-03批S06至S08独立复评.md"
+      - release: "2.0.6"
+        date: "2026-11-24"
+        by: "维护设计者 Codex（用户授权）"
+        at_ref: "1d6ddc5f"
+        approved_increment_g: 34
+        planned_retirement_x: 26
+        scope: "实投额外15；S20维护域0；S21新增8预计退14，S22新增11预计退12。"
+        actual_batch: {G: 59, X: 38}
+        cumulative_version_estimate: {G: 675, X: 759}
+        source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
     confirmations:
+      - band: ">150%"
+        by: "维护设计者 Codex（受用户委托）"
+        date: "2026-11-24"
+        at_ref: "1d6ddc5f"
+        actual_invested_g: 9048
+        confirmed_overrun_g: 15
+        scope: "S16至S19本轮；旧职责退出以S20至S22复评为准。"
+        reason: "包R212.9%；B02与B03额外实际G9与G6；历史G138及原分母与release控制线保留。"
+        source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
       - band: ">150%"
         by: "维护设计者 Codex（受用户委托）"
         date: "2026-11-24"

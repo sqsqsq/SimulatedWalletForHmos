@@ -409,10 +409,11 @@ function stagePreparation(root, f, feature, action) {
   const [file, part] = STAGE_OUTPUT[action] ?? [];
   if (f.identity.kind !== 'cu' || !file || f.scope !== 'not_frozen' || process.env.MAISON_GOAL_RUN_ID?.trim()) return null;
   const missing = f.spec?.[part] ? [] : [file];
-  if (action === 'plan' && !f.spec?.useCases) {
+  if (action === 'plan') {
     const n = loadNative(root);
     const p = n.module('scripts/utils/blueprint-skill-projection.ts').deriveBlueprintSkillInput(n.root, feature, n.frameworkRoot, 'contracts', 'pure');
-    if (p?.artifacts?.['use-cases@1'] || (p?.state === 'invalid' && /use[-_ ]?cases/i.test(String(p.detail ?? '')))) missing.push('use-cases.yaml');
+    if (p?.state === 'invalid') return { blocked: `蓝图设计权威无效或缺失（${p.detail || 'invalid'}）——停止在准备与冻结之前，不要执行 prepare-blueprint-design 或冻结范围，保留已有产物与原请求，交设计负责方（component-design）补齐权威后再继续。` };
+    if (!f.spec?.useCases && p?.state === 'resolved' && p?.artifacts?.['use-cases@1']) missing.push('use-cases.yaml');
   }
   return missing.length ? `冻结之前先物化本阶段的投影 ${missing.join('、')}：在 \`framework/harness\` 下跑`
     + ` \`npx ts-node scripts/prepare-blueprint-design.ts --feature ${feature} --phase ${action} --project-root <工程根>\`（只写本阶段所需投影，不覆盖已有合法产物）；` : null;
@@ -540,7 +541,8 @@ function featureTask(root, feature, action, supplied, knowledge) {
   duties.push('沿本次请求获准的终点工作。只到 Plan 时，把组件缺陷及验法写入方案；原生输入缺失或已变，先回负责方取得同一需求的有效输入。没有合法接续身份，保住原件并停在写入前。');
   if (f.scope === 'not_frozen') {
     duties.push('本阶段的原生输入还没有确定（执行范围未冻结），本任务只是预览，不作为动笔依据。');
-    gaps.push(`执行范围未冻结：已获准开始本阶段的主模型按 story-knowledge Skill 的「范围未冻结时」${stagePreparation(root, f, feature, action) ?? ''}先准备范围`
+    const prep = stagePreparation(root, f, feature, action);
+    gaps.push(prep?.blocked ?? `执行范围未冻结：已获准开始本阶段的主模型按 story-knowledge Skill 的「范围未冻结时」${prep ?? ''}先准备范围`
       + '（没有候选先走原生 prepare-scope，再由原生 ensureFeatureExecutionScopeFrozen 冻结），返回 frozen 或 reused 后重取本任务再动笔；原生失败按它的报错交回责任方。');
   } else {
     // 契约与验收：本阶段的产物以原生 SpecLoader 读出的为准；产物还没写出时，按原生选中的输入列义务，并写明它还是输入

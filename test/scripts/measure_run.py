@@ -1159,18 +1159,135 @@ def _allowed_external_roots(run_dir: Path | None, ws_root: str | None) -> list[s
 #: 隔离边界终判口径：仅 confirmed_access 构成已确认外部访问（受污染）；其余非仅文字项分流为待宿主核实或失败尝试
 _NEEDS_HOST_CHECK_ACCESS = frozenset({"unknown_outcome", "truncated_unverified", "needs_review", "empty_outcome"})
 _SELECT_STRING_RE = re.compile(r"^(?:select-string|sls)\b", re.IGNORECASE)
-_HAS_INPUT_OBJECT_RE = re.compile(r"(?:^|\s)-inputobject\b", re.IGNORECASE)
-_HAS_FILE_PATH_OPT_RE = re.compile(r"(?:^|\s)-(?:literalpath|path)\b", re.IGNORECASE)
+#: PowerShell Select-String 真实参数表：param_name -> (is_switch, role)
+#: 按 PowerShell 真实无歧义前缀规则解析缩写（如 -Inp -> InputObject、-Pa -> Path、-Lit -> LiteralPath）；
+#: 存在多前缀冲突（如 -In、-P、-Li）或未知参数名时不猜，交待复核。
+_SELECT_STRING_PARAMS: dict[str, tuple[bool, str]] = {
+    "allmatches": (True, "switch"),
+    "casesensitive": (True, "switch"),
+    "context": (False, "other_value"),
+    "culture": (False, "other_value"),
+    "debug": (True, "switch"),
+    "encoding": (False, "other_value"),
+    "erroraction": (False, "other_value"),
+    "errorvariable": (False, "other_value"),
+    "exclude": (False, "other_value"),
+    "include": (False, "other_value"),
+    "informationaction": (False, "other_value"),
+    "informationvariable": (False, "other_value"),
+    "inputobject": (False, "input_object"),
+    "list": (True, "switch"),
+    "literalpath": (False, "file_path"),
+    "noemphasis": (True, "switch"),
+    "notmatch": (True, "switch"),
+    "outbuffer": (False, "other_value"),
+    "outvariable": (False, "other_value"),
+    "path": (False, "file_path"),
+    "pattern": (False, "pattern"),
+    "pipelinevariable": (False, "other_value"),
+    "quiet": (True, "switch"),
+    "raw": (True, "switch"),
+    "simplematch": (True, "switch"),
+    "verbose": (True, "switch"),
+    "warningaction": (False, "other_value"),
+    "warningvariable": (False, "other_value"),
+}
+_SELECT_STRING_ALIASES: dict[str, str] = {
+    "ea": "erroraction", "ev": "errorvariable", "infa": "informationaction", "iv": "informationvariable",
+    "ob": "outbuffer", "ov": "outvariable", "pv": "pipelinevariable", "wa": "warningaction", "wv": "warningvariable",
+}
+_PS_TOKEN_RE = re.compile(r"""'(?:''|[^'])*'|"(?:`"|\\"|[^"])*"|[^\s]+""")
 
 
-def _stage_has_file_access(stage: str, stage_idx: int) -> bool:
-    """判断单个管道段是否真正执行文件系统访问（区别纯打印与 Select-String -InputObject / 管道纯文本过滤）。"""
+def _resolve_select_string_param(raw_flag: str) -> tuple[bool, str] | None:
+    """按 PowerShell 无歧义前缀规则解析 Select-String 参数；无匹配或多匹配返回 None（歧义）。"""
+    key = raw_flag.lstrip("-").lower()
+    if not key:
+        return None
+    if key in _SELECT_STRING_PARAMS:
+        return _SELECT_STRING_PARAMS[key]
+    if key in _SELECT_STRING_ALIASES:
+        return _SELECT_STRING_PARAMS[_SELECT_STRING_ALIASES[key]]
+    matches = [name for name in _SELECT_STRING_PARAMS if name.startswith(key)]
+    if len(matches) == 1:
+        return _SELECT_STRING_PARAMS[matches[0]]
+    return None
+
+
+def _select_string_token_bindings(stage: str, stage_idx: int) -> list[tuple[str, str]]:
+    """把 Select-String / sls 管道段拆成 (token_text, role) 绑定列表。
+
+    role 取值：file_path（显式 -Path/-LiteralPath 或无 -InputObject 时的第 2 个起位置实参）、
+    input_object（-InputObject 或管道输入）、pattern（-Pattern 或第 1 个位置实参）、
+    other_value（已知非路径参数值）、ambiguous（缩写冲突、未知参数、splat 或无法证明的绑定）。
+    """
+    tokens = _PS_TOKEN_RE.findall(stage)
+    if not tokens:
+        return []
+    args = tokens[1:]
+    has_input_object = stage_idx > 0
+    positional_idx = 0
+    pending_role: str | None = None
+    saw_ambiguous = False
+    bound: list[tuple[str, str]] = []
+    for tok in args:
+        if pending_role is None and tok.startswith("-") and len(tok) > 1 and not tok[1].isdigit():
+            flag_part, sep, val_part = tok.partition(":")
+            resolved = _resolve_select_string_param(flag_part)
+            if resolved is None:
+                saw_ambiguous = True
+                if sep:
+                    bound.append((val_part, "ambiguous"))
+                else:
+                    pending_role = "ambiguous"
+            else:
+                is_switch, role = resolved
+                if role == "input_object":
+                    has_input_object = True
+                if not is_switch:
+                    if sep:
+                        bound.append((val_part, role))
+                    else:
+                        pending_role = role
+            continue
+        if pending_role is not None:
+            bound.append((tok, pending_role))
+            pending_role = None
+            continue
+        if saw_ambiguous or tok.startswith(("@", "$")):
+            bound.append((tok, "ambiguous"))
+        elif positional_idx == 0:
+            bound.append((tok, "pattern"))
+            positional_idx += 1
+        else:
+            bound.append((tok, "input_object" if has_input_object else "file_path"))
+            positional_idx += 1
+    return bound
+
+
+def _stage_path_access_mode(stage: str, stage_idx: int, raw_path: str | None = None) -> tuple[str, str | None]:
+    """判定管道段中某路径实参的访问性质：('file_access' | 'text_mention_only' | 'needs_review', detail)。"""
     if PRINT_ONLY_RE.match(stage):
-        return False
+        return "text_mention_only", None
     if _SELECT_STRING_RE.match(stage):
-        if (_HAS_INPUT_OBJECT_RE.search(stage) or stage_idx > 0) and not _HAS_FILE_PATH_OPT_RE.search(stage):
-            return False
-    return bool(ACCESS_VERB_RE.search(stage))
+        bindings = _select_string_token_bindings(stage, stage_idx)
+        if raw_path:
+            needle = raw_path.strip("\"'")
+            matched_roles = [role for tok, role in bindings if needle in tok.strip("\"'")]
+            if matched_roles:
+                if "file_path" in matched_roles:
+                    return "file_access", None
+                if "ambiguous" in matched_roles:
+                    return "needs_review", "Select-String 参数绑定存在缩写冲突或未知开关，无法证明该路径是文件内容输入还是文件路径输入，待复核"
+                return "text_mention_only", None
+            return "needs_review", "Select-String 实参形态未能唯一绑定到文件路径或内容参数，待复核"
+        roles = {role for _, role in bindings}
+        if "file_path" in roles:
+            return "file_access", None
+        if "ambiguous" in roles:
+            return "needs_review", "Select-String 参数绑定不明确，无法证明是否发生文件读取，待复核"
+        return "text_mention_only", None
+    return ("file_access", None) if ACCESS_VERB_RE.search(stage) else ("text_mention_only", None)
 
 
 def _call_cwd(call: dict, ws_root: str | None) -> str:
@@ -1301,21 +1418,25 @@ def scan_isolation_boundary(events: list[dict], calls: list[dict], run_dir: Path
                         record(call, "relative_escape", cur_cwd, access, s, detail)
                     continue
 
-                # 逐管道段检查：区分纯打印、字符串过滤（Select-String -InputObject）与真实文件访问，
-                # 同时保留 `@' ... fs.readdirSync(...) '@ | node -` 内联脚本自身包含读动词的识别。
+                # 逐管道段检查：按真实参数绑定区分纯打印、内容输入（如 Select-String -InputObject/-Inp）、
+                # 无法证明绑定（待复核）与真实文件访问，同时保留内联脚本包含读动词的识别。
                 stages = _split_pipe_stages(s)
                 for stage_idx, stage in enumerate(stages):
                     st = stage.strip()
                     if not st:
                         continue
-                    stage_has_access = _stage_has_file_access(st, stage_idx)
+
+                    def eval_stage_path(raw_target: str | None) -> tuple[str, str | None]:
+                        mode, mode_detail = _stage_path_access_mode(st, stage_idx, raw_target)
+                        if mode == "file_access":
+                            return classify_access_outcome(call, is_mixed_output=is_mixed_output)
+                        if mode == "needs_review":
+                            return "needs_review", mode_detail
+                        return "text_mention_only", None
 
                     # 1. 动态拼接 / 宿主私有会话库访问
                     if HOST_SESSION_STORE_RE.search(st):
-                        if stage_has_access:
-                            access, detail = classify_access_outcome(call, is_mixed_output=is_mixed_output)
-                        else:
-                            access, detail = "text_mention_only", None
+                        access, detail = eval_stage_path(None)
                         record(call, "host_session_store_access", "<host-dsh-session-store>", access, st, detail)
 
                     # 2. 相对跳出路径（..）按当前 cur_cwd 解析
@@ -1324,10 +1445,7 @@ def scan_isolation_boundary(events: list[dict], calls: list[dict], run_dir: Path
                             raw_rel = rel_m.group(1).rstrip(".,;:")
                             resolved = _resolve_from_cwd(cur_cwd, raw_rel)
                             if resolved and not is_allowed(resolved):
-                                if stage_has_access:
-                                    access, detail = classify_access_outcome(call, is_mixed_output=is_mixed_output)
-                                else:
-                                    access, detail = "text_mention_only", None
+                                access, detail = eval_stage_path(raw_rel)
                                 record(call, "relative_escape", resolved, access, st, detail)
 
                     # 3. 绝对路径
@@ -1335,10 +1453,7 @@ def scan_isolation_boundary(events: list[dict], calls: list[dict], run_dir: Path
                         raw_abs = abs_m.group(1).rstrip(".,;:'\"")
                         resolved = _norm_abs_posix(raw_abs)
                         if resolved and not is_allowed(resolved):
-                            if stage_has_access:
-                                access, detail = classify_access_outcome(call, is_mixed_output=is_mixed_output)
-                            else:
-                                access, detail = "text_mention_only", None
+                            access, detail = eval_stage_path(raw_abs)
                             record(call, "absolute_escape", resolved, access, st, detail)
 
     confirmed = [f for f in findings if f["access"] == "confirmed_access"]
@@ -1416,11 +1531,14 @@ def _classify_send_message_dispatch(prompt: str, prev_role: str, prev_basis: str
 
 
 def _window_report_evidence(prompt: str, child: dict | None,
-                            t_start: int | None = None, t_next: int | None = None) -> dict:
+                            t_start: int | None = None, t_next: int | None = None,
+                            t_settled: int | None = None) -> dict:
     """统一核实单轮派审窗口 `[t_start, t_next)` 内的读者报告原件：
     同时服务实际报告存在性（`actual_report`）与逐字节完整性（`_reader_original` / `_report_completeness`）。
 
-    同路径后续若被另一次完整 `write` 覆写为其他材料键，本轮窗口末原件不再属于当前对象，
+    同时约束写调用发起时刻与成功结果时刻：首轮同样受派发起点 `t_start` 约束；
+    写调用或成功结果缺少时刻、早于 `t_start`、或成功结果跨到下一轮（`>= t_next`）或晚于本轮收尾（`> t_settled`）时，
+    均不归属为本轮已验证报告原件。同路径后续若被另一次完整 `write` 覆写为其他材料键，本轮窗口末原件不再属于当前对象，
     返回 `verified=False` 且 `text=None`；仅当窗口末最后一次完整 `write` 匹配本轮材料键且后续仅有局部编辑时，
     才判 `verified=True, basis='child_write_then_edited'`（`text=None`，完整性留 `unknown`）。
     """
@@ -1449,30 +1567,69 @@ def _window_report_evidence(prompt: str, child: dict | None,
 
     cwd = (child.get("header") or {}).get("cwd")
     authoring_all = [call for call in child.get("calls") or [] if call.get("name") in AUTHORING_TOOLS]
-    if t_start is not None or t_next is not None:
-        authoring = [c for c in authoring_all
-                     if c.get("time") is None
-                     or ((t_start is None or c["time"] >= t_start) and (t_next is None or c["time"] < t_next))]
-    else:
-        authoring = authoring_all
-    touched = [call for call in authoring if _is_report_path(_args(call).get("file_path"), want, cwd)]
-    if not touched:
-        elsewhere = next((call for call in authoring
-                          if _writer_path(_args(call).get("file_path")).endswith("/" + want)), None)
-        if elsewhere:
-            return {"kind": "contract", "verified": False, "report_file": report_file, "text": None, "basis": None,
-                    "why": f"读者写的是 {_writer_path(_args(elsewhere).get('file_path'))}，"
-                           f"不是本次报告文件位置 {want}：同名后缀不能跨目录或工作区代证"}
-        return {"kind": "contract", "verified": False, "report_file": report_file, "text": None, "basis": None,
-                "why": f"读者子会话本轮窗口内没有写本次报告文件 {want}"}
+    has_window = t_start is not None or t_next is not None or t_settled is not None
+    touched_all = [call for call in authoring_all if _is_report_path(_args(call).get("file_path"), want, cwd)]
 
-    done = [(call, _write_outcome(call)) for call in touched]
-    succeeded = [call for call, outcome in done if outcome == "success"]
+    succeeded: list[dict] = []
+    in_window_failed: list[tuple[dict, str]] = []
+    saw_pre_dispatch = False
+    saw_untimed = False
+    saw_late_result = False
+    for call in touched_all:
+        ct = call.get("time")
+        outcome, rt = _write_outcome_detail(call)
+        if has_window:
+            if ct is None:
+                saw_untimed = True
+                continue
+            if t_start is not None and ct < t_start:
+                saw_pre_dispatch = True
+                continue
+            if t_next is not None and ct >= t_next:
+                continue
+        if outcome != "success":
+            in_window_failed.append((call, outcome))
+            continue
+        if has_window:
+            if rt is None:
+                saw_untimed = True
+                continue
+            if t_start is not None and rt < t_start:
+                saw_pre_dispatch = True
+                continue
+            if (t_next is not None and rt >= t_next) or (t_settled is not None and rt > t_settled):
+                saw_late_result = True
+                continue
+        succeeded.append(call)
+
     if not succeeded:
-        outcome = done[-1][1]
-        why = ("读者写本次报告文件的调用返回错误，参数里的正文不能证明文件已经写出"
-               if outcome == "error" else
-               "读者写本次报告文件的调用没有结果，不能证明文件已经写出")
+        if saw_late_result:
+            why = "读者写本次报告文件的成功结果晚于本轮派审窗口（跨轮或晚于收尾返回），不能归属为本轮已验证原件"
+        elif saw_untimed:
+            why = "读者写本次报告文件的调用或成功结果缺少时刻，无法归属到本轮派审窗口"
+        elif in_window_failed:
+            outcome = in_window_failed[-1][1]
+            why = ("读者写本次报告文件的调用返回错误，参数里的正文不能证明文件已经写出"
+                   if outcome == "error" else
+                   "读者写本次报告文件的调用没有结果，不能证明文件已经写出")
+        elif saw_pre_dispatch:
+            why = "读者写本次报告文件的时刻早于本轮派发起点，不能归属为本轮已验证原件"
+        else:
+            in_win_other = [
+                c for c in authoring_all
+                if (not has_window) or (
+                    c.get("time") is not None
+                    and (t_start is None or c["time"] >= t_start)
+                    and (t_next is None or c["time"] < t_next)
+                )
+            ]
+            elsewhere = next((call for call in in_win_other
+                              if _writer_path(_args(call).get("file_path")).endswith("/" + want)), None)
+            if elsewhere:
+                why = (f"读者写的是 {_writer_path(_args(elsewhere).get('file_path'))}，"
+                       f"不是本次报告文件位置 {want}：同名后缀不能跨目录或工作区代证")
+            else:
+                why = f"读者子会话本轮窗口内没有写本次报告文件 {want}"
         return {"kind": "contract", "verified": False, "report_file": report_file, "text": None, "basis": None, "why": why}
 
     full_writes = [c for c in succeeded if c.get("name") == "write"]
@@ -1504,9 +1661,10 @@ def _window_report_evidence(prompt: str, child: dict | None,
 
 
 def _actual_report_evidence(prompt: str, child: dict | None, completeness: dict,
-                            t_start: int | None, t_next: int | None) -> dict:
+                            t_start: int | None, t_next: int | None,
+                            t_settled: int | None = None) -> dict:
     """独立核实本轮是否真正产出了可绑定到（对象、读者、本轮路径）的实际报告原件。"""
-    ev = _window_report_evidence(prompt, child, t_start, t_next)
+    ev = _window_report_evidence(prompt, child, t_start, t_next, t_settled)
     if ev["kind"] == "no_contract":
         if completeness.get("basis") == "recorded_report":
             return {"verified": True, "report_file": None, "basis": "recorded_report", "why": None}
@@ -1613,7 +1771,7 @@ def native_delegations(sessions: dict, children: dict[Path, dict] | None = None)
             for idx_in_group, d in enumerate(group):
                 t_start = d["start_time"]
                 t_next = group[idx_in_group + 1]["start_time"] if idx_in_group + 1 < len(group) else None
-                d["win_start"] = t_start if idx_in_group > 0 else None
+                d["win_start"] = t_start
                 d["next_time"] = t_next
                 cands: list[tuple[int, dict]] = []
                 for si, cand in enumerate(s_queue):
@@ -1691,10 +1849,11 @@ def native_delegations(sessions: dict, children: dict[Path, dict] | None = None)
                 row["settled_note"] = d["settled_note"]
             if row["role"] == "story_review":
                 w_start = d.get("win_start")
+                t_settled = done.get("time") if done else None
                 row["review_mode"] = _review_mode(prompt)
                 row["review_conclusion"] = _reply_conclusion(prompt, reply, done)
-                row["report_completeness"] = _report_completeness(prompt, reply, row["review_conclusion"], d["child"], w_start, t_next)
-                actual = _actual_report_evidence(prompt, d["child"], row["report_completeness"], w_start, t_next)
+                row["report_completeness"] = _report_completeness(prompt, reply, row["review_conclusion"], d["child"], w_start, t_next, t_settled)
+                actual = _actual_report_evidence(prompt, d["child"], row["report_completeness"], w_start, t_next, t_settled)
                 row["actual_report"] = actual
                 row["report_file"] = actual["report_file"] if actual["verified"] else None
             rows.append(row)
@@ -1855,22 +2014,29 @@ def _is_report_path(path: object, want: str, cwd: object = None) -> bool:
     return _is_absolute_path(got) and bool(root) and _same_path(got, f"{root}/{want}")
 
 
-def _write_outcome(call: dict) -> str:
-    """一次写类调用的结果事实：`success` / `error` / `no_result`（只有调用、没有结果不算写出）。"""
+def _write_outcome_detail(call: dict) -> tuple[str, int | None]:
+    """一次写类调用的结果事实及结果时刻：(`success` / `error` / `no_result`, result_time)。"""
     results = [r for r in call.get("results") or [] if isinstance(r, dict)]
     if not results:
-        return "no_result"
-    return "error" if results[-1].get("isError") else "success"
+        return "no_result", None
+    last = results[-1]
+    return ("error" if last.get("isError") else "success"), last.get("time")
+
+
+def _write_outcome(call: dict) -> str:
+    """一次写类调用的结果事实：`success` / `error` / `no_result`（只有调用、没有结果不算写出）。"""
+    return _write_outcome_detail(call)[0]
 
 
 def _reader_original(prompt: str, child: dict | None,
-                     t_start: int | None = None, t_next: int | None = None) -> dict:
+                     t_start: int | None = None, t_next: int | None = None,
+                     t_settled: int | None = None) -> dict:
     """读者原件：派审载体分配的报告文件，在同一个读者子会话的本轮窗口内由读者自己成功写出的正文。
 
     `{report_file, text, why}`。与 `_actual_report_evidence` 共用 `_window_report_evidence`，
     保证实际报告存在性与逐字节完整性核验遵守同一窗口边界与覆写规则。
     """
-    ev = _window_report_evidence(prompt, child, t_start, t_next)
+    ev = _window_report_evidence(prompt, child, t_start, t_next, t_settled)
     return {"report_file": ev["report_file"], "text": ev["text"], "why": ev["why"]}
 
 
@@ -1893,7 +2059,8 @@ def _original_completeness(original: str, final: str) -> str | None:
 
 
 def _report_completeness(prompt: str, reply: dict, conclusion: dict, child: dict | None,
-                         t_start: int | None = None, t_next: int | None = None) -> dict:
+                         t_start: int | None = None, t_next: int | None = None,
+                         t_settled: int | None = None) -> dict:
     """报告完整性的可核结论：{value: complete/unknown, why, basis, report_file}。
 
     **任务收尾、取得回复文本、声明结论、报告可核完整是四件事。** 有现行报告合同的派审（载体写明了
@@ -1918,7 +2085,7 @@ def _report_completeness(prompt: str, reply: dict, conclusion: dict, child: dict
     if len(files) > 1:
         return {"value": "unknown", "basis": None, "report_file": None,
                 "why": "派审载体写明了不止一个本次报告文件，无法确定哪一份是这一次的原件"}
-    original = _reader_original(prompt, child, t_start, t_next)
+    original = _reader_original(prompt, child, t_start, t_next, t_settled)
     if original["text"] is None:
         return {"value": "unknown", "why": original["why"], "basis": None, "report_file": original["report_file"]}
     why = _original_completeness(original["text"], reply["reply"])

@@ -28,10 +28,7 @@ export function statTableCols(header, words) {
   return at.some(i => i < 0) || new Set(at).size !== words.length ? null : at;
 }
 
-//: 单格合并两项职责的歧义表头（如「统计点/责任方法」「统计点与责任方法」）；说明/备注表（如「统计点与责任方法说明」）不匹配。
-const MIXED_DUTY = /^(?:统计点\s*[\/／与和及、&·\-]\s*责任方法|责任方法\s*[\/／与和及、&·\-]\s*统计点)$/;
-
-/** 扫描 plan.md「埋点」直接所属段中存在结构歧义的表头（单格混合两职责或同职责重复列），报精确行号与实际表头。 */
+/** 扫描 plan.md「埋点」直接所属段中存在结构歧义的表头（单格混合两职责、未拆分数据表或同职责重复列），报精确行号与原表头。 */
 export function planStatTableIssues(planText) {
   const doc = parseDocument(String(planText ?? ''));
   const sec = planEventSection(doc);
@@ -42,8 +39,9 @@ export function planStatTableIssues(planText) {
     const lineNo = sec.from + t.line + 1;
     const rawHeader = `| ${t.header.join(' | ')} |`;
     const labels = t.header.map(mainHeaderLabel);
-    if (labels.some(l => MIXED_DUTY.test(l))) {
-      issues.push(`plan.md 第 ${lineNo} 行表头「${rawHeader}」将「统计点」与「责任方法」合并在同一列（结构歧义）——两者须拆成独立列，单格混合两职责不能算两列`);
+    const methodRow = !statTableCols(t.header, words) && !words.some(w => labels.filter(l => l === w).length > 1) ? t.rows.find(r => r.some(c => Boolean(clean(c).match(METHOD_REF)))) : null;
+    if (methodRow || (labels.some(l => l.includes('统计点') && l.includes('责任方法')) && !labels.every(l => !(l.includes('统计点') && l.includes('责任方法')) || /(?:说明|备注|规范|规则|定义|示例)$/.test(l)))) {
+      issues.push(`plan.md 第 ${lineNo} 行表头「${rawHeader}」未拆成独立的「统计点」「责任方法」两列（结构歧义${(methodRow ?? t.rows[0]) ? `；原表行如 \`| ${(methodRow ?? t.rows[0]).join(' | ')} |\`` : ''}）——两者须拆成独立列，该表行不计入已覆盖`);
       continue;
     }
     for (const w of words) {

@@ -567,8 +567,8 @@ export function headingNumberProblems(storyText, chapters = [], counters = []) {
     const head = !fenced.has(i) && /^(#{2,})\s+(.+?)\s*$/.exec(before[i]);
     if (!head) continue;
     const depth = head[1].length - 3;
-    if (depth < 0) { inChapter = known.has(normalizeHeading(head[2])); seqLen = 0; }
-    else if (inChapter && depth > seqLen) { out.push(`story.md 第 ${i + 1} 行标题层级跳级：实际「${before[i]}」缺少上一级（${'#'.repeat(seqLen + 3)}）标题——请补齐父级标题或调整层级，不能跳过父级直接写 ${head[1]}`); continue; }
+    if (depth < 0) { const name = normalizeHeading(head[2]); inChapter = known.has(name) ? name : ''; seqLen = 0; }
+    else if (inChapter && depth > seqLen) { out.push(`story.md 第 ${i + 1} 行「${inChapter}」标题层级跳级：实际「${before[i]}」缺少上一级（${'#'.repeat(seqLen + 3)}）标题——请补齐父级标题或调整层级，不能跳过父级直接写 ${head[1]}`); continue; }
     else if (inChapter) seqLen = depth + 1;
     if (before[i] !== after[i]) out.push(`story.md 第 ${i + 1} 行标题缺号或号序不符：实际「${before[i]}」，应为「${after[i]}」——定稿编号由 \`story-build review --action prepare\`（或 \`story-build number\`）统一铺设`);
   }

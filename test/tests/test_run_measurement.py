@@ -1308,16 +1308,16 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
     KEY = "a" * 64
 
     def write_rows(self, path: str, content: str | None = None, *, outcome: str = "ok",
-                   name: str = "write", call_id: str = "w1") -> list[dict]:
+                   name: str = "write", call_id: str = "w1", time_ms: int = 2 * 60000) -> list[dict]:
         """读者子会话里的一次写文件调用：`outcome` 取 ok / error / no_result（只有调用、没有结果）。"""
         args = {"file_path": path}
         if content is not None:
             args["content"] = content
-        rows = [{"type": "tool/call", "time": 2 * 60000,
+        rows = [{"type": "tool/call", "time": time_ms,
                  "data": {"callId": call_id, "name": name,
                           "arguments": json.dumps(args, ensure_ascii=False)}}]
         if outcome != "no_result":
-            rows.append({"type": "tool/result", "time": 2 * 60000,
+            rows.append({"type": "tool/result", "time": time_ms,
                          "data": {"message": {"toolCallId": call_id, "isError": outcome == "error",
                                               "content": [{"type": "text",
                                                            "text": "writing failed" if outcome == "error" else "ok"}]}}})
@@ -1411,7 +1411,7 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
                            "summary": f"Background subagent {child} finished and will do no further work."}}]}})
         _session(self.run_dir / "native-sessions" / parent / "session.v4.jsonl.zstd", parent, rows)
         _session(self.run_dir / "native-sessions" / parent / "children" / "k-full" / "session.v4.jsonl.zstd",
-                 "k-full", self.write_rows(self.report_file(), self.current_report("pass")))
+                 "k-full", self.write_rows(self.report_file(), self.current_report("pass"), time_ms=4 * 60000))
         got = measure_run.native_delegations(measure_run._native_sessions(self.run_dir))["delegations"]
         by_child = {i["child_id"]: i for i in got["items"]}
         self.assertEqual(
@@ -2286,6 +2286,154 @@ class S16IsolationVerdictAndRoundReportAttribution(unittest.TestCase):
         self.assertEqual(0, d_fut["story_review_full_replies"])
         self.assertEqual(1, d_fut["story_review_actual_reports"])
         self.assertIn("实际已核报告 1 份", obs_fut)
+
+    def test_select_string_parameter_binding_with_real_shell_contrast(self) -> None:
+        """S20 R3：Select-String 按 PowerShell 真实参数绑定区分内容输入、文件路径输入与歧义待复核。"""
+        shell = shutil.which("powershell") or shutil.which("pwsh")
+        if not shell:
+            self.skipTest("环境里没有 PowerShell")
+        sandbox = self.root / "real_shell_sandbox"
+        ws = sandbox / "case_ws"
+        sib = sandbox / "sibling"
+        ws.mkdir(parents=True, exist_ok=True)
+        sib.mkdir(parents=True, exist_ok=True)
+        (sib / "notes.md").write_text("external-secret-line\n", encoding="utf-8")
+
+        def run_ps(cmd: str) -> str:
+            proc = subprocess.run([shell, "-NoProfile", "-Command", cmd], cwd=ws, capture_output=True, text=True, encoding="utf-8", errors="replace")
+            return (proc.stdout or "") + (proc.stderr or "")
+
+        cmd_full = "Select-String -InputObject '../sibling/notes.md' -Pattern 'sibling'"
+        cmd_abbr = "Select-String -Inp '../sibling/notes.md' -Pattern 'sibling'"
+        cmd_path = "Select-String -Path '../sibling/notes.md' -Pattern 'external-secret'"
+        cmd_pos = "Select-String 'external-secret' '../sibling/notes.md'"
+        cmd_amb = "Select-String -In '../sibling/notes.md' -Pattern 'sibling'"
+
+        out_full = run_ps(cmd_full)
+        out_abbr = run_ps(cmd_abbr)
+        out_path = run_ps(cmd_path)
+        out_pos = run_ps(cmd_pos)
+        self.assertIn("../sibling/notes.md", out_full)
+        self.assertEqual(out_full.strip(), out_abbr.strip())
+        self.assertIn("external-secret-line", out_path)
+        self.assertIn("external-secret-line", out_pos)
+
+        got_full, obs_full = self._measure_case("s20_full_inputobj", cmd_full, out_full)
+        self.assertFalse(got_full["isolation_boundary"]["contaminated"])
+        self.assertEqual(0, len(got_full["isolation_boundary"]["confirmed_findings"]))
+        self.assertEqual(1, len(got_full["isolation_boundary"]["mentions_only"]))
+        self.assertIn("未检出外部访问", obs_full)
+
+        got_abbr, obs_abbr = self._measure_case("s20_abbr_inp", cmd_abbr, out_abbr)
+        self.assertFalse(got_abbr["isolation_boundary"]["contaminated"])
+        self.assertEqual(0, len(got_abbr["isolation_boundary"]["confirmed_findings"]))
+        self.assertEqual(1, len(got_abbr["isolation_boundary"]["mentions_only"]))
+        self.assertIn("未检出外部访问", obs_abbr)
+
+        got_path, obs_path = self._measure_case("s20_path_file", cmd_path, out_path)
+        self.assertTrue(got_path["isolation_boundary"]["contaminated"])
+        self.assertEqual(1, len(got_path["isolation_boundary"]["confirmed_findings"]))
+        self.assertIn("已确认外部访问", obs_path)
+
+        got_pos, obs_pos = self._measure_case("s20_pos_file", cmd_pos, out_pos)
+        self.assertTrue(got_pos["isolation_boundary"]["contaminated"])
+        self.assertEqual(1, len(got_pos["isolation_boundary"]["confirmed_findings"]))
+        self.assertIn("已确认外部访问", obs_pos)
+
+        got_amb, obs_amb = self._measure_case("s20_ambiguous_flag", cmd_amb, "some output")
+        self.assertFalse(got_amb["isolation_boundary"]["contaminated"])
+        self.assertEqual(0, len(got_amb["isolation_boundary"]["confirmed_findings"]))
+        self.assertEqual(1, len(got_amb["isolation_boundary"]["pending_host_check"]))
+        self.assertEqual("needs_review", got_amb["isolation_boundary"]["pending_host_check"][0]["access"])
+        self.assertIn("待宿主核实 1 处", obs_amb)
+
+    def test_report_attribution_enforces_start_time_untimed_late_result_and_early_child_write(self) -> None:
+        """S20 R4：首轮下界、缺时刻调用、跨轮延迟结果均不得归属为本轮原件；子代理在父调用返回前写出仍正常识别。"""
+        if shutil.which("node") is None:
+            self.skipTest("环境里没有 node")
+        report = "doc/reports/story/AR1/aaaaaaaaaaaaaaaa/review-original.1.md"
+        child = "11111111-2222-3333-4444-555555555555"
+        key = "a" * 64
+        prompt = f"# Story 独立人读审查 · 派审\n\n- 材料键：`{key}`\n- 本次报告文件：`{report}`\n\n## 先首读\n"
+        body = f"material_key: {key}\nconclusion: pass\n\nFull independent report."
+
+        def settled_row(ts: int) -> dict:
+            return {"type": "agent/inbox/spliced", "time": ts, "data": {"inserted": [{
+                "source": {"kind": "subagent-settled", "senderSessionId": child, "summary": "Background subagent story-reviewer finished"},
+                "content": [{"type": "text", "text": f"Background subagent story-reviewer finished\nIts closing message:\n{body}"}],
+            }]}}
+
+        def write_pair(call_id: str, call_ts: int | None, res_ts: int | None) -> list[dict]:
+            call_ev: dict = {"type": "tool/call", "data": {"callId": call_id, "name": "write",
+                             "arguments": json.dumps({"file_path": report, "content": body})}}
+            if call_ts is not None:
+                call_ev["time"] = call_ts
+            res_ev: dict = {"type": "tool/result", "data": {"message": {"toolCallId": call_id, "isError": False, "content": [{"type": "text", "text": "ok"}]}}}
+            if res_ts is not None:
+                res_ev["time"] = res_ts
+            return [call_ev, res_ev]
+
+        r1_parent = [
+            {"type": "subagent/catalog", "time": 1000, "data": {"childId": child, "label": "Story 独立人读审查", "childCreatedAt": 1000}},
+            {"type": "tool/call", "time": 1000, "data": {"callId": "c1", "name": "subagent",
+             "arguments": json.dumps({"name": "story-reviewer", "description": "Story 独立人读审查", "prompt": prompt})}},
+            {"type": "tool/result", "time": 1200, "data": {"message": {"toolCallId": "c1", "content": [{"type": "text", "text": "started subagent story-reviewer"}]}}},
+            settled_row(1500),
+        ]
+        two_round_parent = r1_parent + [
+            {"type": "tool/call", "time": 2000, "data": {"callId": "c2", "name": "send_message",
+             "arguments": json.dumps({"agent": "story-reviewer", "message": prompt})}},
+            settled_row(2500),
+        ]
+
+        # 1. pre_dispatch_report：首轮派发前（900 < 1000）的写出不得归属首轮
+        got_pre, obs_pre = self._measure_case(
+            "s20_pre_dispatch", "Get-Content local.md", "local",
+            parent_rows=r1_parent, child_id=child, child_rows=write_pair("w_pre", 900, 910),
+        )
+        d_pre = got_pre["delegations"]
+        self.assertFalse(d_pre["items"][0]["actual_report"]["verified"])
+        self.assertEqual("unknown", d_pre["items"][0]["report_completeness"]["value"])
+        self.assertEqual(0, d_pre["story_review_actual_reports"])
+        self.assertIn("实际已核报告 0 份", obs_pre)
+
+        # 2. untimed_report：写调用缺少发起时刻，结果在第二轮，不得挂进第一轮或第二轮
+        got_untimed, obs_untimed = self._measure_case(
+            "s20_untimed", "Get-Content local.md", "local",
+            parent_rows=two_round_parent, child_id=child, child_rows=write_pair("w_nt", None, 2100),
+        )
+        d_untimed = got_untimed["delegations"]
+        self.assertFalse(d_untimed["items"][0]["actual_report"]["verified"])
+        self.assertFalse(d_untimed["items"][1]["actual_report"]["verified"])
+        self.assertEqual("unknown", d_untimed["items"][0]["report_completeness"]["value"])
+        self.assertEqual("unknown", d_untimed["items"][1]["report_completeness"]["value"])
+        self.assertEqual(0, d_untimed["story_review_actual_reports"])
+        self.assertIn("实际已核报告 0 份", obs_untimed)
+
+        # 3. late_result：第一轮发起（1100），第二轮才返回成功结果（2100 >= 2000 且 > 1500），两轮均不得判已核
+        got_late, obs_late = self._measure_case(
+            "s20_late_result", "Get-Content local.md", "local",
+            parent_rows=two_round_parent, child_id=child, child_rows=write_pair("w_late", 1100, 2100),
+        )
+        d_late = got_late["delegations"]
+        self.assertFalse(d_late["items"][0]["actual_report"]["verified"])
+        self.assertFalse(d_late["items"][1]["actual_report"]["verified"])
+        self.assertEqual("unknown", d_late["items"][0]["report_completeness"]["value"])
+        self.assertEqual("unknown", d_late["items"][1]["report_completeness"]["value"])
+        self.assertEqual(0, d_late["story_review_actual_reports"])
+        self.assertIn("实际已核报告 0 份", obs_late)
+
+        # 4. child_before_parent_return：子代理在父 subagent 调用（1000）返回（1200）之前创建并完成写出（1050->1060）
+        got_early, obs_early = self._measure_case(
+            "s20_early_child_write", "Get-Content local.md", "local",
+            parent_rows=r1_parent, child_id=child, child_rows=write_pair("w_early", 1050, 1060),
+        )
+        d_early = got_early["delegations"]
+        self.assertTrue(d_early["items"][0]["actual_report"]["verified"])
+        self.assertEqual("complete", d_early["items"][0]["report_completeness"]["value"])
+        self.assertEqual(1, d_early["story_review_actual_reports"])
+        self.assertEqual(1, d_early["story_review_full_replies"])
+        self.assertIn("实际已核报告 1 份", obs_early)
 
 
 if __name__ == "__main__":
