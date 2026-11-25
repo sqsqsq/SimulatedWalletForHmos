@@ -1217,9 +1217,8 @@ def _resolve_select_string_param(raw_flag: str) -> tuple[bool, str] | None:
 def _select_string_token_bindings(stage: str, stage_idx: int) -> list[tuple[str, str]]:
     """把 Select-String / sls 管道段拆成 (token_text, role) 绑定列表。
 
-    role 取值：file_path（显式 -Path/-LiteralPath 或无 -InputObject 时的第 2 个起位置实参）、
-    input_object（-InputObject 或管道输入）、pattern（-Pattern 或第 1 个位置实参）、
-    other_value（已知非路径参数值）、ambiguous（缩写冲突、未知参数、splat 或无法证明的绑定）。
+    两遍绑定（与 PowerShell 参数绑定一致）：先收集全部命名参数及其值，再把剩余位置实参按序填入尚未占用的
+    `pattern` / `file_path` 槽位——交换 `-Pattern` 与位置路径顺序结果一致；含歧义缩写、未知开关或变量/splat 归 `ambiguous`。
     """
     tokens = _PS_TOKEN_RE.findall(stage)
     if not tokens:
@@ -1231,6 +1230,7 @@ def _select_string_token_bindings(stage: str, stage_idx: int) -> list[tuple[str,
     pending_role: str | None = None
     saw_ambiguous = False
     bound: list[tuple[str, str]] = []
+    positionals: list[str] = []
     for tok in args:
         if pending_role is None and tok.startswith("-") and len(tok) > 1 and not tok[1].isdigit():
             flag_part, sep, val_part = tok.partition(":")
@@ -1259,6 +1259,8 @@ def _select_string_token_bindings(stage: str, stage_idx: int) -> list[tuple[str,
             bound.append((tok, pending_role))
             pending_role = None
             continue
+        positionals.append(tok)
+    for tok in positionals:
         if saw_ambiguous or tok.startswith(("@", "$")):
             bound.append((tok, "ambiguous"))
         elif not bound_pattern:

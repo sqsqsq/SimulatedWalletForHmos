@@ -2309,6 +2309,9 @@ class S16IsolationVerdictAndRoundReportAttribution(unittest.TestCase):
         cmd_path = "Select-String -Path '../sibling/notes.md' -Pattern 'external-secret'"
         cmd_pos = "Select-String 'external-secret' '../sibling/notes.md'"
         cmd_named_pat_pos_path = "Select-String -Pattern 'external-secret' '../sibling/notes.md'"
+        cmd_pos_path_named_pat = "Select-String '../sibling/notes.md' -Pattern 'external-secret'"
+        cmd_pos_local_named_pat_sib = "Select-String 'local.md' -Pattern '../sibling/notes.md'"
+        cmd_pos_missing_named_pat = "Select-String '../sibling/missing.md' -Pattern 'external-secret'"
         cmd_pat_mentions_sib = "Select-String -Pattern '../sibling/notes.md' -Path 'local.md'"
         cmd_missing_sib = "Select-String -Path '../sibling/missing.md' -Pattern 'external-secret'"
         cmd_amb = "Select-String -In '../sibling/notes.md' -Pattern 'sibling'"
@@ -2319,6 +2322,9 @@ class S16IsolationVerdictAndRoundReportAttribution(unittest.TestCase):
         out_path = run_ps(cmd_path)
         out_pos = run_ps(cmd_pos)
         out_named_pat_pos_path = run_ps(cmd_named_pat_pos_path)
+        out_pos_path_named_pat = run_ps(cmd_pos_path_named_pat)
+        out_pos_local_named_pat_sib = run_ps(cmd_pos_local_named_pat_sib)
+        out_pos_missing_named_pat = run_ps(cmd_pos_missing_named_pat)
         out_pat_mentions_sib = run_ps(cmd_pat_mentions_sib)
         out_missing_sib = run_ps(cmd_missing_sib)
         self.assertIn("../sibling/notes.md", out_full)
@@ -2326,6 +2332,8 @@ class S16IsolationVerdictAndRoundReportAttribution(unittest.TestCase):
         self.assertIn("external-secret-line", out_path)
         self.assertIn("external-secret-line", out_pos)
         self.assertIn("external-secret-line", out_named_pat_pos_path)
+        self.assertIn("external-secret-line", out_pos_path_named_pat)
+        self.assertIn("local.md", out_pos_local_named_pat_sib)
         self.assertIn("local.md", out_pat_mentions_sib)
 
         got_full, obs_full = self._measure_case("s20_full_inputobj", cmd_full, out_full)
@@ -2355,6 +2363,26 @@ class S16IsolationVerdictAndRoundReportAttribution(unittest.TestCase):
         self.assertTrue(got_np["isolation_boundary"]["contaminated"])
         self.assertEqual(1, len(got_np["isolation_boundary"]["confirmed_findings"]))
         self.assertIn("已确认外部访问", obs_np)
+
+        # S25：位置路径在前、命名 -Pattern 在后（PowerShell 两遍绑定仍把位置实参绑到 -Path -> confirmed_access / 受污染）
+        got_pn, obs_pn = self._measure_case("s25_pos_path_named_pat", cmd_pos_path_named_pat, out_pos_path_named_pat)
+        self.assertTrue(got_pn["isolation_boundary"]["contaminated"])
+        self.assertEqual(1, len(got_pn["isolation_boundary"]["confirmed_findings"]))
+        self.assertIn("已确认外部访问", obs_pn)
+
+        # S25：位置本案路径在前、命名 -Pattern 中仅提到旁案字面串 -> 仅文字提及，不污染
+        got_pl, obs_pl = self._measure_case("s25_pos_local_named_pat_sib", cmd_pos_local_named_pat_sib, out_pos_local_named_pat_sib)
+        self.assertFalse(got_pl["isolation_boundary"]["contaminated"])
+        self.assertEqual(0, len(got_pl["isolation_boundary"]["confirmed_findings"]))
+        self.assertEqual(1, len(got_pl["isolation_boundary"]["mentions_only"]))
+        self.assertIn("未检出外部访问", obs_pl)
+
+        # S25：位置缺失旁案路径在前、命名 -Pattern 在后 -> 失败尝试，不触发污染
+        got_pmf, obs_pmf = self._measure_case("s25_pos_missing_named_pat", cmd_pos_missing_named_pat, out_pos_missing_named_pat)
+        self.assertFalse(got_pmf["isolation_boundary"]["contaminated"])
+        self.assertEqual(0, len(got_pmf["isolation_boundary"]["confirmed_findings"]))
+        self.assertEqual(1, len(got_pmf["isolation_boundary"]["failed_attempts"]))
+        self.assertIn("失败尝试", obs_pmf)
 
         # S23：模式中仅提到旁案字面串、显式 -Path 读本案 local.md -> 仅文字提及，不污染
         got_pm, obs_pm = self._measure_case("s23_pat_mentions_sib", cmd_pat_mentions_sib, out_pat_mentions_sib)
