@@ -1,3 +1,5 @@
+import { normalizeModelRouteFields } from './types';
+import type { ProviderRef } from './types';
 // ============================================================================
 // framework-local-config.ts — personal per-developer settings (framework.local.json)
 // ============================================================================
@@ -71,13 +73,15 @@ export interface FrameworkLocalConfigVision {
    * 「旧 local 记着一个已失去资格的 adapter」这件事**能被读出来**并按输入形态分流：
    * 交互态提示重选、无人值守 WARN+忽略+blind、显式 CLI fail-fast。
    */
-  visual_provider?: { adapter: string; model: string };
+  visual_provider?: ProviderRef;
 }
 
 /** t6 toolchain-probe-truth（plan e6a3c9f4）：机器探测快照（写入权限固定，见 schema 注释） */
 export interface FrameworkLocalToolchainProbe {
   binary?: { hvigor_bin?: string; observed_at?: string };
-  cli_starts?: { ok?: boolean; hvigor_version?: string; observed_at?: string };
+  cli_starts?: { ok?: boolean; hvigor_version?: string; observed_at?: string;
+    error?: string; command?: string; cwd?: string; args?: string[]; invocationDriver?: string;
+    environment?: Record<string, unknown>; exitCode?: number | null; timedOut?: boolean };
   project_compile?: {
     status: 'unknown' | 'verified' | 'capability_failed';
     failure_code?: string | null;
@@ -132,9 +136,17 @@ export interface FrameworkLocalConfigDevice {
   emulator_profile?: string;
 }
 
+/**
+ * 历史 adapter 设置原样保留以免写回丢失用户配置；approved_models 只提示停用，不参与执行。
+ */
+export interface FrameworkLocalAdapterSettings {
+  approved_models?: unknown;
+}
+
 export interface FrameworkLocalConfig {
   schema_version: string;
   agent_adapter?: string;
+  adapters?: Record<string, FrameworkLocalAdapterSettings>;
   toolchain?: {
     devEcoStudio?: {
       installPath?: string;
@@ -145,6 +157,8 @@ export interface FrameworkLocalConfig {
   };
   vision?: FrameworkLocalConfigVision;
   device?: FrameworkLocalConfigDevice;
+  /** plan 9c3d7e1a §5.5：无人值守设计修复的预授权。原样保留（同 adapters），取值由 resolveUnattendedB1Repair 在消费点判。 */
+  design_repair?: { unattended_b1?: unknown };
 }
 
 export type AgentAdapterSource = 'local' | 'project_legacy' | 'fallback';
@@ -155,6 +169,8 @@ export interface FrameworkPersonalSetupStatus {
   local_exists: boolean;
   project_has_legacy_agent_adapter: boolean;
 }
+
+let invalidAdaptersWarned = false;
 
 function validateLocalSchema(parsed: unknown): FrameworkLocalConfig {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -192,6 +208,18 @@ function validateLocalSchema(parsed: unknown): FrameworkLocalConfig {
   const out: FrameworkLocalConfig = { schema_version: LOCAL_SCHEMA_VERSION };
   if (typeof raw.agent_adapter === 'string' && raw.agent_adapter.trim()) {
     out.agent_adapter = raw.agent_adapter.trim();
+  }
+  // plan 4e6fb3b6 §6.1：adapters 原样保留（JSON 深拷贝），只要求是对象；不是对象按未配置丢弃，不抛错。
+  if (raw.adapters && typeof raw.adapters === 'object' && !Array.isArray(raw.adapters)) {
+    out.adapters = JSON.parse(JSON.stringify(raw.adapters)) as Record<string, FrameworkLocalAdapterSettings>;
+  } else if (raw.adapters !== undefined && !invalidAdaptersWarned) {
+    // 批二 review 顺手项：父节点本身非法（字符串/数组/null…）时给一次明确提示（每进程一次，local 会被频繁加载）。
+    invalidAdaptersWarned = true;
+    console.warn('[framework-local-config] framework.local.json 的 adapters 须为对象（按 adapter 名分组），当前值无法解析——按没有获准替代型号处理');
+  }
+  // plan 9c3d7e1a §5.5：design_repair 同 adapters 原样保留（写回不丢）；不是对象按未配置丢弃（= 未授权），不抛错。
+  if (raw.design_repair && typeof raw.design_repair === 'object' && !Array.isArray(raw.design_repair)) {
+    out.design_repair = JSON.parse(JSON.stringify(raw.design_repair)) as NonNullable<FrameworkLocalConfig['design_repair']>;
   }
   const tc = raw.toolchain;
   if (tc !== undefined) {
@@ -413,7 +441,7 @@ function validateLocalSchema(parsed: unknown): FrameworkLocalConfig {
           '（provider 身份须冻结具体模型；不写 model 等于没有 provider）',
         );
       }
-      outVision.visual_provider = { adapter: vpAdapter, model: vpModel };
+      outVision.visual_provider = { adapter: vpAdapter, model: vpModel, ...normalizeModelRouteFields(vpObj) };
     }
 
     if (outVision.image_input_override || outVision.canary || outVision.visual_provider) {
@@ -505,6 +533,20 @@ function rejectUnknownObjectKeys(
       `[framework-local-config] ${pathPrefix} 含非法键：${unknown.join(', ')}`,
     );
   }
+}
+
+/** Startup-scoped warning; the caller owns its once-per-launch lifetime. */
+let retiredModelWarningShown = false;
+export function warnRetiredModelAlternatives(local: FrameworkLocalConfig | null): void {
+  if (!retiredModelWarningShown && Object.values(local?.adapters ?? {}).some(entry => entry && typeof entry === 'object' && Object.prototype.hasOwnProperty.call(entry, 'approved_models'))) {
+    retiredModelWarningShown = true;
+    console.warn('[framework-local-config] approved_models 已停用并忽略；不会自动替代任务模型。');
+  }
+}
+
+/** Legacy value reader only. Unattended design authority now comes from the original task, not this retired opt-in. */
+export function resolveUnattendedB1Repair(local: FrameworkLocalConfig | null | undefined): boolean {
+  return local?.design_repair?.unattended_b1 === true;
 }
 
 export function localConfigPath(projectRoot: string): string {

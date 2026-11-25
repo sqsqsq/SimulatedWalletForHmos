@@ -10,7 +10,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 
-import { receiptDirPath, resolveFeatureArtifact } from '../../config';
+import { receiptDirPath, resolveFeatureArtifact, relFeaturesDir } from '../../config';
+import { collectCurrentRequirementText, loadSpecMarkdown, resolveUiRelevanceForRun } from './fidelity-shared';
 // e9d4b7a3 t2：AC/BD id 词法 SSOT 由 acceptance 侧承载，行内引用解析不再自写第二套正则
 import { extractAcceptanceIdRefs } from './check-acceptance';
 import type { ChannelEvidenceBinding } from './execution-channel-evidence';
@@ -32,6 +33,7 @@ import {
   loadUiSpecFile,
   uiSpecAbsPath,
   type UiSpecDoc,
+  parseUiChangeFromSpecMarkdown,
 } from './ui-spec-shared';
 import {
   buildCanonicalSelectorIndex,
@@ -98,7 +100,28 @@ export function loadAcceptanceFlowsDoc(projectRoot: string, feature: string, sup
 
 export function isP0DeviceInteractive(ac: AcceptanceCriterion): boolean {
   const layer = (ac.ut_layer ?? '').toLowerCase();
-  return ac.priority === 'P0' && (layer === 'device' || layer === 'both') && Boolean(ac.linked_flow);
+  return ac.priority === 'P0' && (layer === 'device' || layer === 'both');
+}
+
+/** linked_flow names a business use case; it never decides whether device evidence is owed. */
+export function resolveP0DeviceObligations(projectRoot: string, feature: string, supplied?: unknown) {
+  const acceptance = loadAcceptanceFlowsDoc(projectRoot, feature, supplied);
+  const device = (acceptance?.criteria ?? []).filter(isP0DeviceInteractive);
+  const spec = loadSpecMarkdown(projectRoot, feature);
+  let requirement = collectCurrentRequirementText(projectRoot, feature, relFeaturesDir(projectRoot));
+  // Typed blueprint input may precede materialized spec/fidelity. Its bound requirement files remain the source.
+  if (!spec && !requirement.trim()) {
+    requirement = [...new Set(device.map(ac => ac.requirement_ref?.source_path).filter((p): p is string => !!p))]
+      .flatMap(relative => {
+        const file = path.resolve(projectRoot, relative);
+        try { return file.startsWith(path.resolve(projectRoot) + path.sep) ? [fs.readFileSync(file, 'utf8')] : []; }
+        catch { return []; }
+      }).join('\n');
+  }
+  const uiKnown = spec ? parseUiChangeFromSpecMarkdown(spec) !== null : requirement.trim().length > 0;
+  const uiRelevant = resolveUiRelevanceForRun(projectRoot, feature, requirement);
+  return { acceptance, device, uiKnown, uiRelevant,
+    uiCheckpoints: uiRelevant ? device : [], checkpoints: device.filter(ac => uiRelevant || ac.checkpoint !== undefined), flows: acceptance?.flows ?? {} };
 }
 
 export function checkpointComplete(cp: AcCheckpoint | undefined): boolean {
@@ -116,18 +139,21 @@ export function checkpointComplete(cp: AcCheckpoint | undefined): boolean {
 // t4a：check-spec 侧——结构化 checkpoint + 三约束 + requirement_ref 验存
 // ----------------------------------------------------------------------------
 
-export function evaluateAcceptanceFlowStructure(projectRoot: string, feature: string, supplied?: unknown): CheckResult[] {
+export function evaluateAcceptanceFlowStructure(projectRoot: string, feature: string, supplied?: unknown, mode: 'complete' | 'declared' = 'complete'): CheckResult[] {
   const id = 'acceptance_flow_structure';
   const description = 'P0 交互 AC 结构化 checkpoint + flows 三约束 + requirement_ref 验存';
-  const doc = loadAcceptanceFlowsDoc(projectRoot, feature, supplied);
+  // Canonical design is admitted before spec can supplement UI definitions. Validate what it declares, not stage-owned omissions.
+  const obligations = mode === 'complete' ? resolveP0DeviceObligations(projectRoot, feature, supplied) : null;
+  const doc = obligations?.acceptance ?? loadAcceptanceFlowsDoc(projectRoot, feature, supplied);
   if (!doc) {
     return [{ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: 'acceptance.yaml 不存在/不可解析。' }];
   }
-  const p0 = doc.criteria.filter(isP0DeviceInteractive);
-  if (p0.length === 0) {
-    return [{ id, category: 'structure', description, severity: 'BLOCKER', status: 'PASS', details: '无 P0 device 交互型 AC，flows 约束不适用。' }];
-  }
+  const p0 = obligations?.checkpoints ?? doc.criteria.filter(ac => isP0DeviceInteractive(ac) && ac.checkpoint !== undefined);
   const failures: string[] = [];
+  if (obligations && obligations.device.length > 0 && !obligations.uiKnown) failures.push('P0 设备义务的 UI 相关性未定义：在 spec.md 声明 ui_change（非 UI 写 none），或在尚无 spec 时提供有效需求输入；不能据此豁免 UI checkpoint');
+  if (p0.length === 0 && failures.length === 0) {
+    return [{ id, category: 'structure', description, severity: 'BLOCKER', status: 'PASS', details: '无 P0 UI 交互型 AC，UI checkpoint/flows 约束不适用；设备义务另按原生步骤核验。' }];
+  }
 
   // ① P0 交互 AC 必须有完整结构化 checkpoint（纯自然语言锚点 FAIL——rev3 起 P0 不降级）
   for (const ac of p0) {
@@ -171,41 +197,28 @@ export function evaluateAcceptanceFlowStructure(projectRoot: string, feature: st
 
   // ③ flows 三约束：每条边被 ≥1 P0 checkpoint 拥有；checkpoint 边必须在其 flow 中相邻；
   //    flow=checkpoint edges 有序合成（无 AC 支撑的跳边 FAIL）
-  const edgeOwners = new Map<string, string[]>(); // "flow|pre>post" → ac ids
+  const edgeOwners = new Map<string, string[]>();
+  const ownedFlows = new Set<string>();
   for (const ac of p0) {
-    if (!checkpointComplete(ac.checkpoint) || !ac.linked_flow) continue;
+    if (!checkpointComplete(ac.checkpoint)) continue;
     const cp = ac.checkpoint!;
-    const flow = doc.flows[ac.linked_flow];
-    if (!flow) {
-      failures.push(`${ac.id}：linked_flow=${ac.linked_flow} 未在 flows 注册`);
-      continue;
-    }
-    const preIdx = flow.indexOf(cp.pre_screen!);
-    const postIdx = flow.indexOf(cp.post_screen!);
-    if (preIdx < 0 || postIdx < 0) {
-      failures.push(`${ac.id}：checkpoint 屏 ${cp.pre_screen}→${cp.post_screen} 不在 flow ${ac.linked_flow} 声明的屏序内`);
-      continue;
-    }
-    if (postIdx !== preIdx + 1 && postIdx !== preIdx) {
-      failures.push(
-        `${ac.id}：checkpoint 边 ${cp.pre_screen}→${cp.post_screen} 是无 AC 支撑的跳边` +
-          `（flow ${ac.linked_flow} 中二者不相邻——bank_list→add_success 型错误建模）`,
-      );
-      continue;
-    }
-    if (postIdx === preIdx + 1) {
-      const key = `${ac.linked_flow}|${cp.pre_screen}>${cp.post_screen}`;
-      edgeOwners.set(key, [...(edgeOwners.get(key) ?? []), ac.id]);
+    const containing = Object.entries(doc.flows).filter(([, flow]) => flow.includes(cp.pre_screen!) && flow.includes(cp.post_screen!));
+    const adjacent = containing.filter(([, flow]) => flow.indexOf(cp.post_screen!) === flow.indexOf(cp.pre_screen!)
+      || flow.indexOf(cp.post_screen!) === flow.indexOf(cp.pre_screen!) + 1);
+    if (containing.length && !adjacent.length) failures.push(`${ac.id}：checkpoint 边 ${cp.pre_screen}→${cp.post_screen} 是无 AC 支撑的跳边（声明屏链中二者不相邻）`);
+    for (const [flowName] of adjacent) {
+      ownedFlows.add(flowName);
+      if (cp.pre_screen !== cp.post_screen) {
+        const key = `${flowName}|${cp.pre_screen}>${cp.post_screen}`;
+        edgeOwners.set(key, [...(edgeOwners.get(key) ?? []), ac.id]);
+      }
     }
   }
   for (const [flowName, screens] of Object.entries(doc.flows)) {
-    const flowHasP0 = p0.some((ac) => ac.linked_flow === flowName);
-    if (!flowHasP0) continue;
+    if (!ownedFlows.has(flowName)) continue;
     for (let i = 0; i + 1 < screens.length; i++) {
       const key = `${flowName}|${screens[i]}>${screens[i + 1]}`;
-      if (!edgeOwners.has(key)) {
-        failures.push(`flow ${flowName}：边 ${screens[i]}→${screens[i + 1]} 无任何 P0 AC checkpoint 拥有（流程节点缺证据主体）`);
-      }
+      if (!edgeOwners.has(key)) failures.push(`flow ${flowName}：边 ${screens[i]}→${screens[i + 1]} 无任何 P0 AC checkpoint 拥有（流程节点缺证据主体）`);
     }
   }
 
@@ -213,10 +226,12 @@ export function evaluateAcceptanceFlowStructure(projectRoot: string, feature: st
     return [{
       id, category: 'structure', description,
       severity: 'BLOCKER', status: 'FAIL',
+      repair_owner: 'spec',
+      affected_files: [path.relative(projectRoot, resolveFeatureArtifact(projectRoot, feature, obligations && !obligations.uiKnown ? 'spec.md' : 'acceptance.yaml').actualPath).replace(/\\/g, '/')],
       details: `P0 结构化流程模型不完整（${failures.length} 项）：\n` + failures.slice(0, 10).join('\n') + (failures.length > 10 ? '\n…' : ''),
       suggestion:
         '为每个 P0 交互 AC 补 checkpoint（pre/action/post/required）与 requirement_ref（source_path + 源文档逐字 snippet）；' +
-        'flows 声明有序屏链且每条边由 ≥1 P0 AC 拥有。',
+        'flows 可选；若声明屏链，每条边须由 ≥1 P0 AC 拥有。',
     }];
   }
   return [{
@@ -238,8 +253,8 @@ export function evaluateFlowContract(
 ): CheckResult[] {
   const id = 'acceptance_flow_contract';
   const description = '结构化流程模型机器契约（spec-owned + phase-evidence freshness）';
-  const doc = loadAcceptanceFlowsDoc(projectRoot, feature, supplied);
-  const applicable = doc && doc.criteria.some(isP0DeviceInteractive) && Object.keys(doc.flows).length > 0;
+  const obligations = resolveP0DeviceObligations(projectRoot, feature, supplied);
+  const applicable = obligations.checkpoints.length > 0 && Object.keys(obligations.flows).length > 0;
   if (!applicable) {
     return [{ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: '无 P0 device flow，flow_contract 不适用。' }];
   }
@@ -325,11 +340,28 @@ export interface P0GateInputs {
   now?: () => Date;
 }
 
+/**
+ * plan c3f8a2d7 §3.2：外部能力缺席的唯一投影（visual_diff provider 缺席、证据义务门、两项 P0 门共用），
+ * 最终由共享裁决 `areBlockersOnlyCapabilityMissing` 给 INCOMPLETE。放在本模块是因为 check-testing 依赖本模块，反向引用会成环。
+ */
+export const CAPABILITY_ABSENCE_PROJECTION = {
+  blocking_class: 'externalBlocked', failure_kind: 'capability_missing',
+} as const satisfies Pick<CheckResult, 'blocking_class' | 'failure_kind'>;
+export const CAPABILITY_ABSENCE_NOTE = '视觉能力缺席，非产品失败';
+
+/** 结构化判据：该检查是否就是上面那份能力缺席投影（run_status 与报告 writer 共用）。 */
+export function isCapabilityAbsenceCheck(check: { blocking_class?: string; failure_kind?: string }): boolean {
+  return check.blocking_class === CAPABILITY_ABSENCE_PROJECTION.blocking_class
+    && check.failure_kind === CAPABILITY_ABSENCE_PROJECTION.failure_kind;
+}
+
 interface NativeCaseEvaluation {
   caseId: string;
   passed: boolean;
   reasons: string[];
   acIds: string[];
+  /** 内部参数：未通过的 visual TC 由其绑定带来的责任方（只有"视觉产物不可用"那一支才有）。 */
+  repairOwner?: ChannelEvidenceBinding['repair_owner'];
 }
 
 interface NativeP0Evaluation {
@@ -347,6 +379,9 @@ interface NativeP0Evaluation {
   /** 只被 gap TC 引用、因此本轮无法验证的 P0 AC */
   gapAcIds: string[];
   gateFailure?: string;
+  definitionFailure?: CheckResult;
+  /** 每条未通过的 P0 TC / AC 都有失败来源且全部是 capability 归属的视觉缺席、trace 无失败（plan c3f8a2d7 §3.2③）。 */
+  capabilityAbsenceOnly?: boolean;
 }
 
 function canonicalIdsForStep(
@@ -546,8 +581,9 @@ function evaluateNativeCase(
   traceCase: HylyreTraceCase | undefined,
   acs: AcceptanceCriterion[],
   derivedSteps: ParsedStep[],
-  canonical: CanonicalSelectorIndex,
+  canonical: CanonicalSelectorIndex | null,
   plannedCaseId?: string,
+  checkpointAcIds: ReadonlySet<string> = new Set(acs.map(ac => ac.id)),
 ): NativeCaseEvaluation {
   // plan 07a41ec6 T2：未执行的 case 也要按计划 id 点名，诊断不得只剩 "(missing)"
   const caseId = traceCase?.id?.toUpperCase() ?? plannedCaseId?.toUpperCase() ?? '(missing)';
@@ -568,9 +604,17 @@ function evaluateNativeCase(
     }
   }
 
-  for (const ac of acs) {
+  if (acs.some(ac => !checkpointAcIds.has(ac.id))) {
+    const assertions = derivedSteps.map((step, index) => normalizePlannedStep(step, index)).filter(step => isAssertionPlanKind(step.kind));
+    if (assertions.length === 0) reasons.push('非 UI P0 用例缺计划断言，不能仅凭 CaseResult 状态通过');
+    for (const expected of assertions) {
+      const actual = nativeSteps[expected.index];
+      if (!actual || actual.kind !== expected.kind || !assertionObservation(actual)) reasons.push(`step ${expected.index} 计划断言缺有效原生证据`);
+    }
+  }
+  for (const ac of acs.filter(ac => checkpointAcIds.has(ac.id))) {
     const cp = ac.checkpoint;
-    if (!checkpointComplete(cp)) {
+    if (!checkpointComplete(cp) || !canonical) {
       reasons.push(`${ac.id} checkpoint 不完整`);
       continue;
     }
@@ -650,43 +694,23 @@ function evaluateNativeCase(
 
 function evaluateNativeP0(inp: P0GateInputs): NativeP0Evaluation {
   const p0Entries = parsePlanTcEntries(inp.planMd).filter(entry => entry.priority.toUpperCase() === 'P0');
+  const obligations = resolveP0DeviceObligations(inp.projectRoot, inp.feature, inp.acceptance);
+  const p0Acs = obligations.device;
+  const empty: NativeP0Evaluation = { p0Entries, passedCaseIds: [], skippedCaseIds: p0Entries.map(e => e.id),
+    explicitSkipCaseIds: [], traceSkipCaseIds: [], unexecutedCaseIds: p0Entries.map(e => e.id),
+    caseEvaluations: [], acceptedAcIds: new Set(), acFailures: [], gapCaseIds: [], gapAcIds: [] };
+  const fail = (gateFailure: string): NativeP0Evaluation => ({ ...empty, gateFailure });
+  if (p0Acs.length === 0 && p0Entries.length === 0) return empty;
+  const missingCheckpoints = obligations.checkpoints.filter(ac => !checkpointComplete(ac.checkpoint));
+  if (p0Acs.length > 0 && (!obligations.uiKnown || missingCheckpoints.length > 0)) {
+    const definitionFailure = evaluateAcceptanceFlowStructure(inp.projectRoot, inp.feature, inp.acceptance).find(c => c.status === 'FAIL');
+    return { ...fail(definitionFailure?.details ?? 'P0 UI checkpoint 定义缺失'), definitionFailure };
+  }
+  if (p0Entries.length === 0) return fail('存在 P0 设备验收义务，但测试计划没有对应 P0 用例；补齐计划，不能把漏列义务当作不适用。');
   const gate = inp.evidenceGate;
-  if (!gate?.native) {
-    const reason = gate?.reasons.join('；') || '缺少 native Hylyre evidence gate 结果';
-    return {
-      p0Entries,
-      passedCaseIds: [],
-      skippedCaseIds: p0Entries.map(entry => entry.id),
-      explicitSkipCaseIds: [],
-      traceSkipCaseIds: [],
-      unexecutedCaseIds: p0Entries.map(entry => entry.id),
-      caseEvaluations: [],
-      acceptedAcIds: new Set(),
-      acFailures: [],
-      gapCaseIds: [],
-      gapAcIds: [],
-      gateFailure: `native evidence 未启用：${reason}；legacy case status 不得贡献 verification=passed`,
-    };
-  }
+  if (!gate?.native) return fail(`native evidence 未启用：${gate?.reasons.join('；') || '缺少同轮 native Hylyre evidence gate 结果'}；legacy case status 不得贡献 verification=passed`);
   const trace = inp.trace;
-  if (!trace) {
-    return {
-      p0Entries,
-      passedCaseIds: [],
-      skippedCaseIds: p0Entries.map(entry => entry.id),
-      explicitSkipCaseIds: [],
-      traceSkipCaseIds: [],
-      unexecutedCaseIds: p0Entries.map(entry => entry.id),
-      caseEvaluations: [],
-      acceptedAcIds: new Set(),
-      acFailures: [],
-      gapCaseIds: [],
-      gapAcIds: [],
-      gateFailure: 'authoritative trace 缺失，无法消费 CaseResult.steps[]',
-    };
-  }
-  const acceptance = loadAcceptanceFlowsDoc(inp.projectRoot, inp.feature, inp.acceptance);
-  const p0Acs = (acceptance?.criteria ?? []).filter(isP0DeviceInteractive);
+  if (!trace) return fail('authoritative trace 缺失，无法消费 CaseResult.steps[]');
   const reportsBase = path.join(receiptDirPath(inp.projectRoot, inp.feature, 'testing'), 'reports');
   const selected = inp.derivedPlanPath
     ? fs.existsSync(inp.derivedPlanPath)
@@ -696,40 +720,15 @@ function evaluateNativeP0(inp: P0GateInputs): NativeP0Evaluation {
         const pick = selectBestNonPlaceholderDerivedPlan(reportsBase);
         return pick.selected ? { hylyrePath: pick.selected.hylyrePath, content: pick.selected.content } : null;
       })();
-  if (!selected) {
-    return {
-      p0Entries,
-      passedCaseIds: [],
-      skippedCaseIds: p0Entries.map(entry => entry.id),
-      explicitSkipCaseIds: [],
-      traceSkipCaseIds: [],
-      unexecutedCaseIds: p0Entries.map(entry => entry.id),
-      caseEvaluations: [],
-      acceptedAcIds: new Set(),
-      acFailures: [],
-      gapCaseIds: [],
-      gapAcIds: [],
-      gateFailure: '无 authoritative 派生 Hylyre 计划，无法按 step index 对账',
-    };
+  if (!selected) return fail('无 authoritative 派生 Hylyre 计划，无法按 step index 对账');
+  const selectorDoc = obligations.checkpoints.length > 0 ? loadUiSpecFile(uiSpecAbsPath(inp.projectRoot, inp.feature)) : null;
+  if (obligations.checkpoints.length > 0 && !selectorDoc) {
+    const detail = 'canonical ui-spec 不可解析；由 spec 补齐 UI 定义，不能记为能力缺口';
+    return { ...fail(detail), definitionFailure: { id: 'acceptance_flow_structure', category: 'structure',
+      description: detail, severity: 'MAJOR', status: 'FAIL', repair_owner: 'spec',
+      affected_files: [path.relative(inp.projectRoot, uiSpecAbsPath(inp.projectRoot, inp.feature)).replace(/\\/g, '/')], details: detail } };
   }
-  const selectorDoc = loadUiSpecFile(uiSpecAbsPath(inp.projectRoot, inp.feature));
-  if (!selectorDoc) {
-    return {
-      p0Entries,
-      passedCaseIds: [],
-      skippedCaseIds: p0Entries.map(entry => entry.id),
-      explicitSkipCaseIds: [],
-      traceSkipCaseIds: [],
-      unexecutedCaseIds: p0Entries.map(entry => entry.id),
-      caseEvaluations: [],
-      acceptedAcIds: new Set(),
-      acFailures: [],
-      gapCaseIds: [],
-      gapAcIds: [],
-      gateFailure: 'canonical ui-spec 不可解析，required/forbidden selector 映射拒绝通过',
-    };
-  }
-  const canonical = buildCanonicalSelectorIndex(selectorDoc);
+  const canonical = selectorDoc ? buildCanonicalSelectorIndex(selectorDoc) : null;
   const explicitSkips = new Set(loadExplicitSkipTcIds(selected.hylyrePath, selected.content));
   const derivedByTc = new Map<string, ParsedStep[]>();
   for (const row of extractDerivedPlanCases(selected.content)) {
@@ -767,6 +766,8 @@ function evaluateNativeP0(inp: P0GateInputs): NativeP0Evaluation {
           ? (acs.length > 0 ? [] : ['visual TC 未关联可验收的 P0 AC'])
           : [visualBinding.verdict.detail],
         acIds: acs.map(ac => ac.id),
+        ...(visualBinding.verdict.kind !== 'covered' && acs.length > 0 && visualBinding.repair_owner
+          ? { repairOwner: visualBinding.repair_owner } : {}),
       };
       evaluations.push(evaluation);
       if (evaluation.passed) {
@@ -778,7 +779,7 @@ function evaluateNativeP0(inp: P0GateInputs): NativeP0Evaluation {
       continue;
     }
     const traceCase = traceByTc.get(entry.id);
-    const evaluation = evaluateNativeCase(traceCase, acs, derivedByTc.get(entry.id) ?? [], canonical, entry.id);
+    const evaluation = evaluateNativeCase(traceCase, acs, derivedByTc.get(entry.id) ?? [], canonical, entry.id, new Set(obligations.checkpoints.map(ac => ac.id)));
     evaluations.push(evaluation);
     if (evaluation.passed) {
       passedCaseIds.push(entry.id);
@@ -802,8 +803,17 @@ function evaluateNativeP0(inp: P0GateInputs): NativeP0Evaluation {
     })
     .map(ac => ac.id);
   const gapAcSet = new Set(gapAcIds);
-  const acFailures = p0Acs
-    .filter(ac => !acceptedAcIds.has(ac.id) && !gapAcSet.has(ac.id))
+  const failedAcs = p0Acs.filter(ac => !acceptedAcIds.has(ac.id) && !gapAcSet.has(ac.id));
+  // plan c3f8a2d7 §3.2③：归属判断先于 acFailures 文案，只看结构化事实；空关联集合不放行（不用真空 every）。
+  const capabilityOwned = (e: NativeCaseEvaluation): boolean => e.repairOwner === 'capability';
+  const failedEvaluations = evaluations.filter(e => !e.passed);
+  const traceClean = trace.outcome === 'success' && !(trace.cases ?? []).some(c => c.status === '失败' || c.status === '阻塞');
+  const capabilityAbsenceOnly = traceClean && failedEvaluations.length > 0 && failedEvaluations.every(capabilityOwned)
+    && failedAcs.every(ac => {
+      const related = evaluations.filter(e => e.acIds.includes(ac.id));
+      return related.length > 0 && related.every(capabilityOwned);
+    });
+  const acFailures = failedAcs
     .map(ac => {
       const related = evaluations.filter(e => e.acIds.includes(ac.id));
       const reason = related.flatMap(e => e.reasons).slice(0, 3).join('；') || '无通过的 StepResult 证据';
@@ -821,6 +831,7 @@ function evaluateNativeP0(inp: P0GateInputs): NativeP0Evaluation {
     acFailures,
     gapCaseIds,
     gapAcIds,
+    capabilityAbsenceOnly,
   };
 }
 
@@ -836,7 +847,8 @@ function nativeGateFailureResult(
     severity: 'BLOCKER',
     status: 'FAIL',
     details: evaluation.gateFailure ?? 'native StepResult acceptance 对账未通过',
-    suggestion: '升级/核验 Hylyre 0.5.0 + trace schema 0.4-p0 + hylyre.step-outcome/1 后重跑；不得用旧 case status 或报告散文补证据。',
+    ...(evaluation.definitionFailure ? { repair_owner: evaluation.definitionFailure.repair_owner, affected_files: evaluation.definitionFailure.affected_files } : {}),
+    suggestion: evaluation.definitionFailure?.suggestion ?? (evaluation.definitionFailure ? '返回 spec 补齐定义后重验。' : '按上述实际原因补齐同轮计划与原生证据；仅在明确版本/协议不支持时升级工具。'),
   };
 }
 
@@ -844,7 +856,7 @@ function evaluateNativeP0CoverageIntegrity(inp: P0GateInputs): CheckResult[] {
   const id = 'p0_coverage_integrity';
   const description = 'P0 用例覆盖（CaseResult 三轴 + StepResult required/forbidden 对账）';
   const evaluation = evaluateNativeP0(inp);
-  if (evaluation.p0Entries.length === 0) {
+  if (evaluation.p0Entries.length === 0 && !evaluation.gateFailure) {
     return [{ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: '计划无 P0 用例（或表格无法解析）。' }];
   }
   if (evaluation.gateFailure) {
@@ -878,14 +890,17 @@ function evaluateNativeP0CoverageIntegrity(inp: P0GateInputs): CheckResult[] {
     gap_ac_ids: evaluation.gapAcIds,
   };
   const failedEvaluations = evaluation.caseEvaluations.filter(item => !item.passed);
+  const capabilityAbsent = failed > 0 && evaluation.capabilityAbsenceOnly === true;
   const result: CheckResult = {
     id,
     category: 'structure',
     description,
     severity: 'BLOCKER',
     status: failed === 0 ? 'PASS' : 'FAIL',
+    ...(capabilityAbsent ? CAPABILITY_ABSENCE_PROJECTION : {}),
     structured,
     details: [
+      capabilityAbsent ? `${CAPABILITY_ABSENCE_NOTE}：未通过的 P0 TC 全部因视觉能力缺席而未验证，能力恢复后由同一检查重验。` : null,
       rate,
       gapCount > 0
         ? `unsupported_gap ${gapCount} 条（留在分母、不算 PASS、不阻止普通开发完成；报告与 completion_status 须披露 COMPLETE_WITH_P0_GAPS）：${evaluation.gapCaseIds.join(', ')}`
@@ -935,7 +950,7 @@ export function evaluateP0SemanticCoverage(inp: P0GateInputs): CheckResult[] {
   const id = 'p0_semantic_coverage_integrity';
   const description = 'P0 acceptance coverage（计划要求 × CaseResult.steps[] 实际证据）';
   const evaluation = evaluateNativeP0(inp);
-  if (evaluation.p0Entries.length === 0) {
+  if (evaluation.p0Entries.length === 0 && !evaluation.gateFailure) {
     return [{ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: '无 P0 device flow 或 P0 测试用例。' }];
   }
   if (evaluation.gateFailure) return [nativeGateFailureResult(id, description, evaluation)];
@@ -946,7 +961,9 @@ export function evaluateP0SemanticCoverage(inp: P0GateInputs): CheckResult[] {
       description,
       severity: 'BLOCKER',
       status: 'FAIL',
+      ...(evaluation.capabilityAbsenceOnly ? CAPABILITY_ABSENCE_PROJECTION : {}),
       details:
+        (evaluation.capabilityAbsenceOnly ? `${CAPABILITY_ABSENCE_NOTE}：未成立的 P0 AC 全部只因视觉能力缺席而未验证。\n` : '') +
         `P0 acceptance coverage 未成立（${evaluation.acFailures.length} 项）：\n` +
         evaluation.acFailures.slice(0, 12).map(item => `  - ${item}`).join('\n'),
       suggestion: '仅以 authoritative trace 的 CaseResult 三轴和同 index 的 assertion StepResult 对账；缺 required/forbidden evidence 留在 testing，不得从旧 status 或报告散文补齐。',

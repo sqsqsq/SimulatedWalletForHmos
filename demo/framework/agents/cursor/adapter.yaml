@@ -61,12 +61,16 @@ hooks_config:
 # 运行时 argv SSOT：harness/scripts/utils/visual-provider-invoke.ts。
 
 goal_capability:
+  # 会话完整交付共用 goal-mode-entry --next / --report-result，命令退出后按请求原件执行。
+  # 隔离字段名仅历史兼容；作者使用本单元专用上下文，不能回主会话施工，必需核验仍真实独立。
+  # 框架交接续作不依赖模型 CLI 原生 resume；supports_resume/handoff 保留原生运输含义。
+  output_delivery: streaming
   mode: external_runner
   external_runner:
     # Declarative only for capability validation. Runtime SSOT: agent-invoke.ts cursorHeadlessPlan (cursor-agent|agent -p, stdin).
     # plan a8e5c3f9：headless 全权限契约——恒 --force --trust（不再随旧 approval_mode 摇摆，
     # 此前声明 on-request 时模板与运行时互相矛盾）。
-    headless_invoke: 'cursor-agent -p --force --trust "{{PROMPT}}"'
+    headless_invoke: 'cursor-agent -p --force --trust --output-format stream-json "{{PROMPT}}"'
     unattended:
       write_mode: full-access
       approval_mode: never

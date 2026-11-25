@@ -1,4 +1,6 @@
-import { validateExecutionScope, assertRevisionKeepsRequiredObligations } from './execution-scope';
+import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
+import { validateExecutionScope, readScopeRevisionUserControl, assertRevisionKeepsRequiredObligations, scopeProofHistory, effectiveScopeView, type ScopeDependencyContext, type ScopeRevisionAuthorityContext, type ExecutionScopeInput } from './execution-scope';
+import { FEATURE_PHASE_ORDER } from './phase-transition-policy';
 /**
  * Fresh goal-run birth contract.
  *
@@ -8,23 +10,34 @@ import { validateExecutionScope, assertRevisionKeepsRequiredObligations } from '
 
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import { adapterModelBinding } from './adapter-model';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
+import * as YAML from 'yaml';
 import {
   computeManifestIdentityFields,
   computeManifestIdentityFieldsHash,
+  diffManifestIdentityFields,
   manifestIdentityFieldDigest,
   normalizeGoalPhaseChain,
   writeGoalManifest,
   loadGoalManifestFromRun,
+  loadGoalRunManifestFromRun,
+  loadGoalManifestFile,
   buildGoalManifestFromInput,
+  isRepeatedRequirement,
   SCOPE_REVISION_FIELDS,
   type GoalManifest,
+  type GoalRunManifest,
+  isInitialDesignManifest,
 } from './goal-manifest';
-import { collectSupersededAncestorEvents, loadEventsJsonlStrict, type GoalRunEvent } from './goal-runner-phase';
-import { featureFilePath, relFeaturesDir } from '../../config';
+import { collectSupersededAncestorEvents, readSupersededAncestorRuns, loadEventsJsonlStrict, canRecheckLegacyBacktrackLimit, resolveEffectiveRunEnd, type GoalRunEvent } from './goal-runner-phase';
+import { featureFilePath, featurePhaseReportsDir, relFeaturesDir } from '../../config';
+import { featureRelativePath } from './feature-identity';
 import type { ExecutionScope } from './execution-scope';
-import { executionScopeFingerprint } from './execution-scope';
+import { executionScopeFingerprint, executionCompletionPhases } from './execution-scope';
+import { reduceRunState } from './run-state-reducer';
+import { externalWaitingProbe } from './goal-supervisor';
 import { loadReviewClosureAttestation } from './closure-attestation';
 
 /**
@@ -65,7 +78,7 @@ const SCOPE_REVISION_EVENT = 'scope_revised';
  * The same before/after constraints the writer enforces are re-applied here, so an entry that is
  * merely well-formed cannot become the effective scope (review B8).
  */
-export function loadScopeRevisions(events: readonly GoalRunEvent[], birth: ExecutionScope): ScopeRevisedEvent[] {
+export function loadScopeRevisions(events: readonly GoalRunEvent[], birth: ExecutionScope, context?: ScopeRevisionAuthorityContext): ScopeRevisedEvent[] {
   const revisions = events.filter(event => event.type === SCOPE_REVISION_EVENT) as unknown as ScopeRevisedEvent[];
   if (!revisions.length) return [];
   let previousScope = birth;
@@ -80,7 +93,10 @@ export function loadScopeRevisions(events: readonly GoalRunEvent[], birth: Execu
     if (next.completion_target !== previousScope.completion_target || JSON.stringify(next.requested_results) !== JSON.stringify(previousScope.requested_results)) {
       throw new Error(`[execution-scope] 修订 #${revision.revision_index} 改写了请求边界`);
     }
-    assertRevisionKeepsRequiredObligations(previousScope, next);
+    const control = readScopeRevisionUserControl(previousScope, revision.revision_input as ExecutionScopeInput | undefined,
+      context ? { ...context, events: events.slice(0, events.indexOf(revision as unknown as GoalRunEvent)) } : undefined,
+      (revision.revision_input as ExecutionScopeInput | undefined)?.request?.user_control);
+    assertRevisionKeepsRequiredObligations(previousScope, next, control.allowedSubtractions);
     previousScope = next;
     previous = executionScopeFingerprint(next);
   });
@@ -88,8 +104,8 @@ export function loadScopeRevisions(events: readonly GoalRunEvent[], birth: Execu
 }
 
 /** Effective scope = birth scope + revisions applied in `revision_index` order. */
-export function applyScopeRevisions(birth: ExecutionScope, events: readonly GoalRunEvent[]): ExecutionScope {
-  const revisions = loadScopeRevisions(events, birth);
+export function applyScopeRevisions(birth: ExecutionScope, events: readonly GoalRunEvent[], context?: ScopeRevisionAuthorityContext): ExecutionScope {
+  const revisions = loadScopeRevisions(events, birth, context);
   return revisions.length ? revisions[revisions.length - 1].execution_scope : birth;
 }
 
@@ -101,23 +117,12 @@ export function applyScopeRevisions(birth: ExecutionScope, events: readonly Goal
  * atomic: there is no window in which the new scope is readable but the revocation is not, so an
  * interrupt between two writes cannot resurrect a pre-revision PASS (review B1/2).
  */
-export function revokedPhasesByRevision(birth: ExecutionScope, events: readonly GoalRunEvent[]): Map<number, string[]> {
+export function revokedPhasesByRevision(birth: ExecutionScope, events: readonly GoalRunEvent[], dependencies: ScopeDependencyContext = {}, context?: ScopeRevisionAuthorityContext): Map<number, string[]> {
   const out = new Map<number, string[]>();
-  const revisions = loadScopeRevisions(events, birth);
-  revisions.forEach((revision, index) => {
-    const previous = index === 0 ? birth : revisions[index - 1].execution_scope;
-    const phases = new Set<string>();
-    for (const before of previous.obligations) {
-      const proof = (before.satisfied_by ?? []).filter(ref => 'evidence_manifest_aggregate' in ref);
-      if (!proof.length) continue;
-      const after = revision.execution_scope.obligations.find(obligation => obligation.id === before.id);
-      const kept = (after?.satisfied_by ?? []).filter(ref => 'evidence_manifest_aggregate' in ref);
-      // Only a duty left with NO phase evidence at all is revoked: dropping one of several proofs
-      // while keeping another still leaves the duty satisfied, so its phase must not be re-run.
-      if (!kept.length) phases.add(String(before.owner_phase));
-    }
-    if (phases.size) out.set(revision.revision_index, [...phases]);
-  });
+  loadScopeRevisions(events, birth, context);
+  const order = [...new Set([...FEATURE_PHASE_ORDER, ...birth.obligations.map(o => o.owner_phase)])];
+  const history = scopeProofHistory(birth, events, order, undefined, dependencies.workflow, dependencies);
+  for (const [index, phases] of history.revisions) if (phases.length) out.set(Number((events[index] as unknown as ScopeRevisedEvent).revision_index), phases);
   return out;
 }
 
@@ -126,9 +131,9 @@ export function revokedPhasesByRevision(birth: ExecutionScope, events: readonly 
  * is followed by the per-phase invalidation it implies. Pure projection — nothing is persisted, so
  * the recovery path and the in-run path read the same truth from the same single event.
  */
-export function eventsWithScopeRevocations(birth: ExecutionScope | undefined, events: readonly GoalRunEvent[]): GoalRunEvent[] {
+export function eventsWithScopeRevocations(birth: ExecutionScope | undefined, events: readonly GoalRunEvent[], dependencies: ScopeDependencyContext = {}, context?: ScopeRevisionAuthorityContext): GoalRunEvent[] {
   if (!birth) return [...events];
-  const revoked = revokedPhasesByRevision(birth, events);
+  const revoked = revokedPhasesByRevision(birth, events, dependencies, context);
   if (!revoked.size) return [...events];
   const out: GoalRunEvent[] = [];
   for (const event of events) {
@@ -180,7 +185,7 @@ export function resolveEffectiveScopeSource(
     if (transfer && transfer.scope_fingerprint !== executionScopeFingerprint(birth)) {
       throw new Error(`[execution-scope] run ${runId} 的出生范围与 feature 记录登记的转交指纹失配：run 出生=${executionScopeFingerprint(birth).slice(0, 16)} feature 登记=${transfer.scope_fingerprint.slice(0, 16)}`);
     }
-    return { scope: applyScopeRevisions(birth, loadAuthoritativeRunEvents(projectRoot, feature, runId)), source: 'run', run_id: runId };
+    return { scope: applyScopeRevisions(birth, loadAuthoritativeRunEvents(projectRoot, feature, runId), { projectRoot, feature, runId }), source: 'run', run_id: runId };
   }
   if (!record) return undefined;
   // 无 run 身份而记录声明已转交：权威在那个 run 上，这里不得返回 feature 范围。
@@ -191,8 +196,16 @@ export function resolveEffectiveScopeSource(
   return { scope: featureEffectiveScope(record), source: 'feature', run_id: null };
 }
 
-export function loadEffectiveExecutionScope(projectRoot: string, feature: string, runId?: string): ExecutionScope | undefined {
-  return resolveEffectiveScopeSource(projectRoot, feature, runId)?.scope;
+export function loadEffectiveExecutionScope(projectRoot: string, feature: string, runId?: string, providedFrameworkRoot?: string, pendingOwnerPhase?: string, authorityReaders?: IdentityNeutralDigestReaders): ExecutionScope | undefined {
+  const recorded = resolveEffectiveScopeSource(projectRoot, feature, runId)?.scope;
+  if (!recorded || !runId) return recorded;
+  const { resolveWorkflowSpec, workflowForExistingRun } = require('../../workflow-loader') as typeof import('../../workflow-loader');
+  const { resolveProbeFrameworkRoot } = require('../../repo-layout') as typeof import('../../repo-layout');
+  const { resolveCurrentScopeView } = require('./feature-track') as typeof import('./feature-track');
+  const frameworkRoot = providedFrameworkRoot ?? resolveProbeFrameworkRoot(projectRoot, path.resolve(__dirname, '../..'));
+  const manifest = loadGoalManifestFromRun(projectRoot, runId, { feature });
+  return resolveCurrentScopeView({ projectRoot, frameworkRoot, feature,
+    workflow: workflowForExistingRun(resolveWorkflowSpec(projectRoot, { frameworkRoot }), manifest, frameworkRoot, projectRoot), previous: recorded, currentRunId: runId, currentPhase: pendingOwnerPhase, authorityReaders });
 }
 
 /**
@@ -330,6 +343,7 @@ function runCreatedHash(input: Omit<RunCreatedEvent, 'event_hash' | 'ts'>): stri
 
 export function resolveGoalRunHeadSha(projectRoot: string): string {
   const value = execFileSync('git', ['rev-parse', 'HEAD'], {
+    windowsHide: true,
     cwd: projectRoot,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -366,12 +380,71 @@ interface SiblingRun {
   haltReason: string;
   manifest: GoalManifest;
   events: GoalRunEvent[];
+  /** run_end 缺失时取最后一个事件的时刻（崩溃 / 正在运行的 run）；只供接续决策排序与"早于最近一次完成"判断。 */
+  lastEventTs: number;
+  /** 有正式开始（authoritative run_start）；没有 = 启动即失败，接入走附着而不是恢复。 */
+  started: boolean;
 }
 
-function normalizeRelatedPath(projectRoot: string, value: unknown): string | null {
+/** 同 feature 下出生完整、事件未损坏的 run（dry 在 .dry 子目录，不在此列）。解析失败的 run 交给既有完整性门禁，这里跳过。 */
+function scanSiblingRuns(runsDir: string, excludeRunId?: string): SiblingRun[] {
+  if (!fs.existsSync(runsDir)) return [];
+  const siblings: SiblingRun[] = [];
+  for (const entry of fs.readdirSync(runsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name === excludeRunId) continue;
+    const runDir = path.join(runsDir, entry.name);
+    const manifestPath = path.join(runDir, 'manifest.json');
+    const eventsPath = path.join(runDir, 'events.jsonl');
+    if (!fs.existsSync(manifestPath)) continue;
+    const creation = inspectGoalRunCreationFiles(manifestPath, eventsPath);
+    if (creation.state !== 'complete' && creation.state !== 'legacy') continue;
+    const loaded = loadEventsJsonlStrict(eventsPath);
+    if (loaded.missing || loaded.corruptLines.length > 0) continue;
+    const end = [...loaded.events].reverse().find(event => event.type === 'run_end') as { status?: unknown; halt_reason?: unknown; ts?: unknown } | undefined;
+    const status = typeof end?.status === 'string' ? end.status : '';
+    const haltReason = typeof end?.halt_reason === 'string' ? end.halt_reason : '';
+    const tsOf = (value: unknown): number => (typeof value === 'string' && Number.isFinite(Date.parse(value)) ? Date.parse(value) : 0);
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as GoalManifest;
+      const ts = tsOf(end?.ts);
+      const lastEventTs = loaded.events.reduce((latest, event) => Math.max(latest, tsOf(event.ts)), 0);
+      const started = loaded.events.some(event => event.type === 'run_start' && (event as { dry_run?: unknown }).dry_run !== true);
+      siblings.push({ runId: entry.name, runDir, ts, status, haltReason, manifest, events: loaded.events, lastEventTs, started });
+    } catch { /* malformed prior run is handled by existing integrity gates */ }
+  }
+  return siblings;
+}
+
+const COMPLETED_STATUSES = new Set(['COMPLETED', 'CHAIN_SLICE_COMPLETED']);
+
+/** 已被承接：某个 run 的事件里有经审计的 supersede（target = 它，superseding = 那个 run 自己）。 */
+export function supersededRunIds(siblings: readonly SiblingRun[], requireTerminalSuccessor: boolean): Set<string> {
+  const terminalStatuses = new Set(['HALTED', ...COMPLETED_STATUSES]);
+  const out = new Set<string>();
+  for (const sibling of siblings) {
+    if (requireTerminalSuccessor && !terminalStatuses.has(sibling.status)) continue;
+    for (const event of sibling.events) {
+      const audit = event as GoalRunEvent & { target_run_id?: unknown; superseding_run_id?: unknown };
+      if (audit.type === 'supersede' && typeof audit.target_run_id === 'string' && audit.superseding_run_id === sibling.runId
+        && (!requireTerminalSuccessor || audit.target_run_id === sibling.manifest.successor_of)) {
+        out.add(audit.target_run_id);
+      }
+    }
+  }
+  return out;
+}
+
+export function normalizeRelatedPath(projectRoot: string, value: unknown): string | null {
   if (typeof value !== 'string' || !value.trim()) return null;
-  const rel = value.trim().replace(/\\/g, '/').replace(/^\.\//, '');
-  if (path.isAbsolute(rel) || rel === '..' || rel.startsWith('../')) return null;
+  let rel = value.trim().replace(/\\/g, '/').replace(/^\.\//, '');
+  // 生产检查给的 affected_files 可能是绝对路径（如 featureFilePath 拼出的产物路径）：在工程根之内就换成工程根下的相对路径照常处理，
+  // 工程根之外仍拒绝（越界保护不变）；相对路径的行为不变。
+  if (path.isAbsolute(rel)) {
+    const inside = path.relative(path.resolve(projectRoot), path.resolve(rel)).replace(/\\/g, '/');
+    if (!inside || path.isAbsolute(inside)) return null;
+    rel = inside;
+  }
+  if (rel === '..' || rel.startsWith('../')) return null;
   const abs = path.resolve(projectRoot, rel);
   const root = path.resolve(projectRoot);
   if (abs !== root && !abs.startsWith(`${root}${path.sep}`)) return null;
@@ -388,64 +461,43 @@ export function currentFileHash(projectRoot: string, rel: string): string | null
   }
 }
 
-/** Prove a repair with existing terminal summary + an already-recorded source hash. */
-function findChangedRelatedRepair(projectRoot: string, prior: SiblingRun): string | null {
-  const lastVerdict = [...prior.events].reverse().find(event =>
-    event.type === 'phase_verdict' && typeof event.phase === 'string',
-  );
-  const phase = typeof lastVerdict?.phase === 'string' ? lastVerdict.phase : null;
-  if (!phase) return null;
-  let summary: {
-    repair_candidates?: Array<{ files?: unknown }>;
-    blockers?: Array<{ affected_files?: unknown }>;
-  };
-  try {
-    summary = JSON.parse(fs.readFileSync(path.join(prior.runDir, 'phases', phase, 'harness', 'summary.json'), 'utf8'));
-  } catch {
-    return null;
-  }
-  const related = new Set<string>();
-  for (const candidate of summary.repair_candidates ?? []) {
-    if (!Array.isArray(candidate.files)) continue;
-    for (const file of candidate.files) {
-      const rel = normalizeRelatedPath(projectRoot, file);
-      if (rel) related.add(rel);
-    }
-  }
-  for (const blocker of summary.blockers ?? []) {
-    if (!Array.isArray(blocker.affected_files)) continue;
-    for (const file of blocker.affected_files) {
-      const rel = normalizeRelatedPath(projectRoot, file);
-      if (rel) related.add(rel);
-    }
-  }
-  if (!related.size) return null;
-
+/** 现有来源读取共用；回退消费者可限定旧窗口，绝不以当前覆盖的attestation替代。 */
+export function readRecordedRelatedHashes(
+  projectRoot: string, feature: string, related: ReadonlySet<string>, events: readonly GoalRunEvent[],
+  window?: { startMs?: number; endMs: number; runId: string },
+): Map<string, string | null> {
+  const isRelated = (rel: string): boolean => related.has(rel) || [...related].some(dir => rel.startsWith(`${dir}/`));
   const baseline = new Map<string, string | null>();
-  const attestation = loadReviewClosureAttestation(projectRoot, prior.manifest.feature);
-  for (const entry of attestation?.inventory.files ?? []) {
-    const rel = normalizeRelatedPath(projectRoot, entry.path);
-    if (rel && related.has(rel) && /^[0-9a-f]{64}$/i.test(entry.sha256)) baseline.set(rel, entry.sha256.toLowerCase());
+  const attestation = loadReviewClosureAttestation(projectRoot, feature);
+  const at = Date.parse(attestation?.generated_at ?? '');
+  if (!window || (Number.isFinite(at) && at >= (window.startMs ?? -Infinity) && at <= window.endMs && attestation?.run_identity?.run_id === window.runId)) {
+    for (const entry of attestation?.inventory.files ?? []) {
+      const rel = normalizeRelatedPath(projectRoot, entry.path);
+      if (rel && isRelated(rel) && /^[0-9a-f]{64}$/i.test(entry.sha256)) baseline.set(rel, entry.sha256.toLowerCase());
+    }
   }
-  for (const event of prior.events) {
+  for (const event of events) {
     if (event.type !== 'phase_write_observed') continue;
-    const observations = (event as GoalRunEvent & { observations?: unknown }).observations;
-    if (!Array.isArray(observations)) continue;
-    for (const raw of observations) {
+    const ts = Date.parse(event.ts ?? '');
+    if (window && (!Number.isFinite(ts) || ts < (window.startMs ?? -Infinity) || ts > window.endMs)) continue;
+    const { observations, owned } = event as GoalRunEvent & { observations?: unknown; owned?: unknown };
+    const priorOwned = (Array.isArray(owned) ? owned : []).filter(raw => {
+      if (event.phase !== 'coding' || !raw || typeof raw !== 'object') return true;
+      const roles = (raw as { roles?: unknown }).roles;
+      if (!Array.isArray(roles) || !roles.length || !roles.every(role => role && typeof role === 'object'
+        && ['source', 'artifact', 'phase_workspace'].includes(role.kind) && typeof role.source === 'string')) return true;
+      return !roles.some(role => role.kind === 'source') || roles.some(role => role.kind === 'artifact');
+    });
+    for (const raw of [...priorOwned, ...(Array.isArray(observations) ? observations : [])]) {
       if (!raw || typeof raw !== 'object') continue;
       const observation = raw as { path?: unknown; post_sha256?: unknown };
       const rel = normalizeRelatedPath(projectRoot, observation.path);
-      if (!rel || !related.has(rel)) continue;
+      if (!rel || !isRelated(rel)) continue;
       if (observation.post_sha256 === null) baseline.set(rel, null);
-      else if (typeof observation.post_sha256 === 'string' && /^[0-9a-f]{64}$/i.test(observation.post_sha256)) {
-        baseline.set(rel, observation.post_sha256.toLowerCase());
-      }
+      else if (typeof observation.post_sha256 === 'string' && /^[0-9a-f]{64}$/i.test(observation.post_sha256)) baseline.set(rel, observation.post_sha256.toLowerCase());
     }
   }
-  for (const rel of [...related].sort()) {
-    if (baseline.has(rel) && currentFileHash(projectRoot, rel) !== baseline.get(rel)) return rel;
-  }
-  return null;
+  return baseline;
 }
 
 function normalizeSourcePath(projectRoot: string, source: string): string | null {
@@ -457,7 +509,7 @@ function normalizeSourcePath(projectRoot: string, source: string): string | null
 
 function requirementIsBoundToChangedSource(
   projectRoot: string,
-  manifest: FreshRunContinuationInput['manifest'],
+  manifest: Pick<GoalManifest, 'requirement' | 'requirement_source_files'>,
   prior: GoalManifest,
 ): boolean {
   const requirement = manifest.requirement?.trim();
@@ -482,38 +534,10 @@ export function evaluateFreshRunContinuation(input: FreshRunContinuationInput): 
   if (input.manifest.successor_of) return { allowed: true, overrideUsed: false, reason: 'audited successor lineage' };
   const runsDir = path.dirname(path.join(input.projectRoot, input.manifest.report_dir));
   if (!fs.existsSync(runsDir)) return { allowed: true, overrideUsed: false, reason: 'no prior run' };
-  const siblings: SiblingRun[] = [];
-  for (const entry of fs.readdirSync(runsDir, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name === input.manifest.run_id) continue;
-    const runDir = path.join(runsDir, entry.name);
-    const manifestPath = path.join(runDir, 'manifest.json');
-    const eventsPath = path.join(runDir, 'events.jsonl');
-    if (!fs.existsSync(manifestPath)) continue;
-    const creation = inspectGoalRunCreationFiles(manifestPath, eventsPath);
-    if (creation.state !== 'complete' && creation.state !== 'legacy') continue;
-    const loaded = loadEventsJsonlStrict(eventsPath);
-    if (loaded.missing || loaded.corruptLines.length > 0) continue;
-    const end = [...loaded.events].reverse().find(event => event.type === 'run_end') as { status?: unknown; halt_reason?: unknown; ts?: unknown } | undefined;
-    const status = typeof end?.status === 'string' ? end.status : '';
-    const haltReason = typeof end?.halt_reason === 'string' ? end.halt_reason : '';
-    try {
-      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as GoalManifest;
-      const ts = typeof end?.ts === 'string' && Number.isFinite(Date.parse(end.ts)) ? Date.parse(end.ts) : 0;
-      siblings.push({ runId: entry.name, runDir, ts, status, haltReason, manifest, events: loaded.events });
-    } catch { /* malformed prior run is handled by existing integrity gates */ }
-  }
-  const terminalStatuses = new Set(['HALTED', 'COMPLETED', 'CHAIN_SLICE_COMPLETED']);
-  const superseded = new Set<string>();
-  for (const sibling of siblings) {
-    const target = sibling.manifest.successor_of;
-    if (!target || !terminalStatuses.has(sibling.status)) continue;
-    const audited = sibling.events.some(event => event.type === 'supersede' &&
-      (event as GoalRunEvent & { target_run_id?: unknown; superseding_run_id?: unknown }).target_run_id === target &&
-      (event as GoalRunEvent & { target_run_id?: unknown; superseding_run_id?: unknown }).superseding_run_id === sibling.runId);
-    if (audited) superseded.add(target);
-  }
+  const siblings = scanSiblingRuns(runsDir, input.manifest.run_id);
+  const superseded = supersededRunIds(siblings, true);
   const latestCompletedTs = siblings
-    .filter(sibling => sibling.status === 'COMPLETED' || sibling.status === 'CHAIN_SLICE_COMPLETED')
+    .filter(sibling => COMPLETED_STATUSES.has(sibling.status))
     .reduce((latest, sibling) => Math.max(latest, sibling.ts), -1);
   const candidates = siblings.filter(sibling =>
     sibling.status === 'HALTED' && CONTINUATION_REQUIRED_HALTS.has(sibling.haltReason) &&
@@ -527,10 +551,6 @@ export function evaluateFreshRunContinuation(input: FreshRunContinuationInput): 
   if (requirementChanged && requirementIsBoundToChangedSource(input.projectRoot, input.manifest, prior.manifest)) {
     return { allowed: true, overrideUsed: false, priorRunId: prior.runId, reason: 'bound requirement source changed' };
   }
-  const changedRepair = findChangedRelatedRepair(input.projectRoot, prior);
-  if (changedRepair) {
-    return { allowed: true, overrideUsed: false, priorRunId: prior.runId, reason: `related repair changed: ${changedRepair}` };
-  }
   if (input.forceFresh) {
     return { allowed: true, overrideUsed: true, priorRunId: prior.runId, reason: 'operator --force override' };
   }
@@ -539,14 +559,446 @@ export function evaluateFreshRunContinuation(input: FreshRunContinuationInput): 
     overrideUsed: false,
     priorRunId: prior.runId,
     reason:
-      `feature 已有失败终态 run ${prior.runId}（${prior.status}/${prior.haltReason}），且没有机器可证的新 requirement source 或相关修复。` +
-      `请按原 run 允许的恢复路径处理：可恢复时 --resume ${prior.runId}；` +
+      `feature 已有失败终态 run ${prior.runId}（${prior.status}/${prior.haltReason}），且没有绑定的新 requirement source；同一请求应接回原 run。` +
+      '补上缺的输入后重新发起同一请求（不带旗标，由接续决策重新接入或起后继）；' +
+      `也可按原 run 允许的恢复路径显式处理：可恢复时 --resume ${prior.runId}；` +
       '结构终态使用既有 --supersede 创建 successor；确认放弃旧结论才使用 --force。request_impact、HEAD、notes 或改写 CLI 散文均不构成新事实。',
   };
 }
 
-function chainRequiresRunBase(chain: readonly string[]): boolean {
-  return chain.some(phase => phase === 'coding' || phase === 'ut');
+// ----------------------------------------------------------------------------
+// plan 4e6fb3b6 §7：同任务接续——一个只读决策函数，三个入口（前台、detach、有人在场）共用
+// ----------------------------------------------------------------------------
+
+/** 本次调用事实（plan §7.2 输入）。只放调用本身带来的东西；run 里的状态由决策函数自己读盘。 */
+export interface ContinuationCallFacts {
+  /** 本次显式给的需求文本（--requirement / --requirement-file / prepare-run 的需求）。 */
+  requirement?: string;
+  requirementSourceFiles?: string[];
+  /** 本次显式给的 --adapter-model。 */
+  model?: string;
+  adapterModelPin?: import('./goal-manifest').AdapterModelPin;
+  /** 本次带了既有的预算授权（--override-manifest）；有权者改了 run manifest 的预算后以它授权。 */
+  /** 显式的恢复（--resume / --attach-created）、接续（--supersede）、强制新开（--force）：行为与现状相同。 */
+  resume?: string;
+  attachCreated?: string;
+  supersede?: readonly string[];
+  force?: boolean;
+  /** Transport information only; it does not grant recovery or business authority. */
+  attended?: boolean;
+}
+
+/**
+ * "存在变化"只认这些可核验事实（plan 4e6fb3b6 §7.2 的六种 + plan 9c3d7e1a §5.3 的第七种）。
+ * `external_condition_ready`：最新未终局 run 停在带探针的外部等待上，且探针现在就绪——通用，不只为设计权威。
+ */
+export type ContinuationChange =
+  | 'external_condition_ready'
+  | 'requirement_source_changed'
+  | 'related_repair_changed'
+  | 'requirement_increment'
+  | 'model_changed'
+  | 'explicit_flag';
+
+export type RunContinuationDecision =
+  | { kind: 'fresh'; explicit: boolean; reason: string }
+  /** budgetOnly：plan a2f7c9e4 §3.2 的预算耗尽 + 仅授权预算改动接回——入口按原 run 的 manifest 续跑，不让本次 --manifest 文件盖掉刚调整的预算。 */
+  | { kind: 'rejoin'; explicit: boolean; runId: string; started: boolean; reason: string }
+  | { kind: 'successor'; explicit: boolean; source: string; targets: string[]; change: ContinuationChange; reason: string }
+  | { kind: 'hold'; explicit: false; runId: string; haltReason: string; reason: string; guidance: string };
+
+/**
+ * 交付周期的现场：兄弟 run、上一次完成、未终局（非完成、未被承接、不早于上一次完成）的 run（按时间升序）。
+ * 接续决策与后继的补承接（批三返修 R2）共用这一份，不各算一遍。`excludeRunId` 用于后继自己不算在内。
+ */
+export function deliveryCycleView(projectRoot: string, feature: string, excludeRunId?: string): {
+  siblings: SiblingRun[]; lastCompleted: SiblingRun | undefined; unfinished: SiblingRun[];
+} {
+  const siblings = scanSiblingRuns(featureFilePath(projectRoot, feature, 'goal-runs'), excludeRunId);
+  const superseded = supersededRunIds(siblings, false);
+  const completed = siblings.filter(run => COMPLETED_STATUSES.has(run.status)).sort((a, b) => a.ts - b.ts || a.runId.localeCompare(b.runId));
+  const lastCompleted = completed.at(-1);
+  const since = lastCompleted?.ts ?? -1;
+  const unfinished = siblings
+    .filter(run => !COMPLETED_STATUSES.has(run.status) && !superseded.has(run.runId) && Math.max(run.ts, run.lastEventTs) >= since)
+    .sort((a, b) => Math.max(a.ts, a.lastEventTs) - Math.max(b.ts, b.lastEventTs) || a.runId.localeCompare(b.runId));
+  return { siblings, lastCompleted, unfinished };
+}
+
+/**
+ * 批三返修 R2：已出生但在 run_start 之前停下的后继被附着时，按当时的现场重新算出承接目标（与接续决策起后继同一口径）：
+ * 来源（该后继 manifest 的 successor_of）+ 交付周期内全部未终局且尚未被承接的 run（后继自己除外）。已由本后继审计过的目标由调用方剔除。
+ */
+export function successorCatchUpTargets(projectRoot: string, feature: string, successorRunId: string, sourceRunId: string): string[] {
+  const { unfinished } = deliveryCycleView(projectRoot, feature, successorRunId);
+  return [sourceRunId, ...unfinished.map(run => run.runId).filter(id => id !== sourceRunId)];
+}
+
+/**
+ * 批三返修 R3/R4：接续决策起的后继只容忍"原请求重放"的起止（与来源 run 的原始起止相同）；返回与之不同的项（空 = 允许）。
+ * 前台/detach（runtime）与有人在场 prepare-run 共用这一个判据。
+ */
+export function successorBoundsConflicts(
+  source: { start_phase?: string; end_phase?: string },
+  requested: { start?: string; end?: string },
+): string[] {
+  return [
+    ...(requested.start !== undefined && requested.start !== source.start_phase ? [`--start ${requested.start}（原请求 ${source.start_phase ?? '?'}）`] : []),
+    ...(requested.end !== undefined && requested.end !== source.end_phase ? [`--end ${requested.end}（原请求 ${source.end_phase ?? '?'}）`] : []),
+  ];
+}
+
+/** 起止不同时的拒绝说明（两处入口同一句）。 */
+export function successorBoundsRefusal(reason: string, conflicts: readonly string[]): string {
+  return `[execution-scope] 本次请求要起后继（${reason}），但给出了与原请求不同的起止：${conflicts.join('、')}。`
+    + '后继的阶段链由出生范围按当前输入重新解析，不支持按本次起止缩窄；去掉 --start/--end（或原样沿用原请求的起止）后重发。';
+}
+
+/**
+ * plan 9c3d7e1a §5.3：外部等待修好之后"原 run 继续还是起后继"的**唯一判断**——普通重发、显式 `--resume`（含 supervisor 拉起）、
+ * 进程内探针唤醒都消费它。返回 run 有效范围里读不回来、且链内没有责任阶段能重签的输入绑定（`input_id: 原因`）：
+ * 空 = 重新接入同一 run；非空 = 同一 run 无法重签（解析器会把该输入置为 invalid），从它起后继、出生时按当前输入重新解析。
+ * 用既有 `readBoundInput` 只读核对，不放宽指纹；不核的两类：没有解析值的源码观察（`derive.codebase` 等，run 自己会写源码），
+ * 以及从停机阶段起仍由 spec / plan 持有改写权的 artifact（与阶段输入解析同一谓词 `phaseOwnsDesignOutput`，链内改写后经范围修订重签）。
+ */
+export function staleFrozenBindings(projectRoot: string, feature: string, runId: string, haltedPhase?: string): string[] {
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const { readBoundInput, bindingHasParsedValue } = require('./capability-resolution') as typeof import('./capability-resolution');
+  const { phaseOwnsDesignOutput } = require('./skill-contract') as typeof import('./skill-contract');
+  const { loadFeatureContracts, phaseContractIndex } = require('./skill-contract') as typeof import('./skill-contract');
+  const { inferLegacyProjectRoot } = require('./project-relative-path') as typeof import('./project-relative-path');
+  const { resolveProbeFrameworkRoot } = require('../../repo-layout') as typeof import('../../repo-layout');
+  /* eslint-enable @typescript-eslint/no-require-imports */
+  const scope = loadEffectiveExecutionScope(projectRoot, feature, runId);
+  if (!scope) return [];
+  const frameworkRoot = resolveProbeFrameworkRoot(projectRoot);
+  const requirement = loadGoalManifestFromRun(projectRoot, runId, { feature }).requirement?.trim();
+  const chain = scope.phase_chain.map(String);
+  const remaining = chain.slice(Math.max(haltedPhase ? chain.indexOf(haltedPhase) : 0, 0));
+  const contracts = phaseContractIndex(loadFeatureContracts(frameworkRoot));
+  const legacyRoot = inferLegacyProjectRoot(projectRoot, scope);
+  const stale = new Set<string>();
+  for (const obligation of scope.obligations) {
+    for (const ref of [...obligation.basis, ...(obligation.satisfied_by ?? [])]) {
+      if (!('input_id' in ref) || !bindingHasParsedValue(ref)) continue;
+      if (remaining.some(phase => phaseOwnsDesignOutput(contracts.get(phase)?.phase.produces ?? [], scope, phase, ref))) continue;
+      const isRequirement = ref.source.kind === 'derive' && ref.source.provider_id === 'derive.requirement';
+      if (isRequirement && !requirement) continue;
+      try {
+        readBoundInput({
+          projectRoot, frameworkRoot, feature, phase: obligation.owner_phase, track: 'full',
+          ...(isRequirement ? { requirement, inputContext: { schema_version: '1.1' as const, subject: { feature }, obligations: {}, required_outputs: [] } } : {}),
+        }, ref, legacyRoot);
+      } catch (error) {
+        stale.add(`${ref.input_id}: ${(error as Error).message}`);
+      }
+    }
+  }
+  return [...stale].sort();
+}
+
+
+/** 身份字段的出生基线：run_created.manifest_identity_fields，其后每条授权改写（manifest_identity_rebase.to_fields）前进。 */
+export function identityBaseline(events: readonly GoalRunEvent[]): Record<string, string> | undefined {
+  let baseline: Record<string, string> | undefined;
+  for (const event of events) {
+    const e = event as GoalRunEvent & { manifest_identity_fields?: Record<string, string>; to_fields?: Record<string, string> };
+    if (e.type === 'run_created' && e.manifest_identity_fields) baseline = e.manifest_identity_fields;
+    else if (e.type === 'manifest_identity_rebase' && e.to_fields) baseline = e.to_fields;
+  }
+  return baseline;
+}
+
+function publishedOriginalRepairNeedsSuccessor(projectRoot: string, run: SiblingRun): boolean {
+  if (!run.manifest.delivery_origin || !['HALTED', 'DEFERRED'].includes(run.status) && !COMPLETED_STATUSES.has(run.status)) return false;
+  const { readOriginalDeliveryActivity } = require('./delivery-origin') as typeof import('./delivery-origin');
+  const original = readOriginalDeliveryActivity(projectRoot, run.manifest);
+  const root = original?.runs.find(item => isInitialDesignManifest(item.manifest));
+  if (!root || resolveEffectiveRunEnd(root.events)?.status === 'COMPLETED') return false;
+  if (!root.events.some(event => event.type === 'design_authority_repair' && 'stage' in event && event.stage === 'published'
+    && 'outcome' in event && event.outcome === 'recovered'
+    && (!COMPLETED_STATUSES.has(run.status) || Date.parse(event.ts ?? '') > run.ts))) return false;
+  const phase = [...run.events].reverse().find(event => event.type === 'phase_halt' || event.type === 'phase_verdict')?.phase;
+  return staleFrozenBindings(projectRoot, run.manifest.feature, run.runId, typeof phase === 'string' ? phase : undefined).length > 0;
+}
+
+/**
+ * plan a2f7c9e4 §3.2（codex 检视 r2）：仅预算接回时，本次 --manifest 文件是否只是在重复原 run——
+ * 文件里**写出的**每个字段（budget 与 run_id / report_dir / created_at 这类定位字段除外）经同一解析后与原 run 当前 manifest 逐字段相同。
+ * 是 → 入口按原 run 的 manifest 续跑（出生时的旧输入文件不得把刚调整的预算盖回去）；
+ * 否（文件另带了改动，或读不出）→ 不走这条捷径，按既有 resume + --manifest 授权路径处理，不静默丢弃改动。
+ * 文件没写出的字段视为"未指定"，不当作要求重置成默认值。
+ */
+export function manifestFileRepeatsRun(projectRoot: string, filePath: string, run: GoalManifest, featuresDir: string): boolean {
+  try {
+    const abs = path.isAbsolute(filePath) ? filePath : path.join(projectRoot, filePath);
+    const raw = YAML.parse(fs.readFileSync(abs, 'utf8')) as Record<string, unknown>;
+    if (!raw || typeof raw !== 'object') return false;
+    const parsed = loadGoalManifestFile(filePath, projectRoot, { featuresDir, runId: run.run_id }) as unknown as Record<string, unknown>;
+    const current = run as unknown as Record<string, unknown>;
+    return Object.keys(raw)
+      .filter(key => !['budget', 'run_id', 'report_dir', 'created_at'].includes(key))
+      .every(key => manifestIdentityFieldDigest((key in parsed ? parsed[key] : raw[key]) ?? null) === manifestIdentityFieldDigest(current[key] ?? null));
+  } catch {
+    return false;
+  }
+}
+
+/** 预算耗尽类终局：只有这两种停机能被"授权追加预算"原地解除。 */
+
+/**
+ * plan a2f7c9e4 §3.1：交付周期边界——上一次可信完成（assessFeature record ok）的 run，只在落入本次 supersede 血缘时生效。
+ * runtime 出生段的预算折叠与后继出生时的有效预算共用这一处；评估不可算 = 不设边界（按全血缘折叠的现状口径，不拒绝出生）。
+ */
+export function resolveDeliveryCycleBoundary(input: {
+  projectRoot: string; featuresDir: string; feature: string; frameworkRoot: string;
+  seedTargets: readonly string[]; currentEvents?: readonly GoalRunEvent[];
+}): string | undefined {
+  try {
+    /* eslint-disable @typescript-eslint/no-require-imports */
+    const { assessFeature } = require('./feature-assessment') as typeof import('./feature-assessment');
+    const { resolveChangeUnitExpectedExecution } = require('./change-unit-completion') as typeof import('./change-unit-completion');
+    /* eslint-enable @typescript-eslint/no-require-imports */
+    const record = assessFeature(input.projectRoot, input.feature, {
+      ...resolveChangeUnitExpectedExecution(input.projectRoot, input.feature, false, input.frameworkRoot), frameworkRoot: input.frameworkRoot,
+    }).record;
+    if (record.state !== 'ok' || !record.run_id) return undefined;
+    const ancestors = readSupersededAncestorRuns({
+      projectRoot: input.projectRoot, featuresDir: input.featuresDir, feature: input.feature,
+      seedTargets: input.seedTargets, currentEvents: input.currentEvents ?? [],
+    });
+    return ancestors.some(run => run.run_id === record.run_id) ? record.run_id : undefined;
+  } catch (error) {
+    console.warn(`[goal-runner] 既有完成周期边界尚不可确认：${(error as Error).message}`);
+    return undefined;
+  }
+}
+
+/** 结构终局：统一投影判 TERMINAL（成功封卷不算——那是完成），或曾检出 testing 越权写（该 run 永不允许恢复）。 */
+function isStructurallyTerminal(run: SiblingRun, projectRoot: string): boolean {
+  if (run.events.some(event => event.type === 'testing_write_violation')) return true;
+  if (canRecheckLegacyBacktrackLimit({ projectRoot, feature: run.manifest.feature, runId: run.runId, events: run.events })) return false;
+  return reduceRunState(run.events).run_disposition === 'TERMINAL' && !COMPLETED_STATUSES.has(run.status);
+}
+
+/**
+ * 保持停止时交还的原停止说明，只看最近一次停止窗口（plan c3f8a2d7 §3.4）：最新 phase_halt 的
+ * halt_guidance，没有就用它的 reason；同一会话收尾的 run_end 只复制指引首行，不覆盖它。只有最新
+ * phase_halt 之后另起的会话（其后有 run_start，或 run_end 自带更晚的 session_started_at）以
+ * run_end.error 失败时才取该错误。
+ */
+function lastStopGuidance(run: SiblingRun): string {
+  const events = run.events as Array<Record<string, unknown>>;
+  const h = events.map(event => event.type).lastIndexOf('phase_halt');
+  const e = events.map(event => event.type).lastIndexOf('run_end');
+  const halt = events[h];
+  const end = events[e];
+  const restarted = e > h && (h < 0 || events.slice(h + 1, e).some(event => event.type === 'run_start')
+    || Date.parse(String(end.session_started_at)) > Date.parse(String(halt.ts)));
+  const text = [restarted ? end.error : undefined, halt?.halt_guidance, halt?.reason]
+    .find((value): value is string => typeof value === 'string' && !!value.trim());
+  return text?.trim() ?? '';
+}
+
+/**
+ * plan §7.2 接续决策（只读）：新开 / 重新接入 / 起后继 / 保持停止。
+ *
+ * - 显式旗标（--resume / --attach-created / --supersede / --force）照现状走，只标 explicit，不替它改路。
+ * - 上一次完成之后没有未终局的 run → 新开。
+ * - 最新的未终局 run 不是结构终局 → 重新接入（有正式开始的恢复，启动即失败的附着）；随后由原来的责任检查判断条件，
+ *   本函数不替任何检查放行。例外：本次显式给了与钉值不同的型号或需求增量——这两样原 run 在身份上接不住，走后继出生（§7.3）。
+ *   实际是否有新工作由同一派发判断决定，耗时不作为恢复条件。
+ * - 最新的未终局 run 是结构终局：存在变化 → 起后继；没有变化 → 保持停止（含预算耗尽而没有显式预算改动）。
+ *   例外（plan a2f7c9e4 §3.2）：预算耗尽且本次只带来授权的预算改动 → 重新接入原 run。
+ *
+ * 起后继的合同来源（§7.4）：当前持有范围转交的 run；没有 feature 转交记录时取上一次完成的 run；两者都没有时取最新的未终局 run
+ * （plan 未规定这一支，见实施记录）——它从未正式开始过且本次需求不同时改为新开。不以未终局列表的第一项为来源。
+ * 承接目标 = 来源 + 交付周期内全部未终局且尚未被承接的 run。
+ */
+export function decideRunContinuation(input: {
+  projectRoot: string;
+  frameworkRoot?: string;
+  feature: string;
+  call: ContinuationCallFacts;
+  /** 停机所挂探针的执行者（缺省 = 共享的真实探针 `runConditionProbe`）；嵌入调用方与进程内等待用同一个。 */
+  runProbe?: (reportDir: string, probe: string, phase?: string) => { ready: boolean; reason?: string };
+}): RunContinuationDecision {
+  const { call } = input;
+  if (call.resume?.trim()) return { kind: 'rejoin', explicit: true, runId: call.resume.trim(), started: true, reason: '显式 --resume' };
+  if (call.attachCreated?.trim()) return { kind: 'rejoin', explicit: true, runId: call.attachCreated.trim(), started: false, reason: '显式 --attach-created' };
+  const explicitTargets = (call.supersede ?? []).map(id => id.trim()).filter(Boolean);
+  if (explicitTargets.length) {
+    return { kind: 'successor', explicit: true, source: explicitTargets[0], targets: explicitTargets, change: 'explicit_flag', reason: '显式 --supersede' };
+  }
+  if (call.force) return { kind: 'fresh', explicit: true, reason: '显式 --force' };
+
+  const { siblings, lastCompleted, unfinished } = deliveryCycleView(input.projectRoot, input.feature);
+  let stoppedCuBindingGap = false;
+  /** 当前持有范围转交的 run（feature 冻结记录的最新转交）；记录读不出按没有转交记录处理，后继出生时的范围解析会如实报错。 */
+  const scopeHolder = (): string | undefined => {
+    try {
+      /* eslint-disable @typescript-eslint/no-require-imports */
+      const { readFeatureFrozenScope, currentFeatureScopeTransfer } = require('./feature-execution-scope') as typeof import('./feature-execution-scope');
+      /* eslint-enable @typescript-eslint/no-require-imports */
+      const record = readFeatureFrozenScope(input.projectRoot, input.feature);
+      return record ? currentFeatureScopeTransfer(record)?.run_id : undefined;
+    } catch { return undefined; }
+  };
+  /** 六种变化（显式旗标已在上方分流）相对某个 run 的判定。 */
+  const changesAgainst = (run: SiblingRun): ContinuationChange[] => {
+    const requirement = call.requirement?.trim();
+    const priorRequirement = run.manifest.requirement?.trim() ?? '';
+    const out: ContinuationChange[] = [];
+    if (requirement && requirement !== priorRequirement && call.requirementSourceFiles?.length
+      && requirementIsBoundToChangedSource(input.projectRoot, { requirement, requirement_source_files: call.requirementSourceFiles }, run.manifest)) {
+      out.push('requirement_source_changed');
+    }
+    // A root-carried P1 publication is the same upstream repair fact as a
+    // publication in this CU's own events. Reuse the existing binding decision.
+    if (publishedOriginalRepairNeedsSuccessor(input.projectRoot, run)) {
+      stoppedCuBindingGap = true;
+      if (!out.includes('related_repair_changed')) out.push('related_repair_changed');
+    }
+    // CU 内容修订只接既有评估信号；冻结输入失效的停住 run 由原 successor/plan 责任恢复。
+    if (input.feature.startsWith('cu-') && ['HALTED', 'DEFERRED'].includes(run.status)) {
+      /* eslint-disable-next-line @typescript-eslint/no-require-imports */
+      const { assessFeature, changeUnitBindingIssues } = require('./feature-assessment') as typeof import('./feature-assessment');
+      const scope = loadEffectiveExecutionScope(input.projectRoot, input.feature, run.runId);
+      const issues = changeUnitBindingIssues(input.projectRoot, input.feature, false);
+      /* eslint-disable-next-line @typescript-eslint/no-require-imports */
+      const { inferLegacyProjectRoot, resolveDependencyPath } = require('./project-relative-path') as typeof import('./project-relative-path');
+      const cuFile = featureFilePath(input.projectRoot, input.feature, 'change-unit.yaml');
+      const legacyRoot = scope ? inferLegacyProjectRoot(input.projectRoot, scope) : undefined;
+      const currentCuHash = currentFileHash(input.projectRoot, path.relative(input.projectRoot, cuFile));
+      const changedCu = scope?.obligations.flatMap(row => [...row.basis, ...(row.satisfied_by ?? [])]).some(binding => {
+        if (!('input_id' in binding) || !currentCuHash) return false;
+        const direct = binding.dependencies.find(dep => resolveDependencyPath(input.projectRoot, dep.path, legacyRoot) === cuFile && dep.exists);
+        return !!direct && direct.sha256 !== currentCuHash;
+      });
+      if (issues.length && changedCu) {
+        const assessment = assessFeature(input.projectRoot, input.feature, { expectedTrack: 'full', expectedChain: scope ? executionCompletionPhases(scope) : run.manifest.phase_chain ?? [], scope });
+        stoppedCuBindingGap = stoppedCuBindingGap || assessment.obligations.some(row => row.status === 'uncovered' && row.class === 'binding');
+        if (stoppedCuBindingGap && !out.includes('related_repair_changed')) out.push('related_repair_changed');
+      }
+    }
+    // 需求增量：本次文本与合并后的全文、原请求、整个历史增量块都不全文相同（批三返修 R1：与后继合并同一判据，不用子串）
+    if (requirement && !isRepeatedRequirement(priorRequirement, requirement)) out.push('requirement_increment');
+    if (call.adapterModelPin ? !(call.adapterModelPin.source === 'frontend' && run.manifest.adapter_model_pin)
+      && adapterModelBinding({ ...run.manifest.adapter_model_pin, ...call.adapterModelPin }) !== adapterModelBinding(run.manifest.adapter_model_pin)
+      : call.model && call.model !== run.manifest.adapter_model_pin?.value) out.push('model_changed');
+
+    return out;
+  };
+
+  const latest = unfinished.at(-1);
+  if (!latest) {
+    // plan §7.2 之外的补充（调度方 2026-09-29 裁定）：功能已完成之后再提需求——没有未终局 run、范围由一个已完成的 run 持有时，
+    // 有变化就从这个已完成的持有者起后继（合同来源与承接目标都是它，走既有后继出生路径）；没有变化保持停止。其余新开不变。
+    const holderId = scopeHolder();
+    const heldCompleted = holderId ? siblings.find(run => run.runId === holderId && COMPLETED_STATUSES.has(run.status)) : undefined;
+    const repairedCompleted = !heldCompleted && lastCompleted && publishedOriginalRepairNeedsSuccessor(input.projectRoot, lastCompleted) ? lastCompleted : undefined;
+    const holderRun = heldCompleted ?? repairedCompleted;
+    if (holderRun) {
+      const changed = changesAgainst(holderRun);
+      // plan a2f7c9e4 §3.2：功能已完成，仅预算变化不构成新工作——保持停止。
+
+      if (changed.length) {
+        return {
+          kind: 'successor', explicit: false, source: holderRun.runId, targets: [holderRun.runId], change: changed[0],
+          reason: `${repairedCompleted ? '原请求上游已合法发布、完成来源的冻结绑定待重新解析' : '功能已完成并持有范围'}（run ${holderRun.runId}）；变化=${changed[0]}；从它起后继`,
+        };
+      }
+      return {
+        kind: 'hold', explicit: false, runId: holderRun.runId, haltReason: '', reason: '功能已完成且本次没有任何变化',
+        guidance: `这个功能已经完成（run ${holderRun.runId}）；要修改或追加内容，请在请求里写明新增或变更的需求后重新发起。本次不新建 run、不写事件。`,
+      };
+    }
+    return { kind: 'fresh', explicit: false, reason: lastCompleted ? `上一次完成（${lastCompleted.runId}）之后没有未终局的 run` : '没有未终局的 run' };
+  }
+
+  const changes = changesAgainst(latest);
+  // plan 9c3d7e1a §5.3 第七种变化：最新未终局 run 停在带探针的外部等待上，且探针现在就绪。探针取法与 supervisor 同一个提取。
+  const legacyLimitRecheck = canRecheckLegacyBacktrackLimit({ projectRoot: input.projectRoot, feature: input.feature, runId: latest.runId, events: latest.events });
+  const waiting = isStructurallyTerminal(latest, input.projectRoot) ? null : externalWaitingProbe(latest.events);
+  if (waiting) {
+    const reportDir = path.relative(input.projectRoot, latest.runDir).replace(/\\/g, '/');
+    let ready = false;
+    try {
+      /* eslint-disable-next-line @typescript-eslint/no-require-imports */
+      const probe = input.runProbe ?? ((dir: string, name: string, phase?: string) => (require('./condition-wait') as typeof import('./condition-wait')).runConditionProbe(input.projectRoot, dir, name, phase));
+      ready = probe(reportDir, waiting.probe, waiting.phase).ready === true;
+    } catch { ready = false; /* 探针自身失败仍是未就绪，不伪造条件解除。 */ }
+    if (ready) changes.push('external_condition_ready');
+  }
+
+  const successor = (change: ContinuationChange): RunContinuationDecision => {
+    const holder = scopeHolder();
+    // 全量回归裁定（甲）：合同来源只能落到最新的未终局 run、而它从未正式开始过（没有任何执行证据可继承）时，
+    // 需求不同多半是重新准备——按新开处理，出生范围由当前输入重新解析。持有范围转交的 run 仍作来源（出生段不许绕开转交）；
+    // 只有型号变化时照旧起后继（需求没变，来源冻结的请求仍是本次请求）。
+    if (!holder && !lastCompleted && !latest.started && changes.includes('requirement_increment')) {
+      return { kind: 'fresh', explicit: false, reason: `最新的未终局 run ${latest.runId} 从未正式开始、没有可继承的执行证据；本次需求不同，按新开处理` };
+    }
+    const source = holder ?? lastCompleted?.runId ?? latest.runId;
+    const targets = [source, ...unfinished.map(run => run.runId).filter(id => id !== source)];
+    return {
+      kind: 'successor', explicit: false, source, targets, change,
+      reason: `最新的未终局 run ${latest.runId}（${latest.status || '无 run_end'}${latest.haltReason ? `/${latest.haltReason}` : ''}）；变化=${change}；合同来源=${source}${holder ? '（当前持有范围转交）' : lastCompleted ? '（上一次完成）' : '（最新的未终局 run）'}`,
+    };
+  };
+  const hold = (reason: string, missing: string): RunContinuationDecision => ({
+    kind: 'hold', explicit: false, runId: latest.runId, haltReason: latest.haltReason, reason,
+    guidance: [
+      `本次请求没有带来任何变化，框架保持停止（不新建 run、不写事件）：run ${latest.runId} 停在 ${latest.haltReason || latest.status || '未知原因'}。`,
+      ...(lastStopGuidance(latest) ? [`原停止说明：${lastStopGuidance(latest)}`] : []),
+      missing,
+    ].join('\n'),
+  });
+
+
+  if (!legacyLimitRecheck && isStructurallyTerminal(latest, input.projectRoot)) {
+
+    if (changes.length) return successor(changes[0]);
+    return hold('最新的未终局 run 是结构终局且没有任何变化',
+      '补上缺的输入后重新发起同一请求即可继续：新的需求内容、相关修复或显式改换的型号；原真实授权与明示截止继续有效。');
+  }
+  const identityChange = changes.find(change => change === 'model_changed' || change === 'requirement_increment');
+  if (identityChange) return successor(identityChange);
+  if (stoppedCuBindingGap) return successor('related_repair_changed');
+  // plan 9c3d7e1a §5.3：外部条件已就绪——原 run 继续还是起后继，由 staleFrozenBindings 这一处判断。
+  if (changes.includes('external_condition_ready')) {
+    let stale: string[];
+    try { stale = staleFrozenBindings(input.projectRoot, input.feature, latest.runId, waiting?.phase); } catch (error) { stale = [`范围不可读：${(error as Error).message}`]; }
+    if (stale.length) {
+      const decided = successor('external_condition_ready');
+      return { ...decided, reason: `${decided.reason}；停机所挂探针已就绪，但 run 冻结的输入绑定已失效、同一 run 无法重签（${stale.join('；')}）` };
+    }
+  }
+  return {
+    kind: 'rejoin', explicit: false, runId: latest.runId, started: latest.started,
+    reason: `最新的未终局 run ${latest.runId} 不是结构终局${changes.length ? `（变化=${changes.join(',')}）` : ''}：${latest.started ? '恢复' : '启动即失败，附着'}，条件由原来的检查判断`,
+  };
+}
+
+function requiresRunBase(projectRoot: string, manifest: GoalRunManifest, chain: readonly string[], frameworkRoot?: string): boolean {
+  if (chain.some(phase => phase === 'coding' || phase === 'ut')) return true;
+  if (isInitialDesignManifest(manifest) || !manifest.execution_scope) return false;
+  const construction = manifest.execution_scope.obligations.filter(obligation => obligation.applicability !== 'not_applicable'
+    && (obligation.kind === 'implementation' || obligation.kind === 'unit-evidence'));
+  if (!construction.length) return false;
+  const { inferRepoLayout } = require('../../repo-layout') as typeof import('../../repo-layout');
+  const root = frameworkRoot ?? inferRepoLayout(projectRoot).frameworkRoot;
+  const { loadFrameworkConfig } = require('../../config') as typeof import('../../config');
+  const config = loadFrameworkConfig(projectRoot);
+  const { loadResolvedProfile } = require('../../profile-loader') as typeof import('../../profile-loader');
+  const profile = loadResolvedProfile(projectRoot, config, root);
+  const { readRepairResponsibilityContracts, workUnitMayWritePath } = require('./repair-responsibility') as typeof import('./repair-responsibility');
+  const boundary = readRepairResponsibilityContracts({ projectRoot, frameworkRoot: root, feature: manifest.feature,
+    originalRequirement: manifest.requirement, executionScope: manifest.execution_scope,
+    phaseOrder: manifest.execution_scope.obligations.filter(obligation => obligation.applicability !== 'not_applicable').map(obligation => obligation.owner_phase),
+    track: 'full', profileDir: profile.profileDir, productLayerDirs: config.architecture.outer_layers.map(layer => layer.id), executionRole: 'author' });
+  return boundary.domains.some(domain => domain.kind === 'source' && construction.some(obligation => obligation.owner_phase === domain.owner)
+    && !boundary.unresolvedSourcePhases.includes(domain.owner) && workUnitMayWritePath(boundary, domain.path));
 }
 
 export function validateExactSha(value: string | undefined, label: string): string {
@@ -587,12 +1039,18 @@ export function validateRebaselineRequest(input: {
 
 export function createGoalRun(options: {
   projectRoot: string;
-  manifest: GoalManifest;
+  frameworkRoot?: string;
+  manifest: GoalRunManifest;
   chain: readonly string[];
   rebaselineFromRunId?: string;
   /** Tests only: deterministic HEAD resolver. */
   resolveHead?: () => string;
   forceFresh?: boolean;
+  /**
+   * plan 4e6fb3b6 §7.3：入口已按接续决策选好了路（新开 / 起后继）时传入，这里消费决策、不再各自拒绝。
+   * 不传（直接调用方）时仍走下方的接续检查。
+   */
+  continuation?: RunContinuationDecision;
 }): GoalRunCreationResult {
   const manifestPath = path.join(options.projectRoot, options.manifest.report_dir, 'manifest.json');
   const eventsPath = path.join(options.projectRoot, options.manifest.report_dir, 'events.jsonl');
@@ -603,19 +1061,25 @@ export function createGoalRun(options: {
     throw new Error(`[goal-run-creation] fresh run events 已存在：${eventsPath}`);
   }
 
-  const continuation = evaluateFreshRunContinuation({
-    projectRoot: options.projectRoot,
-    manifest: options.manifest,
-    forceFresh: options.forceFresh,
-  });
+  const decided = options.continuation && !options.continuation.explicit
+    && (options.continuation.kind === 'fresh' || options.continuation.kind === 'successor');
+  const continuation = decided
+    ? { allowed: true, overrideUsed: false, reason: `接续决策：${options.continuation!.reason}` } as FreshRunContinuationDecision
+    : evaluateFreshRunContinuation({
+        projectRoot: options.projectRoot,
+        manifest: options.manifest,
+        forceFresh: options.forceFresh,
+      });
   if (!continuation.allowed) throw new Error(`[goal-run-creation] fresh run refused: ${continuation.reason}`);
 
-  const phaseChain = normalizeGoalPhaseChain(options.chain, 'resolved phase chain');
+  const initialDesign = isInitialDesignManifest(options.manifest);
+  if (initialDesign && options.chain.length) throw new Error('[goal-run-creation] initial design cannot contain a construction chain');
+  const phaseChain = initialDesign ? [] : normalizeGoalPhaseChain(options.chain, 'resolved phase chain');
   if (options.manifest.execution_scope && JSON.stringify(validateExecutionScope(options.manifest.execution_scope).phase_chain) !== JSON.stringify(phaseChain)) throw new Error('[goal-run-creation] scope/chain mismatch');
   if (options.manifest.execution_scope && (options.manifest.start_phase !== phaseChain[0] || options.manifest.end_phase !== phaseChain.at(-1) || JSON.stringify(options.manifest.chain_override) !== JSON.stringify(phaseChain))) throw new Error('[goal-run-creation] scope start/end/chain_override mismatch');
-  options.manifest.phase_chain = phaseChain;
+  if (!initialDesign) options.manifest.phase_chain = phaseChain;
 
-  if (chainRequiresRunBase(phaseChain)) {
+  if (requiresRunBase(options.projectRoot, options.manifest, phaseChain, options.frameworkRoot)) {
     if (options.manifest.successor_of) {
       if (!options.manifest.run_base_sha) {
         throw new Error(
@@ -689,7 +1153,7 @@ export function resolveActualGoalPhaseChainAtBirth(input: {
   );
 }
 
-function validateRunCreatedEvent(event: GoalRunEvent, manifest: GoalManifest): string | null {
+function validateRunCreatedEvent(event: GoalRunEvent, manifest: GoalRunManifest): string | null {
   const raw = event as unknown as Partial<RunCreatedEvent>;
   if (raw.schema_version !== '1.0' || raw.run_id !== manifest.run_id || raw.event_index !== 0) {
     return 'run_created 基本身份不匹配';
@@ -708,17 +1172,19 @@ function validateRunCreatedEvent(event: GoalRunEvent, manifest: GoalManifest): s
   let eventPhaseChain: string[];
   let manifestPhaseChain: string[];
   try {
-    eventPhaseChain = normalizeGoalPhaseChain(raw.phase_chain, 'run_created.phase_chain');
-    manifestPhaseChain = normalizeGoalPhaseChain(manifest.phase_chain, 'manifest.phase_chain');
+    eventPhaseChain = isInitialDesignManifest(manifest) && Array.isArray(raw.phase_chain) && !raw.phase_chain.length ? [] : normalizeGoalPhaseChain(raw.phase_chain, 'run_created.phase_chain');
+    manifestPhaseChain = isInitialDesignManifest(manifest) ? [] : normalizeGoalPhaseChain(manifest.phase_chain, 'manifest.phase_chain');
   } catch (error) {
     return (error as Error).message;
   }
   if (JSON.stringify(eventPhaseChain) !== JSON.stringify(manifestPhaseChain)) {
     return 'manifest.phase_chain 与 run_created.phase_chain 不匹配';
   }
-  if (fields.phase_chain !== manifestIdentityFieldDigest(manifestPhaseChain)) {
+  if (!isInitialDesignManifest(manifest) && fields.phase_chain !== manifestIdentityFieldDigest(manifestPhaseChain)) {
     return 'run_created.manifest_identity_fields.phase_chain 不匹配';
   }
+  if (isInitialDesignManifest(manifest) && (fields.initial_design !== manifestIdentityFieldDigest(manifest.initial_design) || fields.phase_chain !== undefined)) return 'initial_design 与出生摘要不匹配';
+  if (fields.delivery_origin !== computeManifestIdentityFields(manifest).delivery_origin) return 'delivery_origin 与出生摘要不匹配';
   const withoutHash = {
     type: 'run_created' as const,
     schema_version: '1.0' as const,
@@ -752,7 +1218,7 @@ function validateRunCreatedEvent(event: GoalRunEvent, manifest: GoalManifest): s
 
 export function inspectGoalRunCreation(
   projectRoot: string,
-  manifest: GoalManifest,
+  manifest: GoalRunManifest,
 ): GoalRunCreationInspection {
   const manifestPath = path.join(projectRoot, manifest.report_dir, 'manifest.json');
   const eventsPath = path.join(projectRoot, manifest.report_dir, 'events.jsonl');
@@ -762,13 +1228,13 @@ export function inspectGoalRunCreation(
 export function inspectGoalRunCreationFiles(
   manifestPath: string,
   eventsPath: string,
-  knownManifest?: GoalManifest,
+  knownManifest?: GoalRunManifest,
 ): GoalRunCreationInspection {
   if (!fs.existsSync(manifestPath)) return { state: 'absent' };
   let manifest = knownManifest;
   if (!manifest) {
     try {
-      manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as GoalManifest;
+      manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as GoalRunManifest;
     } catch (error) {
       return { state: 'creation_incomplete', reason: `manifest 无法解析：${(error as Error).message}` };
     }
@@ -794,7 +1260,7 @@ export function inspectGoalRunCreationFiles(
 
 export function assertGoalRunAttachable(
   projectRoot: string,
-  manifest: GoalManifest,
+  manifest: GoalRunManifest,
 ): Extract<GoalRunCreationInspection, { state: 'complete' | 'legacy' }> {
   const inspection = inspectGoalRunCreation(projectRoot, manifest);
   if (inspection.state === 'creation_incomplete') {

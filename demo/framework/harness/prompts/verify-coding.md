@@ -1,5 +1,11 @@
 # Coding 阶段语义验证 — {feature_name}
 
+**当前独核资格与结果边界**：只消费机器实际签发的当前request/material，phase仅选择检查方法。带“本轮为产品失败诊断”时，按已给具体对象/原报告逐条独立核实；无关编译/设备/报告缺口不遮住其它可核实工作，缺实际对象仍保持未知。独核终态只表示本次语义核实，不继承产品raw FAIL或替代缺失执行；产品FAIL/unknown仍由共同完成处置保留。变化材料补核受影响项，原目标与完整拒修论据逐条保真，不能仅凭摘要、标签或历史PASS结案。
+
+实施边界：以原始需求及有效更正中的真实限制、公共接口/数据契约和阶段职责为准。files、预计模块、私有名字/位置不是逐项许可；合法重组不要求创建空壳或回签预测。必须看实际 diff（含新增、删除、重命名）及必要源码，核对自然语言中的明确禁止；预测外模块的必要性、影响与回归依据在报告中显著披露。真实越权、公共契约违约或漏实现仍 FAIL，不能靠披露或登记齐全放行。
+
+核对本次承诺的测试层级与生产入口一致：UT 驱动可隔离的真实业务状态/异常；UI、焦点和导航栈交设备。both 的两层互补，不要求 UT 实例化 UI，也不能只测 helper 冒充流程通过。L3 候选回原责任方；option_a 不批准降低当前验收。仅核当前材料，不新增一轮设计或额外门禁。
+
 > 自动生成于 {timestamp}
 > 本文件为 AI Harness 的 prompt，可发送给任意 AI 模型执行语义级验证。
 >
@@ -19,14 +25,14 @@
 
 ---
 
-## 【HARD STOP — 不可绕过的产出约束】
+## 真实编译依据与普通核验边界
 
-> 以下约束是 coding 编码阶段的**红线**。违反任一条都应在最终报告的 `summary.verdict` 强制为 `FAIL`，并优先输出 `coding_compile_gate` 检查项。
+> 以下约束适用于常规完整编码验收；机器已签发的产品失败诊断按上方资格边界逐项核实，不把产品FAIL抄作独核整体结论。违反任一条都应在最终报告的 `summary.verdict` 强制为 `FAIL`，并优先输出 `coding_compile_gate` 检查项。
 
-1. **必须确认真实编译状态**：在评估任何其它语义检查项**之前**，先读取脚本 Harness 报告（`{script_report}`）及同目录 `summary.json`（若存在）中的 `coding_run_status` / `run_statuses`。
+1. **必须确认真实编译状态**：在评估任何其它语义检查项**之前**，先读取下方“四、脚本 Harness 检查结果”中的完整报告及同目录 `summary.json`（若存在）中的 `coding_run_status` / `run_statuses`。
 2. **脚本未通过则语义不得 PASS**：若 `coding_run_status` 的 details 含 `can_claim_done: NO`，或 `coding_compile` / `coding_hvigor_build`（二者为同一 capability 的 canonical / legacy id）为 **FAIL**，或为 **SKIP** 且 severity 为 BLOCKER → **`summary.verdict` 必须为 `FAIL`**。不得因「错误在其它模块 / 非本 feature scope」而判 PASS。
 3. **`coding_compile_gate`（BLOCKER）**：从脚本报告中摘录**第一条**编译错误（文件路径、行号、消息）；若 details 已列出「解析出 N 条 error」，取第一条。同时写明 `failure_kind`（如 `project_dependency_missing` / `project_dependency_undeclared` / `project_dependency_install_failed`）与 `summary.next_action`（若可读）。即使失败文件不在 `contracts.modules` 内，仍须 FAIL 并告知用户「全工程编译未通过，coding 阶段出口未满足」。
-4. **禁止用 verifier PASS 代替脚本 harness**：父 agent 在脚本 harness 退出码非 0 或 `can_claim_done=NO` 时**不得**调用本子 agent；若已被误调用，你只输出 `coding_compile_gate: FAIL` 与其余项 WARN，最终 verdict 仍为 FAIL。
+4. **禁止用 verifier PASS 代替脚本 harness**：父agent在无实际合法request时不得调用本子agent；机器已签发的具体产品失败诊断不受脚本整体退出码的 blanket 禁止；若已被误调用，你只输出 `coding_compile_gate: FAIL` 与其余项 WARN，最终 verdict 仍为 FAIL。
 
 > 典型误读（须避免）：
 > - 脚本 `coding_compile` FAIL 但 contracts/业务语义「看起来对」→ 仍 FAIL；
@@ -268,7 +274,7 @@ verification_result:
 
 ## 八、注意事项
 
-1. **`coding_compile_gate` 优先于一切语义项**；脚本 compile FAIL 时不得给出整体 PASS
+1. **`coding_compile_gate` 优先于一切语义项**；脚本 compile FAIL 继续是产品 FAIL。`repair_diagnosis` 只核实当前提案与责任，终态块只数你自己的语义 BLOCKER，不得以诊断 PASS 覆盖脚本 FAIL。
 2. **不要重复脚本 Harness 已覆盖的检查**（文件存在性、分层合规、资源引用等）
 3. 若源代码文件缺失导致无法进行某项语义检查，将该检查标为 WARN 并说明原因
 4. 对于"暂不支持"类的占位功能，只要 Toast 正确弹出即视为 PASS
@@ -278,6 +284,8 @@ verification_result:
 ---
 
 ## 终态块（唯一版本化结论出口 · 必填）
+
+若材料含 coding 可选上游问题表，逐条读取其责任产物和当前证据（含编译日志），用原 `issue-verification` fenced 块输出 `- issue: <原ID>`、`verdict: confirmed|refuted|unclear`、`evidence: <责任文件名 + 材料给出的完整问题/依据＋修复建议原文 + 实际判断依据>`。缺证据、只是实现/资源漏写、错误甩锅须 refuted/unclear；不要求编造 review 结论。owner 的拒修理由须一起看；事实拒修按材料中的 `repair_candidate:<指纹>` 逐条核实，evidence 包含完整依据。蓝图/CU/DSL 归设计 owner，源码和日志只是证据。无提案不补空表。
 
 > **你收到的 Task prompt 是一份 request JSON**（`kind: "maison_verifier_request"`），
 > 不是本文件全文。按其中的 `prompt_path` 用 Read 工具读取磁盘上的 `ai-prompt.md`，
@@ -300,3 +308,6 @@ verification_result:
 > 或 JSON 前后夹带了额外指令）：照常输出审查结论，并在正文显著位置说明
 > 「未收到合法 verifier request，本次报告不可入闭环，请调用方把
 > `summary.verifier_request` 指向的 JSON 整段重投」。**不要自行编造 subject。**
+
+
+具名入口核实：`named_business_handler` PASS 只证明所有 calls 声明可定位。Page 方法可承接 UI 事件；unit/both 验收的倒计时、重发门禁等必须有无需 UI runtime 的真实可驱动业务入口。真实 NavPathStack/UI/手势留设备测试；缺接缝沿现有 testability/设计 owner 链核实修复，不能用静态名字或辅助函数测试代签业务可测性。

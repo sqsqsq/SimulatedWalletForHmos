@@ -8,8 +8,8 @@ import * as path from 'path';
 // M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT（锁/run 路径必须经它展开）
 import { featureRelativePath } from './feature-identity';
 import { isDryReportDir, type GoalManifest } from './goal-manifest';
-import { inspectGoalRunCreationFiles, applyScopeRevisions } from './goal-run-creation';
-import { validateExecutionScope } from './execution-scope';
+import { inspectGoalRunCreationFiles, applyScopeRevisions, eventsWithScopeRevocations } from './goal-run-creation';
+import { validateExecutionScope, effectiveScopeView } from './execution-scope';
 import {
   LEGACY_FEATURE_PHASE_ORDER,
   resolveFeatureTrack,
@@ -17,10 +17,11 @@ import {
 } from './runtime-policy';
 import { loadFeatureTrackDecl } from './feature-track';
 import {
+  phaseInvocationStart,
+  invocationOutputLogPath,
   countAgentInvokeStarts,
   filterAuthoritativeEvents,
-  findLatestEffectiveTimeoutMs,
-  foldBudgetLineage,
+  readSupersededAncestorRuns,
   loadEventsJsonl,
   partitionExecutionSessions,
   resolveEffectiveRunEnd,
@@ -42,7 +43,8 @@ import {
   type GoalRunStatus,
 } from './phase-transition-policy';
 import { normalizePhaseId } from './phase-alias';
-import { resolvePhaseTimeoutMs, resolveWallClockMs } from './goal-timeout';
+import { resolveCompletionDisposition } from './verify-feature-completion';
+import { renderCurrentDisposition, type CurrentDisposition } from './check-disposition';
 import type { WorkflowSpec } from '../../workflow-loader';
 import { reduceRunState, type RecoveryDiagnostic } from './run-state-reducer';
 import { findUnclosedGuardianBounds } from './goal-containment-reconcile';
@@ -161,7 +163,11 @@ export interface GoalProgressSnapshot {
       lingering_pipe: boolean;
     };
   };
-  budget: {
+  invocation?: { label: string | null; invoke_id: string | null; started_at: string | null; ended_at: string | null };
+  current_disposition?: CurrentDisposition;
+  activity?: { calls: number; active_ms: number };
+  /** Historical limits are read-only; new runs do not produce this field. */
+  budget?: {
     turns_used: number;
     turns_limit: number;
     wall_elapsed_ms: number;
@@ -204,6 +210,9 @@ export interface GoalProgressSnapshot {
 }
 
 export interface ProjectProgressInput {
+  /** undefined refreshes acceptance; null projects progress before any acceptance observation. */
+  currentDisposition?: CurrentDisposition | null;
+  frameworkRoot?: string;
   projectRoot: string;
   manifest: GoalManifest;
   events: GoalRunEvent[];
@@ -232,6 +241,52 @@ interface PhaseSpan {
   ended: boolean;
   deferred: boolean;
   halted: boolean;
+  invocation?: InvocationView;
+}
+
+interface InvocationView {
+  start: GoalRunEvent;
+  phase: string | undefined;
+  end?: GoalRunEvent;
+  handoff?: GoalRunEvent['handoff_request'];
+}
+
+/** Read-only pairing; anonymous historical ends still close the most recent start. */
+function buildInvocationViews(events: GoalRunEvent[], chain?: FeaturePhase[]): InvocationView[] {
+  const views: InvocationView[] = [];
+  let open: InvocationView | null = null;
+  const reset = (phases?: string[]): void => {
+    for (let i = views.length - 1; i >= 0; i--) {
+      if (!phases || phases.includes(views[i].phase ?? '')) views.splice(i, 1);
+    }
+    if (open && !views.includes(open)) open = null;
+  };
+  for (let idx = 0; idx < events.length; idx++) {
+    const event = events[idx];
+    if (event.type === 'resume') {
+      reset();
+    } else if (event.type === 'phase_backtrack_requested' || event.type === 'phase_invalidated') {
+      const backtrack = event as { from_phase?: string; invalidated_phases?: string[] };
+      reset([...(backtrack.invalidated_phases ?? []), backtrack.from_phase ?? event.phase ?? '']);
+    } else if (event.type === 'agent_invoke_start') {
+      const owner = (event as { chain_phase?: string }).chain_phase;
+      const view: InvocationView = { start: event,
+        phase: owner && (!chain || chain.includes(owner)) ? owner : event.phase };
+      views.push(view);
+      open = view;
+    } else if (event.type === 'phase_start' && event.handoff_request) {
+      if (open && event.invoke_id && open.start.invoke_id === event.invoke_id) open.handoff = event.handoff_request;
+    } else if (event.type === 'agent_invoke_end' || event.type === 'agent_invoke_recovered') {
+      if (open && !(open.start.invoke_id && event.invoke_id && open.start.invoke_id !== event.invoke_id)) {
+        open.end = event;
+        open = null;
+      }
+    } else if (event.type === 'phase_verdict' && event.recovered === true) {
+      if (open) open.end = event;
+      open = null;
+    }
+  }
+  return views;
 }
 
 const TERMINAL_RUN_STATUSES = new Set<ProgressRunStatus>([
@@ -274,7 +329,12 @@ function countPhaseAttempts(events: GoalRunEvent[], phase: FeaturePhase): number
   return Math.max(n, 1);
 }
 
-function buildPhaseSpans(events: GoalRunEvent[], chain: FeaturePhase[]): PhaseSpan[] {
+function buildPhaseSpans(events: GoalRunEvent[], chain: FeaturePhase[], invocations: InvocationView[]): PhaseSpan[] {
+  const invocationByEvent = new Map<GoalRunEvent, InvocationView>();
+  for (const view of invocations) {
+    invocationByEvent.set(view.start, view);
+    if (view.end) invocationByEvent.set(view.end, view);
+  }
   const spans: PhaseSpan[] = chain.map((phase) => ({
     phase,
     attempt: 0,
@@ -314,7 +374,7 @@ function buildPhaseSpans(events: GoalRunEvent[], chain: FeaturePhase[]): PhaseSp
     }
     // plan c4e7a9b2 §3.5：回退失效的阶段与来源阶段重置（同 resume）——否则 `ended` 锁存让重跑的
     // phase_start 被挡、当前阶段停在来源阶段。
-    if (e.type === 'phase_backtrack_requested') {
+    if (e.type === 'phase_backtrack_requested' || e.type === 'phase_invalidated') {
       const b = e as { from_phase?: string; invalidated_phases?: string[] };
       for (const p of [...(b.invalidated_phases ?? []), b.from_phase ?? e.phase]) {
         const j = spanByPhase.get(p as FeaturePhase);
@@ -323,13 +383,16 @@ function buildPhaseSpans(events: GoalRunEvent[], chain: FeaturePhase[]): PhaseSp
       continue;
     }
 
-    const phase = e.phase as FeaturePhase | undefined;
+    const invocation = invocationByEvent.get(e);
+    const phase = (invocation?.phase ?? e.phase) as FeaturePhase | undefined;
     if (!phase || !spanByPhase.has(phase)) continue;
     const idx = spanByPhase.get(phase)!;
     const span = spans[idx];
 
-    if (e.type === 'phase_start') {
-      span.started_at = e.ts ?? span.started_at;
+    if (e.type === 'phase_start' && e.driver !== 'session') {
+      const original = phaseInvocationStart(events.slice(0, i + 1), phase);
+      const handoff = original?.invoke_id && events.some(event => event.type === 'phase_start' && event.handoff_request && event.invoke_id === original.invoke_id);
+      span.started_at = (handoff ? original?.ts : e.ts) ?? span.started_at;
       span.attempt = (e as { attempt?: number }).attempt ?? countPhaseAttempts(events, phase);
       if (!span.ended) span.status = 'PROMPT_READY';
     }
@@ -337,13 +400,16 @@ function buildPhaseSpans(events: GoalRunEvent[], chain: FeaturePhase[]): PhaseSp
       span.status = 'PROMPT_READY';
       span.substep = 'prompt';
     }
-    if (e.type === 'agent_invoke_start' && !span.ended) {
-      span.attempt = countPhaseAttempts(events.slice(0, i + 1), phase);
-      span.started_at = span.started_at ?? e.ts ?? null;
+    if (e.type === 'agent_invoke_start' && invocation && !span.ended && (e.phase === phase || span.started_at !== null)) {
+      if (e.phase === phase) {
+        span.attempt = countPhaseAttempts(events.slice(0, i + 1), phase);
+        span.started_at = invocation.handoff ? e.ts ?? span.started_at : span.started_at ?? e.ts ?? null;
+      }
+      span.invocation = invocation;
       span.status = 'AGENT_RUNNING';
       span.substep = 'agent_invoke';
     }
-    if (e.type === 'agent_invoke_end' && !span.ended) {
+    if (e.type === 'agent_invoke_end' && invocation && span.invocation === invocation && !span.ended) {
       span.status = 'AGENT_DONE';
       span.substep = 'agent_invoke';
     }
@@ -439,48 +505,21 @@ function findCurrentSpan(spans: PhaseSpan[]): PhaseSpan | null {
   return spans.length > 0 ? spans[spans.length - 1] : null;
 }
 
-function computeEstimatedPercent(
-  spans: PhaseSpan[],
-  current: PhaseSpan | null,
-): { percent: number | null; kind: PercentKind } {
-  const total = spans.length;
-  if (total === 0) return { percent: null, kind: 'indeterminate' };
-
-  let completed = 0;
-  for (const s of spans) {
-    if (s.ended && (s.status === 'PASSED' || s.status === 'DEFERRED')) completed++;
-  }
-
-  if (!current || current.ended) {
-    const p = Math.round((completed / total) * 100);
-    return { percent: p, kind: 'estimated' };
-  }
-
-  // Retry regresses substep weights — downgrade to indeterminate per plan.
-  if (current.status === 'RETRYING' || current.attempt > 1) {
-    return { percent: null, kind: 'indeterminate' };
-  }
-
-  const base = completed / total;
-  const weights: Record<string, number> = {
-    PROMPT_READY: 0.05,
-    AGENT_RUNNING: 0.35,
-    AGENT_DONE: 0.45,
-    HARNESS_RUNNING: 0.75,
-  };
-  const w = weights[current.status] ?? 0.1;
-  const p = Math.round((base + w / total) * 100);
-  return { percent: Math.min(p, 99), kind: 'estimated' };
-}
-
 function getAgentOutputStat(
   projectRoot: string,
   reportDir: string,
   phase: FeaturePhase | null,
+  invocation?: InvocationView | null,
 ): { mtimeMs: number | null; bytes: number; rel: string | null } {
-  if (!phase) return { mtimeMs: null, bytes: 0, rel: null };
-  const abs = path.join(projectRoot, reportDir, 'phases', phase, 'agent-output.log');
-  if (!fs.existsSync(abs)) return { mtimeMs: null, bytes: 0, rel: relPath(projectRoot, abs) };
+  if (invocation?.start.command === 'phase_execute_request' || invocation?.handoff || (!invocation && !phase)) {
+    return { mtimeMs: null, bytes: 0, rel: null };
+  }
+  const label = invocation?.start.phase ?? phase;
+  if (!label) return { mtimeMs: null, bytes: 0, rel: null };
+  const outOfChain = invocation && (invocation.phase !== label || typeof (invocation.start as { chain_phase?: unknown }).chain_phase === 'string');
+  if (outOfChain && !invocation.start.invoke_id) return { mtimeMs: null, bytes: 0, rel: null };
+  const abs = invocationOutputLogPath(path.resolve(projectRoot, reportDir), label, invocation?.start.invoke_id);
+  if (!fs.existsSync(abs)) return { mtimeMs: null, bytes: 0, rel: null };
   const st = fs.statSync(abs);
   return { mtimeMs: st.mtimeMs, bytes: st.size, rel: relPath(projectRoot, abs) };
 }
@@ -491,18 +530,19 @@ function resolvePhaseEvidence(
   phase: FeaturePhase,
   span: PhaseSpan,
 ): string | null {
-  const agentLog = path.join(projectRoot, reportDir, 'phases', phase, 'agent-output.log');
+  const agentLog = getAgentOutputStat(projectRoot, reportDir, phase, span.invocation).rel;
   const harnessSummary = path.join(projectRoot, reportDir, 'phases', phase, 'harness', 'summary.json');
   if (
     span.substep === 'agent_invoke' ||
     span.status === 'AGENT_RUNNING' ||
     span.status === 'AGENT_DONE'
   ) {
-    if (fs.existsSync(agentLog)) return relPath(projectRoot, agentLog);
+    const reference = span.invocation?.end?.handoff_report ?? span.invocation?.handoff;
+    if (reference) return relPath(projectRoot, path.join(projectRoot, reportDir, reference.path));
+    return agentLog;
   }
   if (fs.existsSync(harnessSummary)) return relPath(projectRoot, harnessSummary);
-  if (fs.existsSync(agentLog)) return relPath(projectRoot, agentLog);
-  return null;
+  return agentLog;
 }
 
 function buildPhasesSummary(
@@ -529,25 +569,10 @@ function buildPhasesSummary(
 
 function findUnclosedInvoke(
   events: GoalRunEvent[],
-): { event: GoalRunEvent; idx: number } | null {
-  let open: { event: GoalRunEvent; idx: number } | null = null;
-  for (let i = 0; i < events.length; i++) {
-    const e = events[i];
-    if (e.type === 'agent_invoke_start') {
-      open = { event: e, idx: i };
-    }
-    if (e.type === 'agent_invoke_end' || e.type === 'agent_invoke_recovered') {
-      open = null;
-    }
-    if (e.type === 'phase_verdict' && e.recovered === true) {
-      open = null;
-    }
-    // New session supersedes dangling invoke from a prior crash/halt.
-    if (e.type === 'resume') {
-      open = null;
-    }
-  }
-  return open;
+): InvocationView | null {
+  const views = buildInvocationViews(events);
+  const latest = views[views.length - 1];
+  return latest && !latest.end ? latest : null;
 }
 
 /**
@@ -573,13 +598,6 @@ function findUnclosedHarness(
   return open;
 }
 
-function lastEventOfTypes(events: GoalRunEvent[], types: Set<string>): GoalRunEvent | null {
-  for (let i = events.length - 1; i >= 0; i--) {
-    if (events[i].type && types.has(events[i].type!)) return events[i];
-  }
-  return null;
-}
-
 function resolveLockHeartbeatSignal(
   record: LockRecord | null | undefined,
   nowMs: number,
@@ -601,6 +619,7 @@ export interface LivenessInput {
   nowMs: number;
   liveProbe: boolean;
   lastLingeringPipe: boolean;
+  invocation?: InvocationView | null;
 }
 
 /**
@@ -689,26 +708,26 @@ export function computeLiveness(input: LivenessInput): GoalProgressSnapshot['liv
     }
   }
 
-  const unclosed = findUnclosedInvoke(events);
+  const unclosed = input.invocation === undefined ? findUnclosedInvoke(events)
+    : input.invocation && !input.invocation.end ? input.invocation : null;
   let hardStall = false;
-  if (unclosed && unclosed.event.ts) {
-    const startMs = new Date(unclosed.event.ts).getTime();
+  if (unclosed && unclosed.start.ts) {
+    const startMs = new Date(unclosed.start.ts).getTime();
     if (!Number.isNaN(startMs) && nowMs - startMs > input.phaseTimeoutMs) {
-      const lastEnd = lastEventOfTypes(
-        events.slice(unclosed.idx),
-        new Set(['agent_invoke_end', 'agent_invoke_recovered']),
-      );
-      const recoveredVerdict = events
-        .slice(unclosed.idx)
-        .some((e) => e.type === 'phase_verdict' && e.recovered === true);
-      if (!lastEnd && !recoveredVerdict) hardStall = true;
+      hardStall = true;
     }
   }
 
   // timed_out / silent_killed on closed invoke — before phase_verdict, unclosed is null.
+  const closedAuxiliary = input.invocation?.end && input.invocation.start.phase !== input.invocation.phase;
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
     if (e.type !== 'agent_invoke_end') continue;
+    // 活跃辅助调用仍读自身；闭合后恢复所属正式阶段尚未被 verdict 消费的失败信号。
+    if (input.invocation !== undefined && e !== input.invocation?.end
+      && (!closedAuxiliary || e.phase !== input.invocation?.phase)) continue;
+    // plan 9c3d7e1a §5.5：链外设计修复调用（带用途标识）没有阶段 verdict 跟在后面，不按阶段调用判停滞。
+    if (typeof (e as { purpose?: unknown }).purpose === 'string') continue;
     if (!e.timed_out && !e.silent_killed) break;
     const phase = e.phase;
     const verdictAfter = events
@@ -808,7 +827,6 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   const events = partition ? partition.authoritativeEvents : input.events;
   const eventsPath = relPath(projectRoot, path.join(projectRoot, reportDir, 'events.jsonl'));
 
-  // C1：链投影按 feature track（lite 走显式 lite 链）；事件链过滤放宽到 workflow 全部 feature phase
   const progressTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, manifest.feature, manifest.run_id));
   const fallbackChain = manifest.execution_scope?.phase_chain ?? manifest.phase_chain ?? resolveAutoChain(
     workflow,
@@ -818,7 +836,7 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     progressTrack,
   );
   const allowedPhases = [
-    ...new Set([...fallbackChain, ...workflowFeaturePhases(workflow, 'full'), ...workflowFeaturePhases(workflow, 'lite')]),
+    ...new Set([...fallbackChain, ...workflowFeaturePhases(workflow, 'full')]),
   ];
   // D2: the effective scope is the current truth about which phases this run must run — the first
   // `run_start.chain` is the birth projection and must not override it (review M3). Resolved through
@@ -828,7 +846,9 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   let revisedChain: FeaturePhase[] | undefined;
   try {
     if (manifest.execution_scope) {
-      const effective = applyScopeRevisions(validateExecutionScope(manifest.execution_scope), events);
+      const birth = validateExecutionScope(manifest.execution_scope);
+      applyScopeRevisions(birth, events, { projectRoot, feature: manifest.feature, runId: manifest.run_id });
+      const effective = effectiveScopeView({ birth, events, workflow });
       if (effective !== manifest.execution_scope) {
         revisedChain = effective.phase_chain.map(p => normalizePhaseId(p, p)).filter((p): p is FeaturePhase => allowedPhases.includes(p));
       }
@@ -841,16 +861,16 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   const hasRunStart = events.some((e) => e.type === 'run_start');
   const lastRunEnd = resolveEffectiveRunEnd(events);
 
-  const spans = buildPhaseSpans(events, chain);
+  const spanEvents = eventsWithScopeRevocations(manifest.execution_scope, events, {}, { projectRoot, feature: manifest.feature, runId: manifest.run_id });
+  const invocations = buildInvocationViews(spanEvents, chain);
+  const spans = buildPhaseSpans(spanEvents, chain, invocations);
   const currentSpan = findCurrentSpan(spans);
+  const latestInvocation = invocations[invocations.length - 1];
+  const invocation = latestInvocation && !latestInvocation.end ? latestInvocation : currentSpan?.invocation ?? null;
   const currentPhase = currentSpan?.phase ?? null;
   const currentIndex = currentPhase ? chain.indexOf(currentPhase) : 0;
 
-  // 实施 round2 P1：预算轴与 runner T2 同构——turns 只计权威段；wall_elapsed=活跃时间
-  //（Σ 历史段 activeMs + 直播段 now−段首），不再用「首个 run_start→now」日历跨度
-  //（隔夜 resume 面板秒报预算耗尽=4035d4 形态）。dry 视图保留 raw 口径。
-  // e9d4b7a3 t4：与 runner 熔断/heartbeat 同一折叠入口（foldBudgetLineage 沿 supersede
-  // 链收祖先 events）——supersede 链下 progress 显示 lineage 累计（30/30），不再 5/30。
+  // Activity reads actual authoritative sessions and supersede history, without quota-cycle resets.
   let turnsUsed: number;
   let wallElapsed: number;
   if (!partition) {
@@ -858,50 +878,28 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     wallElapsed = nowMs - resolveWallClockStartMs(events);
   } else {
     const featuresDir = input.featuresDir;
-    const fold = foldBudgetLineage({
+    const ancestors = readSupersededAncestorRuns({
       projectRoot,
       featuresDir,
       feature: input.manifest.feature,
       currentEvents: events,
     });
-    const foldPartition = partitionExecutionSessions(fold.budgetFoldEvents);
-    const auth = foldPartition.sessions.filter((s) => s.mode === 'authoritative');
-    const last = auth.length > 0 ? auth[auth.length - 1] : null;
+    const history = ancestors.flatMap(run => run.events).sort((a, b) => String(a.ts ?? '').localeCompare(String(b.ts ?? '')));
+    const foldPartition = partitionExecutionSessions([...history, ...events], { liveTailMs: nowMs });
     turnsUsed = foldPartition.totalTurns;
-    if (!last) {
-      wallElapsed = 0;
-    } else if (!lastRunEnd && Number.isFinite(last.startMs) && last.startMs > 0) {
-      // 直播段（无 run_end）：活跃计时随 now 前进，与 runner 的
-      // elapsed = priorActive + (now − sessionStart) 同构（崩溃段的保守补收只在
-      // 段后出现新段/终局时收敛，面板侧宁多计不漏计）。
-      wallElapsed =
-        auth.slice(0, -1).reduce((a, s) => a + s.activeMs, 0) +
-        Math.max(0, nowMs - last.startMs);
-    } else {
-      wallElapsed = foldPartition.priorActiveMs;
-    }
+    wallElapsed = foldPartition.priorActiveMs;
   }
-  // 与 goal-runner 共用同一 resolver，杜绝"runner 等 90min 但 progress 按 60min 报 STALLED"脑裂。
-  // 同源包括**链**：runtime 在修订后按有效链重算 wall（goal-phase-runtime 的 revise_scope 分支），
-  // 这里不传 chain 就会按出生链报一个更小的上限（review M3）。
-  const wallLimitMs = resolveWallClockMs(manifest, chain);
-  const stallPhase: FeaturePhase = currentPhase ?? chain[0] ?? 'review';
-  // P0-4（plan d9b4f7e2）：timeout 单一事实源——优先读最近 agent_invoke_start 的
-  // effective_timeout_ms（钳制/升档后的真值；runner 升档而 progress 静态解析 manifest
-  // 会把合法运行 attempt 误报 STALLED）；旧日志无该字段时回落 manifest 解析。
-  const phaseTimeoutMs =
-    findLatestEffectiveTimeoutMs(events, currentPhase) ??
-    resolvePhaseTimeoutMs(stallPhase, manifest);
+  // Only a real invocation/tool grant may bound liveness; old manifest quotas never do.
+  const activeHarness = findUnclosedHarness(events)?.event as (GoalRunEvent & { timeout_ms?: number }) | undefined;
+  const grantedTimeout = activeHarness?.effective_timeout_ms ?? activeHarness?.timeout_ms ?? invocation?.start.effective_timeout_ms;
+  const phaseTimeoutMs = typeof grantedTimeout === 'number' && Number.isFinite(grantedTimeout) && grantedTimeout > 0 ? grantedTimeout : Infinity;
+  const currentDisposition = input.currentDisposition === undefined
+    ? resolveCompletionDisposition({ projectRoot, frameworkRoot: input.frameworkRoot,
+      feature: manifest.feature, chain, runId: manifest.run_id, workflow }) : input.currentDisposition;
 
-  const outputStat = getAgentOutputStat(projectRoot, reportDir, currentPhase);
+  const outputStat = getAgentOutputStat(projectRoot, reportDir, currentPhase, invocation);
 
-  let lastLingeringPipe = false;
-  for (let i = events.length - 1; i >= 0; i--) {
-    if (events[i].type === 'agent_invoke_end') {
-      lastLingeringPipe = (events[i] as { lingering_pipe?: boolean }).lingering_pipe === true;
-      break;
-    }
-  }
+  const lastLingeringPipe = (invocation?.end as { lingering_pipe?: boolean } | undefined)?.lingering_pipe === true;
 
   const liveness = computeLiveness({
     events,
@@ -914,11 +912,13 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     nowMs,
     liveProbe: input.liveProbe ?? false,
     lastLingeringPipe,
+    invocation,
   });
 
   // d6 t5⓪-b：裁决轴由单一 reducer 给出（total function——空序列/仅 run_start 亦有值）。
   // 与下面的 liveness 轴各算各的，报告侧同时如实展示两轴。
   const runState = reduceRunState(events as unknown[]);
+
 
   let status: ProgressRunStatus = 'PENDING';
   let statusReason: string | null = null;
@@ -927,6 +927,8 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     status = 'PENDING';
   } else if (lastRunEnd?.status) {
     status = lastRunEnd.status as ProgressRunStatus;
+    const endReason = (lastRunEnd as { reason?: unknown }).reason;
+    statusReason = typeof lastRunEnd.halt_reason === 'string' ? lastRunEnd.halt_reason : typeof endReason === 'string' ? endReason : null;
   } else if (liveness.state === 'ORPHAN_SUSPECTED') {
     status = 'UNKNOWN';
     statusReason = 'feature_lock_orphan_suspected';
@@ -934,8 +936,12 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     status = 'STALLED';
     statusReason = 'hard_stall_threshold';
   } else {
+    const activityUnknown = !input.featureLock && !input.runnerLock
+      && (liveness.seconds_since_activity ?? 0) * 1000 >= SOFT_STALL_MS;
     const hasDeferredUpstream = spans.some((s) => s.deferred);
-    if (hasDeferredUpstream) {
+    if (activityUnknown) {
+      status = 'UNKNOWN'; statusReason = 'soft_quiet_window';
+    } else if (hasDeferredUpstream) {
       status = 'WAITING_EXTERNAL';
       statusReason = 'upstream_deferred';
     } else {
@@ -949,8 +955,14 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     }
   }
   if (!statusReason && runState.recovery) statusReason = runState.recovery.reason;
+  const conditionWait = [...events].reverse().find(e => ['condition_wait_started', 'condition_wait_ready', 'condition_wait_timeout', 'phase_halt', 'run_start', 'run_end'].includes(e.type ?? ''));
+  if (liveness.state !== 'ORPHAN_SUSPECTED' && conditionWait?.type === 'condition_wait_started') {
+    const reason = (conditionWait as { reason?: unknown }).reason;
+    if (typeof reason === 'string') statusReason = reason;
+  }
 
-  const { percent, kind } = computeEstimatedPercent(spans, currentSpan);
+  const percent = currentDisposition?.completionEligible ? 100 : null;
+  const kind: PercentKind = currentDisposition?.completionEligible ? 'estimated' : 'indeterminate';
 
   const lastEvent = events.length > 0 ? events[events.length - 1] : null;
   const recentEvents = events.slice(-5).map((e) => ({
@@ -980,10 +992,10 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
       ? 'await_external_condition'
       : 'await_human_action';
   } else if (lastRunEnd) nextAction = goalReportExists ? 'read_goal_report' : 'inspect_events_or_resume';
-  else if (currentSpan?.substep === 'agent_invoke') nextAction = 'wait_for_agent_invoke_end';
+  else if (invocation && !invocation.end) nextAction = 'wait_for_agent_invoke_end';
   else if (currentSpan?.substep === 'harness') nextAction = 'wait_for_harness_end';
   else if (currentSpan?.status === 'RETRYING') nextAction = 'wait_for_retry';
-  else nextAction = 'wait_for_phase_verdict';
+  else nextAction = currentDisposition?.completionEligible ? 'await_completion_publication' : 'continue_work_unit';
   const progressRel = path.join(reportDir, 'progress.json').replace(/\\/g, '/');
 
   const phaseStartedAt = currentSpan?.started_at ?? null;
@@ -1001,7 +1013,7 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     // 裁决轴（正交于上面的 liveness 轴）——supervisor 按 beacon × run_disposition 决策
     run_disposition: runState.run_disposition,
     ...(runState.run_wait_kind ? { run_wait_kind: runState.run_wait_kind } : {}),
-    ...(runState.recovery ? { recovery: runState.recovery } : {}),
+
     generated_at: new Date(nowMs).toISOString(),
     source: {
       events_path: eventsPath,
@@ -1027,13 +1039,18 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
       recovered: currentSpan?.recovered,
     },
     liveness,
-    budget: {
-      turns_used: turnsUsed,
-      turns_limit: manifest.budget.max_total_turns,
-      wall_elapsed_ms: wallElapsed,
-      wall_limit_ms: wallLimitMs,
-      phase_timeout_ms: phaseTimeoutMs,
-    },
+    ...(invocation ? { invocation: { label: invocation.start.phase ?? null, invoke_id: invocation.start.invoke_id ?? null,
+      started_at: invocation.start.ts ?? null, ended_at: invocation.end?.ts ?? null } } : {}),
+    ...(runState.recovery && currentDisposition && (currentDisposition.completionBlocking.some(problem => problem.id === runState.recovery!.reason)
+      || currentDisposition.completionBlocking.some(problem => problem.phase === '*' && problem.owner === 'framework' && problem.id === 'required_check_conclusion'))
+      ? { recovery: runState.recovery } : {}),
+    ...(currentDisposition ? { current_disposition: currentDisposition } : {}),
+    activity: { calls: turnsUsed, active_ms: wallElapsed },
+    ...(manifest.budget ? { budget: {
+      turns_used: turnsUsed, turns_limit: manifest.budget.max_total_turns,
+      wall_elapsed_ms: wallElapsed, wall_limit_ms: manifest.budget.wall_clock_minutes * 60_000,
+      phase_timeout_ms: typeof grantedTimeout === 'number' ? grantedTimeout : 0,
+    } } : {}),
     artifacts: {
       agent_output_log: outputStat.rel,
       summary_path: null,
@@ -1057,12 +1074,14 @@ export function buildLiveGoalStatusSnapshot(opts: {
   runId: string;
   tailN?: number;
   nowMs?: number;
+  /** A reader following a specific run may supply its already-bound current lock. */
+  featureLock?: LockRecord | null;
 }): GoalProgressSnapshot {
   const eventsPath = path.join(opts.projectRoot, opts.manifest.report_dir, 'events.jsonl');
   const events = loadEventsJsonl(eventsPath);
-  const featureLock = readLockRecord(
+  const featureLock = opts.featureLock === undefined ? readLockRecord(
     resolveFeatureLockPath(opts.projectRoot, opts.featuresDir, opts.feature),
-  );
+  ) : opts.featureLock;
   const runnerLock = readLockRecord(
     resolveRunnerLockPath(opts.projectRoot, opts.featuresDir, opts.feature, opts.runId, opts.manifest.report_dir),
   );
@@ -1154,15 +1173,19 @@ export function formatGoalStatusText(
 ): string {
   const pct =
     snapshot.chain.percent_kind === 'indeterminate'
-      ? `${snapshot.chain.current_index + 1}/${snapshot.chain.total}`
+      ? '未定'
       : `${snapshot.chain.estimated_percent ?? 0}%`;
   const outputStall = formatAgentOutputStall(snapshot.liveness);
   return [
     `Goal ${feature} · run ${runId} · ${snapshot.status}`,
+    ...(snapshot.invocation ? [`Native call: ${snapshot.invocation.label ?? 'unknown'} (${snapshot.invocation.invoke_id ?? 'anonymous'}), ${snapshot.invocation.ended_at ? 'ended' : 'running'}`] : []),
     `Current: ${snapshot.phase.name ?? '—'} / ${snapshot.phase.status} (${snapshot.phase.substep ?? '—'})`,
+    ...(snapshot.status_reason ? [`Reason: ${snapshot.status_reason}`] : []),
     `Liveness: ${snapshot.liveness.state} · progress ${pct}`,
     ...(outputStall ? [outputStall] : []),
-    `Budget: turns ${snapshot.budget.turns_used}/${snapshot.budget.turns_limit}`,
+    `Activity: calls ${snapshot.activity?.calls ?? snapshot.budget?.turns_used ?? 0}, active ${Math.round((snapshot.activity?.active_ms ?? snapshot.budget?.wall_elapsed_ms ?? 0) / 60000)}m`,
+    ...(snapshot.budget ? [`Historical limits (read only): turns ${snapshot.budget.turns_used}/${snapshot.budget.turns_limit}, wall ${Math.round(snapshot.budget.wall_elapsed_ms / 60000)}m/${Math.round(snapshot.budget.wall_limit_ms / 60000)}m`] : []),
+    ...(snapshot.current_disposition ? [`Current completion: ${snapshot.current_disposition.completionEligible ? 'eligible' : 'incomplete'}`, renderCurrentDisposition(snapshot.current_disposition)] : []),
   ].join('\n');
 }
 
@@ -1207,15 +1230,25 @@ export function applyFreshnessDegradation(
 ): GoalProgressSnapshot {
   if (TERMINAL_RUN_STATUSES.has(snapshot.status)) return snapshot;
 
-  const nowMs = opts.nowMs ?? Date.now();
-  const generatedMs = new Date(snapshot.generated_at).getTime();
-  if (Number.isNaN(generatedMs)) return { ...snapshot, status: 'UNKNOWN', status_reason: 'invalid_generated_at' };
+  const degraded = observeProgressFreshness(snapshot.generated_at, opts);
+  if (!degraded) return snapshot;
+  const { liveness, ...status } = degraded;
+  return { ...snapshot, ...status, ...(liveness ? { liveness: { ...snapshot.liveness, state: liveness } } : {}) };
+}
 
-  if (nowMs - generatedMs <= FRESHNESS_STALE_MS) return snapshot;
+/** Shared observation only: the timestamp must come from the runner, never the reader's own refresh. */
+export function observeProgressFreshness(
+  generatedAt: string | null | undefined,
+  opts: { liveProbe: boolean; featureLock?: LockRecord | null; nowMs?: number },
+): { status: 'UNKNOWN' | 'RUNNING'; status_reason: string; liveness?: LivenessState } | null {
+  const nowMs = opts.nowMs ?? Date.now();
+  const generatedMs = generatedAt ? Date.parse(generatedAt) : NaN;
+  if (Number.isNaN(generatedMs)) return { status: 'UNKNOWN', status_reason: 'invalid_generated_at' };
+
+  if (nowMs - generatedMs <= FRESHNESS_STALE_MS) return null;
 
   if (!opts.liveProbe) {
     return {
-      ...snapshot,
       status: 'UNKNOWN',
       status_reason: 'snapshot_stale_no_live_probe',
     };
@@ -1224,7 +1257,6 @@ export function applyFreshnessDegradation(
   const lock = opts.featureLock;
   if (!lock) {
     return {
-      ...snapshot,
       status: 'UNKNOWN',
       status_reason: 'snapshot_stale_no_lock',
     };
@@ -1233,7 +1265,6 @@ export function applyFreshnessDegradation(
   const sameHost = lock.hostname === os.hostname();
   if (!sameHost) {
     return {
-      ...snapshot,
       status: 'UNKNOWN',
       status_reason: 'snapshot_stale_cross_host',
     };
@@ -1242,18 +1273,16 @@ export function applyFreshnessDegradation(
   const alive = isPidAlive(lock.pid);
   if (!alive) {
     return {
-      ...snapshot,
       status: 'UNKNOWN',
       status_reason: 'orphan_suspected_stale_snapshot',
-      liveness: { ...snapshot.liveness, state: 'ORPHAN_SUSPECTED' },
+      liveness: 'ORPHAN_SUSPECTED',
     };
   }
 
   return {
-    ...snapshot,
     status: 'RUNNING',
     status_reason: 'snapshot_stale_runner_alive',
-    liveness: { ...snapshot.liveness, state: 'SUSPECTED_STALL' },
+    liveness: 'SUSPECTED_STALL',
   };
 }
 
@@ -1264,6 +1293,7 @@ export function generateProgressMarkdown(snapshot: GoalProgressSnapshot): string
     '',
     `- Run ID: ${snapshot.run_id}`,
     `- Status: ${snapshot.status}`,
+    ...(snapshot.status_reason ? [`- Reason: ${snapshot.status_reason}`] : []),
     `- Current: ${snapshot.phase.name ?? '—'} / ${snapshot.phase.status}`,
     `- Liveness: ${snapshot.liveness.state}${
       snapshot.liveness.seconds_since_activity != null
@@ -1273,7 +1303,9 @@ export function generateProgressMarkdown(snapshot: GoalProgressSnapshot): string
     // plan e6b3f8d2 t4：工作面口径单列。**不复用 seconds_since_activity**——那条含
     // runner 自写 heartbeat，会把"agent 早不吐字了"读成"刚刚还活着"。
     ...(outputStall ? [`- ${outputStall}`] : []),
-    `- Budget: turns ${snapshot.budget.turns_used}/${snapshot.budget.turns_limit}, wall ${Math.round(snapshot.budget.wall_elapsed_ms / 60000)}m/${Math.round(snapshot.budget.wall_limit_ms / 60000)}m`,
+    `- Activity: calls ${snapshot.activity?.calls ?? snapshot.budget?.turns_used ?? 0}, active ${Math.round((snapshot.activity?.active_ms ?? snapshot.budget?.wall_elapsed_ms ?? 0) / 60000)}m`,
+    ...(snapshot.budget ? [`- Historical limits (read only): turns ${snapshot.budget.turns_used}/${snapshot.budget.turns_limit}, wall ${Math.round(snapshot.budget.wall_elapsed_ms / 60000)}m/${Math.round(snapshot.budget.wall_limit_ms / 60000)}m`] : []),
+    ...(snapshot.current_disposition ? [`- Current completion: ${snapshot.current_disposition.completionEligible ? 'eligible' : 'incomplete'}`, renderCurrentDisposition(snapshot.current_disposition)] : []),
     '',
     '## Phases',
     '',
@@ -1300,7 +1332,7 @@ export function generateProgressMarkdown(snapshot: GoalProgressSnapshot): string
       `- Action: ${r.action}`,
       `- Current / owner target: ${r.current_phase ?? '—'} / ${r.target_phase ?? r.owner_phase ?? '—'}`,
       `- Gap: ${r.gap_kind ?? '—'}`,
-      `- Budget: ${r.backtracks_used ?? '—'} / ${r.backtracks_limit ?? '—'}`,
+      `- Backtracks observed: ${r.backtracks_used ?? '—'} (historical event observation only)`,
       `- Fingerprint: ${r.fingerprint ?? '—'}`,
     );
     for (const item of r.changed_paths.slice(0, 20)) {
@@ -1373,7 +1405,7 @@ export function atomicRenameWithRetry(
 export function writeProgressSnapshotAtomic(
   projectRoot: string,
   reportDir: string,
-  snapshot: GoalProgressSnapshot,
+  snapshot: GoalProgressSnapshot | import('./initial-design-delivery').InitialDesignDeliveryProjection,
   writeMd = false,
 ): void {
   const base = path.join(projectRoot, reportDir);
@@ -1395,7 +1427,10 @@ export function writeProgressSnapshotAtomic(
 
   if (writeMd) {
     const mdPath = path.join(base, 'progress.md');
-    fs.writeFileSync(mdPath, generateProgressMarkdown(snapshot), 'utf-8');
+    const markdown = 'kind' in snapshot
+      ? `# ${snapshot.feature}\n\n${snapshot.status}\n\n${snapshot.current?.phase ?? snapshot.stage}\n\n${snapshot.next_action}\n\n${snapshot.issues.join('\n')}\n`
+      : generateProgressMarkdown(snapshot);
+    fs.writeFileSync(mdPath, markdown, 'utf-8');
   }
 }
 

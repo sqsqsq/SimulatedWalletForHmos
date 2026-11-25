@@ -11,11 +11,14 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import { implementationFiles } from './diff-scope';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { TextDecoder } from 'util';
 import type { ResolvedPhaseInputs } from './capability-resolution';
 import { selectionShapeIssues } from './component-assets';
+import { inspectMapArray } from './design-content-checks';
+import { resolveArtifactContent } from './artifact-content';
 import {
   Phase,
   PhaseRuleSpec,
@@ -56,6 +59,12 @@ export interface FeatureArtifactInspection {
   sameNameArchives: string[];
   relatedSiblingEntries: string[];
   verdict: FeatureArtifactVerdict;
+}
+
+/** 旧用例键的唯一纯归一化入口，加载器与人读文档共用。 */
+export function normalizeUseCasePortCalls<T>(useCases: T): { value: T; issues: string[] } {
+  const result = resolveArtifactContent('use-cases@1', useCases, { mode: 'fragment' });
+  return { value: result.value as T, issues: result.issues.map(issue => `${issue.path}: ${issue.message}`) };
 }
 
 const PHASE_RULE_FILENAMES: Record<Phase, string> = {
@@ -112,12 +121,14 @@ export class SpecLoader {
   private projectRoot: string;
   private phaseRulesDir: string;
   private featuresDir: string;
+  private frameworkRoot: string;
 
   constructor(projectRoot: string, phaseRulesDir?: string, featuresDir?: string, frameworkRoot?: string) {
     // 阶段 3：默认值来自 framework.config.json（经 resolvePaths 归一化）；
     //        调用方可以用构造参数覆盖（单测/自定义 layout / 外部 frameworkRoot）。
     const resolved = resolvePaths(projectRoot, frameworkRoot);
     this.projectRoot = resolved.projectRoot;
+    this.frameworkRoot = frameworkRoot ?? path.resolve(__dirname, '../../..');
     this.phaseRulesDir = phaseRulesDir ?? resolved.phaseRulesDir;
     this.featuresDir = featuresDir ?? resolved.featuresDir;
   }
@@ -142,8 +153,7 @@ export class SpecLoader {
 
   loadPhaseRule(phase: Phase, explicitPath?: string): PhaseRuleSpec {
     // 已知 phase 用显式映射；其余按 `<phase>-rules.yaml` 约定派生（C0 判定单点化：
-    // workflow 1.1 起 phase 集由 workflow 声明，loader 不再持有封闭枚举——lite 的
-    // change/exit 与未来新 phase 一等公民）。约定文件不存在才视为未知 phase。
+    // 自定义 phase 一等公民）。约定文件不存在才视为未知 phase。
     const filename = PHASE_RULE_FILENAMES[phase] ?? `${phase}-rules.yaml`;
     const filePath = explicitPath ?? path.join(this.phaseRulesDir, filename);
     if (!PHASE_RULE_FILENAMES[phase] && !fs.existsSync(filePath)) {
@@ -162,7 +172,6 @@ export class SpecLoader {
       }
     }
     // 约定派生 phase（与 loadPhaseRule 的 `<phase>-rules.yaml` 派生对齐——发现面不落
-    // 后于加载面；lite 的 change/exit 及未来新 phase 由此进 --list）
     const known = new Set(Object.values(PHASE_RULE_FILENAMES));
     const extras = fs
       .readdirSync(this.phaseRulesDir)
@@ -191,17 +200,15 @@ export class SpecLoader {
     }
     const featureDir = feature === undefined || (resolved && !feature) ? this.projectRoot : this.featureDirAbs(feature);
     const read = <T>(name: string, artifact: string, issues: string[]): T | null => {
-      if (!resolved) {
-        const file = path.join(featureDir, name);
-        return fs.existsSync(file) ? this.loadYamlMappingOrNull<T>(file, issues) : null;
-      }
-      const value = resolved.artifacts[artifact];
-      if (value !== undefined) return structuredClone(value) as T;
-      if (feature === undefined) return null;
-      // A phase's own outputs are checked as outputs, not frozen upstream inputs.
+      const ownOutput = feature !== undefined && resolved?.context.required_outputs.includes(name);
       const file = path.join(featureDir, name);
-      return resolved.context.required_outputs.includes(name) && fs.existsSync(file)
-        ? this.loadYamlMappingOrNull<T>(file, issues) : null;
+      const raw = !resolved || ownOutput
+        ? (fs.existsSync(file) ? this.loadYamlMappingOrNull<unknown>(file, issues) : null)
+        : resolved.artifacts[artifact];
+      if (raw === undefined || raw === null) return null;
+      const parsed = resolveArtifactContent(artifact, raw, { frameworkRoot: this.frameworkRoot });
+      issues.push(...parsed.issues.map(issue => `${name} ${issue.path}: ${issue.message}`));
+      return (parsed.value ?? null) as T | null;
     };
 
     const spec: Omit<FeatureSpec, 'feature'> & { feature?: string } = feature === undefined ? {} : { feature };
@@ -224,15 +231,11 @@ export class SpecLoader {
         normalizeTraceability(contracts, contractsPath, shapeIssues);
         // P0-2：agent 常把集合字段写成 {}/""（非数组真值），下游 for..of/.filter 直接
         // TypeError（07-13 现场门禁连环崩的同类）。归空 + 留痕（不 throw）。
-        normalizeArrayField(contracts as unknown as Record<string, unknown>, 'modules', contractsPath, shapeIssues);
         // codex 七轮 P1-2：package_path 是全部源码/media 只读扫描的路径根（source-ref-scan/
         // visual-parity-backstop 等直接 path.join）——`../outside` 会越出宿主根且外部文件可
         // 影响门禁裁决。加载边界统一收口：必填字符串 + 宿主根内校验 + canonical 化后再交
         // 消费者；非法条目剔除并经 shape_issues → feature_spec_shape 结构化 BLOCKER。
         normalizeContractsModulePaths(contracts, contractsPath, this.projectRoot, shapeIssues);
-        normalizeArrayField(contracts as unknown as Record<string, unknown>, 'data_models', contractsPath, shapeIssues);
-        normalizeArrayField(contracts as unknown as Record<string, unknown>, 'interfaces', contractsPath, shapeIssues);
-        normalizeArrayField(contracts as unknown as Record<string, unknown>, 'components', contractsPath, shapeIssues);
         for (const [index, component] of (contracts.components ?? []).entries()) {
           if (component.asset_selection === undefined) continue;
           const errors = selectionShapeIssues(component.asset_selection);
@@ -241,31 +244,15 @@ export class SpecLoader {
             delete component.asset_selection;
           }
         }
-        normalizeArrayField(contracts as unknown as Record<string, unknown>, 'state_management', contractsPath, shapeIssues);
         if (contracts.change_unit && typeof contracts.change_unit === 'object' && !Array.isArray(contracts.change_unit)) {
           const changeUnit = contracts.change_unit as unknown as Record<string, unknown>;
           normalizeArrayField(changeUnit, 'predicate_mappings', contractsPath, shapeIssues, 'change_unit');
           normalizeArrayField(changeUnit, 'provide_mappings', contractsPath, shapeIssues, 'change_unit');
           normalizeArrayField(changeUnit, 'design_ref_mappings', contractsPath, shapeIssues, 'change_unit');
         }
-        for (const state of contracts.state_management ?? []) {
-          if (!state || typeof state !== 'object') continue;
-          const record = state as unknown as Record<string, unknown>;
-          for (const field of ['contract_refs', 'ordered_steps', 'lifecycle_triggers']) {
-            if (Object.prototype.hasOwnProperty.call(record, field)) {
-              normalizeStringArrayField(record, field, contractsPath, shapeIssues, `state_management[${String(record.data ?? '?')}]`);
-            }
-          }
-          for (const field of ['mutations', 'publications', 'subscriptions', 'consumers']) {
-            if (Object.prototype.hasOwnProperty.call(record, field)) {
-              normalizeArrayField(record, field, contractsPath, shapeIssues, `state_management[${String(record.data ?? '?')}]`);
-            }
-          }
-        }
         // S6（visual-capability-truth P1-F）：integration_points 机器块归一——map 数组 +
         // consumer_module/provider_module 必填字符串（缺失剔除 + shape_issues 留痕，
         // 镜像 modules[] 边界行为——feature_spec_shape 结构化 BLOCKER 消费）。
-        normalizeArrayField(contracts as unknown as Record<string, unknown>, 'integration_points', contractsPath, shapeIssues);
         {
           const pts = contracts.integration_points;
           if (Array.isArray(pts) && pts.length > 0) {
@@ -308,8 +295,6 @@ export class SpecLoader {
       if (acceptance) {
         // 复审修复（cursor 阻断2）：AcceptanceSpec 的集合字段是 criteria/boundaries
         // （rev1 误写 use_cases——acceptance 根本没有该字段，等于零防护）。
-        normalizeArrayField(acceptance as unknown as Record<string, unknown>, 'criteria', acceptancePath, shapeIssues);
-        normalizeArrayField(acceptance as unknown as Record<string, unknown>, 'boundaries', acceptancePath, shapeIssues);
         spec.acceptance = acceptance;
       }
     }
@@ -319,23 +304,6 @@ export class SpecLoader {
     if (resolved ? resolved.artifacts['use-cases@1'] !== undefined || resolved.context.required_outputs.includes('use-cases.yaml') : fs.existsSync(useCasesPath)) {
       const useCases = read<UseCasesSpec>('use-cases.yaml', 'use-cases@1', shapeIssues);
       if (useCases) {
-        normalizeArrayField(useCases as unknown as Record<string, unknown>, 'use_cases', useCasesPath, shapeIssues);
-        // P0-2 复审（codex P1/cursor）：嵌套集合在 loader 统一归一——check-ut 的 reduce、
-        // testing-trace-gates 的遍历、named-handler 等**所有消费点**一处防崩；坏形状经
-        // shape_issues → feature_spec_shape 结构化 FAIL（不再落 safeRun 误归 framework_bug）。
-        for (const uc of useCases.use_cases ?? []) {
-          if (!uc || typeof uc !== 'object') continue;
-          const ur = uc as unknown as Record<string, unknown>;
-          const tag = `use_cases[${String(ur.id ?? '?')}]`;
-          normalizeArrayField(ur, 'ui_bindings', useCasesPath, shapeIssues, tag);
-          normalizeArrayField(ur, 'data_boundaries', useCasesPath, shapeIssues, tag);
-          normalizeArrayField(ur, 'branches', useCasesPath, shapeIssues, tag);
-          for (const ub of uc.ui_bindings ?? []) {
-            if (!ub || typeof ub !== 'object') continue;
-            const br = ub as unknown as Record<string, unknown>;
-            normalizeArrayField(br, 'user_actions', useCasesPath, shapeIssues, `${tag}.ui_bindings[${String(br.ui ?? '?')}]`);
-          }
-        }
         spec.useCases = useCases;
       }
     }
@@ -488,8 +456,9 @@ export class SpecLoader {
     const result = new Map<string, string>();
     if (!contracts?.files) return result;
 
-    for (let i = 0; i < contracts.files.length; i++) {
-      const raw = contracts.files[i];
+    const actualFiles = implementationFiles(projectRoot, contracts.feature, contracts, process.env.MAISON_GOAL_RUN_ID?.trim());
+    for (let i = 0; i < actualFiles.length; i++) {
+      const raw = actualFiles[i];
       const relativePath = coerceToPathString(raw);
       if (relativePath === null) {
         console.warn(
@@ -549,28 +518,6 @@ function coerceToPathString(raw: unknown): string | null {
   return null;
 }
 
-function normalizeStringArrayField(
-  obj: Record<string, unknown>,
-  field: string,
-  filePath: string,
-  shapeIssues: string[],
-  parentLabel?: string,
-): void {
-  const label = parentLabel ? `${parentLabel}.${field}` : field;
-  const value = obj[field];
-  if (value === undefined || value === null) return;
-  if (!Array.isArray(value)) {
-    shapeIssues.push(`${path.basename(filePath)} 的 \`${label}\` 应为 string[]——已按空数组防崩处理`);
-    obj[field] = [];
-    return;
-  }
-  const strings = value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
-  if (strings.length !== value.length) {
-    shapeIssues.push(`${path.basename(filePath)} 的 \`${label}\` 含非空字符串以外条目——非法条目已剔除`);
-  }
-  obj[field] = strings;
-}
-
 /**
  * P0-2（plan d9b4f7e2）：集合字段非数组真值 → 归空数组 + shapeIssues 留痕（缺失/null
  * 只归空不留痕——缺失语义由各门禁裁决）。不 throw（对齐"agent 产 YAML 形状偏差不得炸
@@ -588,7 +535,8 @@ function normalizeArrayField(
   const label = parentLabel ? `${parentLabel}.${field}` : field;
   const v = obj[field];
   if (v === undefined || v === null) return;
-  if (!Array.isArray(v)) {
+  const shape = inspectMapArray(v);
+  if (shape.nonArray) {
     const kind = typeof v === 'object' ? 'object(dict)' : typeof v;
     shapeIssues.push(
       `${path.basename(filePath)} 的 \`${label}\` 应为数组（YAML list），实际是 ${kind}——已按空数组防崩处理；最小合法样例：\`${field}: []\`（每项以 \`- \` 开头）`,
@@ -600,12 +548,8 @@ function normalizeArrayField(
   // 第五轮复审（codex P1）：容器合法不等于条目合法——`- null` / `- 42` / 嵌套数组条目
   // 会在下游 `mod.package_path` / `uc.id` 等解引用处崩成 framework_bug 误归因。
   // 本 loader 的这些集合语义上都是 map 数组：剔除非 map 条目 + 带索引留痕。
-  const badIdx: number[] = [];
-  const cleaned = (v as unknown[]).filter((it, i) => {
-    const ok = it !== null && typeof it === 'object' && !Array.isArray(it);
-    if (!ok) badIdx.push(i);
-    return ok;
-  });
+  const badIdx = shape.invalidIndices;
+  const cleaned = (v as unknown[]).filter((_, i) => !badIdx.includes(i));
   if (badIdx.length > 0) {
     shapeIssues.push(
       `${path.basename(filePath)} 的 \`${label}[${badIdx.join(',')}]\` 应为映射（map，形如 \`- key: value\`），实际为 null/标量/数组——非法条目已剔除、合法条目保留`,

@@ -5,7 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { featureRelativePath } from './feature-identity';
-import { featurePhaseReportsDir, receiptFilePath } from '../../config';
+import { featurePhaseReportsDir, receiptFilePath, relFeaturesDir } from '../../config';
 import type { GoalPhaseOutcome } from './goal-report-generator';
 import type {
   FeaturePhase,
@@ -13,6 +13,8 @@ import type {
   PhaseVerdictAction,
 } from './phase-transition-policy';
 import { FEATURE_PHASE_ORDER } from './phase-transition-policy';
+import { isLegacyBacktrackLimitOnly } from './adjudication';
+import { invocationCompleted } from './invocation-completion';
 
 const FEATURE_PHASE_SET = new Set<string>(FEATURE_PHASE_ORDER);
 
@@ -26,6 +28,73 @@ export function isSummaryFresh(beforeMtime: number | null, afterMtime: number | 
   if (afterMtime === null) return false;
   if (beforeMtime === null) return true;
   return afterMtime > beforeMtime;
+}
+
+export interface RepairInvocationEvent {
+  status?: unknown;
+  type?: string;
+  phase?: unknown;
+  invoke_id?: unknown;
+  exit_code?: unknown;
+  timed_out?: unknown;
+  kill_reason?: unknown;
+  silent_killed?: unknown;
+  terminal_failure_observed?: unknown;
+  completion_observed?: unknown;
+  interrupted?: unknown;
+  agent_failed?: unknown;
+  skipped?: unknown;
+  spawn_error?: unknown;
+  to_phase?: unknown;
+  result?: unknown;
+}
+
+/** Completion belongs to an invocation, not its static gate or process settlement. */
+export function repairInvocationCompleted(
+  events: readonly RepairInvocationEvent[], phase: string, invokeId?: string,
+): boolean {
+  const lastRequest = events.map(e => e.type).lastIndexOf('phase_backtrack_requested');
+  const windowEvents = events.slice(lastRequest + 1);
+  const lastStart = windowEvents.map(e => e.type === 'agent_invoke_start' && e.phase === phase).lastIndexOf(true);
+  const attemptEvents = windowEvents.slice(Math.max(0, lastStart));
+  const execution = attemptEvents.filter(e => e.phase === phase &&
+    ['agent_invoke_start', 'agent_invoke_end', 'agent_process_settled', 'phase_verdict'].includes(e.type ?? ''));
+  const latestId = [...execution].reverse().find(e => e.type !== 'phase_verdict' && typeof e.invoke_id === 'string')?.invoke_id
+    ?? [...execution].reverse().find(e => typeof e.invoke_id === 'string')?.invoke_id;
+  const id = invokeId ?? latestId;
+  const own = execution.filter(e => id ? e.invoke_id === id : e.invoke_id === undefined);
+  const end = [...own].reverse().find(e => e.type === 'agent_invoke_end');
+  const settled = [...own].reverse().find(e => e.type === 'agent_process_settled');
+  const verdict = [...own].reverse().find(e => e.type === 'phase_verdict');
+  const facts = end ?? settled;
+  // Older invoke-end events lack completion; the matching verdict retains that fact.
+  const completion = facts?.completion_observed === true || (end?.completion_observed === undefined &&
+    (verdict?.completion_observed === true || verdict?.agent_failed === false));
+  return invocationCompleted({
+    ...facts,
+    exitCode: facts?.exit_code,
+    completion_observed: completion,
+    status: facts?.status === 'waiting' || facts?.status === 'failed' ? facts.status
+      : !completion && verdict?.agent_failed === true ? 'failed' : facts?.status,
+    timed_out: [end, settled].some(e => e?.timed_out === true || e?.kill_reason === 'agent_timeout'),
+    terminal_failure_observed: [end, settled].some(e => e?.terminal_failure_observed === true),
+    silent_killed: [end, settled].some(e => e?.silent_killed === true),
+    skipped: [end, settled].some(e => e?.skipped === true),
+    spawn_error: end?.spawn_error ?? settled?.spawn_error,
+  });
+}
+
+/** A later interrupted retry cannot erase a completed owner attempt in this repair window. */
+export function repairWindowCompleted(events: readonly RepairInvocationEvent[], phase: string): boolean {
+  const request = events.map(e => e.type).lastIndexOf('phase_backtrack_requested');
+  if (request >= 0 && events[request].to_phase !== phase) return false;
+  const invalidation = events.map(e => e.type === 'phase_invalidated' && e.phase === phase).lastIndexOf(true);
+  const window = events.slice(Math.max(request, invalidation) + 1);
+  return window.some((event, index) => {
+    if (event.type === 'phase_backtrack_completed' && event.to_phase === phase && event.result === 'declined') return true;
+    return event.phase === phase && ['agent_invoke_end', 'agent_process_settled', 'phase_verdict'].includes(event.type ?? '') &&
+      repairInvocationCompleted(window.slice(0, index + 1), phase, typeof event.invoke_id === 'string' ? event.invoke_id : undefined);
+  });
 }
 
 export interface PhaseVerdictResolveInput {
@@ -61,70 +130,6 @@ export interface PhaseVerdictResolveResult {
 
 export type ClosureAdvanceBlockReason = 'closure_open' | 'receipt_missing' | 'agent_timeout_unclosed';
 
-// ============================================================================
-// P0-5（plan 7c4f2e9b，codex 四/五轮）：closure_kind 确定性分类——**不得从
-// advance_block_reason 映射**（本文件 resolveClosureAdvanceBlock 中 agentTimedOut 先于
-// receiptStatus 返回，会掩盖 receipt 真值；advance_block_reason 仅作 telemetry）。
-// 分类是只读 receipt 探针（tryValidateReceipt）真值上的 **total function**
-// （ReceiptValidation 五态全集，phase-state.ts:36）：
-//   passed          → deterministic_recheck（runner 不调 agent，执行正式 sync-closure）
-//   missing/failed  → receipt_repair_with_verifier（agent attempt，沿用完整 effective 预算）
-//   error           → 立即 HALT closure_probe_error（探针自身崩溃=framework/toolchain 坏，
-//                     调 agent「修 receipt」只会空转回潮）
-//   not_applicable（且仍 advance_blocked）→ 立即 HALT closure_state_invariant
-//                    （lite track 本不产生 receipt，走到此即 runner 状态机 bug）
-// ============================================================================
-
-export type ClosureRoute =
-  | { kind: 'deterministic_recheck' }
-  | { kind: 'receipt_repair_with_verifier' }
-  | { kind: 'halt'; reason: 'closure_probe_error' | 'closure_state_invariant' };
-
-/**
- * post-impl review P1#5：closure-only attempt 超时 → 直接 closure_timeout 求人，
- * **不回内容重试**（OpenSpec 明文）。verdict=PASS 的超时不在此拦（advance_blocked 分支
- * 走 closure 分类，deterministic 大概率直接关环推进——比 halt 更好）。
- */
-export function shouldHaltClosureTimeout(
-  isClosureOnlyAttempt: boolean,
-  failureKind: string,
-  verdict: string,
-): boolean {
-  return isClosureOnlyAttempt && failureKind === 'agent_timeout' && verdict !== 'PASS';
-}
-
-/**
- * round4 P1#3：deterministic sync-closure 结果的完整分流（纯函数，runner 消费 + 控制流
- * 矩阵测试）。核心契约：closure-only attempt 一旦超时，**任何非 advance 出路都不得回
- * 内容重试**——sync 成功→advance；sync 失败+已超时→closure_timeout；sync 失败+未超时
- * →回落 repair（下一 attempt 仍是 closure 语境）。
- */
-export function resolveClosureSyncOutcome(
-  syncExitCode: number,
-  isClosureOnlyAttempt: boolean,
-  timedOut: boolean,
-): 'advance' | 'closure_timeout' | 'repair_retry' {
-  if (syncExitCode === 0) return 'advance';
-  if (isClosureOnlyAttempt && timedOut) return 'closure_timeout';
-  return 'repair_retry';
-}
-
-export function classifyClosureKind(
-  probeStatus: 'passed' | 'failed' | 'missing' | 'error' | 'not_applicable',
-): ClosureRoute {
-  switch (probeStatus) {
-    case 'passed':
-      return { kind: 'deterministic_recheck' };
-    case 'missing':
-    case 'failed':
-      return { kind: 'receipt_repair_with_verifier' };
-    case 'error':
-      return { kind: 'halt', reason: 'closure_probe_error' };
-    case 'not_applicable':
-      return { kind: 'halt', reason: 'closure_state_invariant' };
-  }
-}
-
 /** Block goal advance when script PASS but receipt/closure incomplete or agent timed out unclosed. */
 export function resolveClosureAdvanceBlock(input: {
   verdict: HarnessVerdict;
@@ -151,9 +156,11 @@ export function resolveClosureAdvanceBlock(input: {
  */
 export function resolvePhaseHarnessVerdict(input: PhaseVerdictResolveInput): PhaseVerdictResolveResult {
   const fresh = isSummaryFresh(input.summaryBeforeMtime, input.summaryAfterMtime);
-  // t4：完成观测收口的非零退出码由**框架自己的 tree-kill** 造成，不是 agent 失败
-  const agentFailed =
-    !input.agentSkipped && input.agentExitCode !== 0 && input.completionObserved !== true;
+  const agentFailed = !input.agentSkipped && !invocationCompleted({
+    exitCode: input.agentExitCode,
+    completion_observed: input.completionObserved,
+    timed_out: input.agentTimedOut,
+  });
 
   if (input.dryRun) {
     const verdict = (input.summaryVerdict ?? 'PASS') as HarnessVerdict;
@@ -191,6 +198,18 @@ export function resolvePhaseHarnessVerdict(input: PhaseVerdictResolveInput): Pha
 }
 
 export interface GoalRunEvent {
+  provider_session_id?: string;
+  interrupted?: boolean;
+  command?: string;
+  handoff_request?: import('./session-execution-handoff').HandoffReference;
+  handoff_report?: import('./session-execution-handoff').HandoffReference & { request_sha256: string };
+  /** Facts admitted before this exact phase invocation; source ownership is runtime-derived. */
+  facts_context?: import('./context-facts').FactsInvocationContext;
+  /** 原回退窗口的相关输入实值；不参与候选/round身份或预算。 */
+  related_input_snapshot?: import('./goal-failure-classifier').ArtifactSnapshot;
+  round_fingerprint?: string;
+  from_phase?: string;
+  to_phase?: string;
   ts?: string;
   type?: string;
   phase?: string;
@@ -239,6 +258,9 @@ export interface GoalRunEvent {
    * 与 completion_observed 互斥；exit 0 已在 invoke 边界规范化为非零。
    */
   terminal_failure_observed?: boolean;
+  /** Invocation completion is persisted before the gate, including non-zero cleanup exits. */
+  completion_observed?: boolean;
+  agent_failed?: boolean;
   /**
    * plan e6b3f8d2 t1（agent_invoke_end）：terminal 摘要（turn.failed 正文 + 顶层 error 事件）。
    * 不进 settle / retry / failure classifier 判据；例外：正式 invoke 与金丝雀的
@@ -280,11 +302,24 @@ export interface ResumedBudget {
   firstAuthoritativeStartMs: number | null;
 }
 
+/** Execution starts at invoke_start; session signatures may be reissued later. */
+export function phaseInvocationStart(events: readonly GoalRunEvent[], phase: string, beforeMs = Number.POSITIVE_INFINITY): GoalRunEvent | undefined {
+  const before = events.filter(event => Date.parse(event.ts ?? '') <= beforeMs);
+  const gate = [...before].reverse().find(event => event.type === 'harness_start' && event.phase === phase && event.invoke_id);
+  const attempt = gate?.invoke_id?.slice(phase.length + 1);
+  const unit = attempt && [...before].reverse().find(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author'
+    && event.invoke_id === `work-unit-author-${attempt}`);
+  if (unit) return unit;
+  return [...before].reverse().find(event => event.type === 'agent_invoke_start' && event.phase === phase)
+    ?? [...before].reverse().find(event => event.type === 'phase_start' && event.phase === phase && event.driver !== 'session');
+}
+
 /** Count agent attempts from events (new start/end + legacy agent_invoke). */
 export function countAgentInvokeStarts(events: GoalRunEvent[]): number {
   let n = 0;
   for (const e of events) {
-    if (e.type === 'agent_invoke_start') n++;
+    // 金丝雀是一次能力探测，沿原契约只计共享活跃时间，不占业务作者轮次。
+    if (e.type === 'agent_invoke_start' && (e as { purpose?: string }).purpose !== 'vision_canary') n++;
     else if (e.type === 'agent_invoke') n++;
   }
   return n;
@@ -310,6 +345,12 @@ export interface ExecutionSession {
   /** 段内是否有 run_end（无 = 崩溃/hard-kill 段，已保守补收） */
   clean: boolean;
   mode: 'dry' | 'authoritative';
+  /**
+   * 本段真实的活动区间（ms，互不重叠、按时间序）；Σ(end−start) = activeMs。通常只有一段 [startMs, startMs+activeMs]；
+   * session 交接窗口与之后的 CLI/gate、启动提前退出各自保留区间——它们在时间上不一定与前段连续，
+   * 按时间窗求交集的消费方（恢复成本）必须用这里，不能把 [startMs, startMs+activeMs] 当连续区间。
+   */
+  intervals: Array<{ startMs: number; endMs: number }>;
 }
 
 export interface PartitionedSessions {
@@ -334,6 +375,7 @@ function eventTsMs(e: GoalRunEvent): number | null {
  * resume/首事件兜底为段首）。段尾=本段 run_end；无 run_end 的段（崩溃/hard-kill）
  * 保守补收：end = min(下一段首 ts, 段内最大事件 ts + SESSION_HEARTBEAT_MS)——
  * 误差方向=多计 ≤1 心跳间隔（安全方向，预算只会更快耗尽，累计漏算为零）。
+ * 正式 session handoff 按原 invoke_start + effective_timeout_ms 封作者窗；迟到收口不计离开时间。
  * 段 mode：段首 run_start.dry_run===true 或段内全事件携 dry_run:true → dry。
  * 时间异常（乱序/回拨导致负时长）保守钳 0，不判负。
  */
@@ -343,6 +385,8 @@ export function partitionExecutionSessions(
     /** codex 五轮 P1-②：resume 边界——priorEvents 里最后一个未闭合历史段的补收上界
      * （=当前进程 sessionStartMs），防与当前段（elapsed 另行承载）重复计时。 */
     tailCapMs?: number;
+    /** 仅状态直播使用；普通驻留尾段随此时刻前进，session 交接仍受原执行窗约束。 */
+    liveTailMs?: number;
   },
 ): PartitionedSessions {
   const sessions: ExecutionSession[] = [];
@@ -351,12 +395,26 @@ export function partitionExecutionSessions(
     if (e.type === 'run_start') starts.push(i);
   });
   if (starts.length === 0 && events.length > 0) starts.push(0); // 孤儿前缀兜底
+  // plan 4e6fb3b6 批二 review R1：`session_started_at` 是进程会话真实起点（早于 run_start，含启动期探测）。
+  // 只在事件带该字段时生效：run_start 的段首取它（不早于上一段已计到的时刻，防重叠）；段内第一个 run_end 之后
+  // 再出现的、带该字段的 run_end（恢复会话在 run_start 之前提前退出）另计一段。段的切分（下标）不变，旧事件流结果不变。
+  const sessionStartedAtMs = (e: GoalRunEvent): number | null => {
+    const v = (e as { session_started_at?: unknown }).session_started_at;
+    if (typeof v !== 'string') return null;
+    const t = new Date(v).getTime();
+    return Number.isNaN(t) ? null : t;
+  };
+  let coveredUntilMs = Number.NEGATIVE_INFINITY;
   for (let s = 0; s < starts.length; s++) {
     const startIndex = starts[s];
     const nextStartIndex = s + 1 < starts.length ? starts[s + 1] : events.length;
     const endIndex = nextStartIndex - 1;
     const seg = events.slice(startIndex, nextStartIndex);
-    const startMs = eventTsMs(events[startIndex]) ?? NaN;
+    let startMs = eventTsMs(events[startIndex]) ?? NaN;
+    const declaredStartMs = events[startIndex].type === 'run_start' ? sessionStartedAtMs(events[startIndex]) : null;
+    if (declaredStartMs !== null && !Number.isNaN(startMs) && declaredStartMs < startMs) {
+      startMs = Math.max(declaredStartMs, coveredUntilMs);
+    }
     const runEnd = seg.find((e) => e.type === 'run_end');
     let maxTs = Number.isNaN(startMs) ? 0 : startMs;
     for (const e of seg) {
@@ -365,24 +423,80 @@ export function partitionExecutionSessions(
     }
     let endMs: number;
     let clean = false;
+    const nextStartMs = nextStartIndex < events.length ? eventTsMs(events[nextStartIndex]) : null;
+    const cap = nextStartMs ?? opts?.tailCapMs ?? opts?.liveTailMs ?? null;
     if (runEnd) {
       endMs = eventTsMs(runEnd) ?? maxTs;
       clean = true;
     } else {
       // 崩溃段保守补收一个心跳周期，nextSessionStart/tailCap 截断防与后段重叠。
       const credited = maxTs + SESSION_HEARTBEAT_MS;
-      const nextStartMs = nextStartIndex < events.length ? eventTsMs(events[nextStartIndex]) : null;
-      const cap = nextStartMs ?? opts?.tailCapMs ?? null;
-      endMs = cap !== null ? Math.min(cap, credited) : credited;
+      endMs = nextStartMs === null && opts?.liveTailMs !== undefined ? opts.liveTailMs
+        : cap !== null ? Math.min(cap, credited) : credited;
     }
     const startEvent = events[startIndex] as { dry_run?: unknown };
     const isDry =
       (events[startIndex].type === 'run_start' && startEvent.dry_run === true) ||
       (seg.length > 0 && seg.every((e) => (e as { dry_run?: unknown }).dry_run === true));
-    const activeMs = Number.isNaN(startMs) ? 0 : Math.max(0, endMs - startMs);
+    let activeMs = Number.isNaN(startMs) ? 0 : Math.max(0, endMs - startMs);
+    let intervals = [{ startMs: Number.isNaN(startMs) ? 0 : startMs, endMs: Number.isNaN(startMs) ? 0 : startMs + activeMs }];
+    let segCoveredUntil = endMs;
+    const handoffIndex = seg.findIndex(e => e.type === 'phase_start' && e.handoff_request && e.invoke_id);
+    const handoff = seg[handoffIndex];
+    const invocation = handoff && [...events.slice(0, startIndex + handoffIndex)].reverse()
+      .find(e => e.type === 'agent_invoke_start' && e.invoke_id === handoff.invoke_id && e.phase === handoff.phase);
+    const invokeStartMs = invocation ? eventTsMs(invocation) : null;
+    const timeoutMs = invocation?.effective_timeout_ms;
+    const boundedHandoff = invokeStartMs !== null && typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0;
+    if (boundedHandoff) {
+      const observedUntil = cap ?? Date.now();
+      const report = seg.find(e => e.type === 'agent_invoke_end' && e.invoke_id === handoff.invoke_id && e.handoff_report);
+      const authorEnd = Math.min(invokeStartMs + timeoutMs!, report ? eventTsMs(report) ?? observedUntil : observedUntil,
+        runEnd ? eventTsMs(runEnd) ?? observedUntil : observedUntil, observedUntil);
+      // Late receipt/timeout timestamps describe the returning CLI, not execution during its absence.
+      intervals = [
+        { startMs, endMs: Math.max(startMs, Math.min(eventTsMs(handoff) ?? startMs, observedUntil)) },
+        { startMs: Math.max(startMs, invokeStartMs), endMs: authorEnd },
+      ];
+      for (let i = 0; i < seg.length; i++) {
+        const activity = seg[i];
+        const endType = activity.type === 'agent_process_bound' ? 'agent_process_settled'
+          : activity.type === 'harness_start' ? 'harness_end' : null;
+        const from = eventTsMs(activity);
+        if (!endType || from === null) continue;
+        const settled = seg.slice(i + 1).find(e => e.type === endType && e.invoke_id === activity.invoke_id);
+        intervals.push({ startMs: from, endMs: Math.min(observedUntil, settled ? eventTsMs(settled) ?? observedUntil : observedUntil) });
+      }
+    }
+    if (runEnd) {
+      for (const e of boundedHandoff ? seg : seg.slice(seg.indexOf(runEnd) + 1)) {
+        if (e.type !== 'run_end') continue;
+        const declared = sessionStartedAtMs(e);
+        const endE = eventTsMs(e);
+        if (declared === null || endE === null) continue;
+        const from = boundedHandoff ? declared : Math.max(declared, segCoveredUntil);
+        if (endE > from) {
+          activeMs += endE - from;
+          intervals.push({ startMs: from, endMs: endE });
+          segCoveredUntil = endE;
+        }
+      }
+    }
+    if (boundedHandoff) {
+      const merged: ExecutionSession['intervals'] = [];
+      for (const interval of intervals.filter(i => i.endMs > i.startMs).sort((a, b) => a.startMs - b.startMs)) {
+        const previous = merged[merged.length - 1];
+        if (previous && interval.startMs <= previous.endMs) previous.endMs = Math.max(previous.endMs, interval.endMs);
+        else merged.push({ ...interval });
+      }
+      intervals = merged;
+      activeMs = intervals.reduce((sum, interval) => sum + interval.endMs - interval.startMs, 0);
+      segCoveredUntil = intervals[intervals.length - 1]?.endMs ?? startMs;
+    }
+    coveredUntilMs = Math.max(coveredUntilMs, segCoveredUntil);
     sessions.push({
       startIndex, endIndex, startMs: Number.isNaN(startMs) ? 0 : startMs, activeMs, clean,
-      mode: isDry ? 'dry' : 'authoritative',
+      mode: isDry ? 'dry' : 'authoritative', intervals,
     });
   }
   const authSessions = sessions.filter((x) => x.mode === 'authoritative');
@@ -425,17 +539,24 @@ export function collectVisualRoundRowHashes(events: GoalRunEvent[]): string[] {
 export function collectUncommittedVisualAttemptIds(events: GoalRunEvent[]): string[] {
   const startedTesting: string[] = [];
   const committed = new Set<string>();
+  const units = new Set<string>();
   for (const e of events) {
+    if (e.type === 'agent_invoke_start' && e.phase === 'work-unit-author' && typeof e.invoke_id === 'string'
+      && e.invoke_id.startsWith('work-unit-author-')) units.add(e.invoke_id);
     if (e.type === 'agent_invoke_start' && e.phase === 'testing' && typeof e.invoke_id === 'string') {
       const m = e.invoke_id.match(/-(i\d+)$/);
       if (m) startedTesting.push(m[1]);
+    }
+    if (e.type === 'harness_start' && e.phase === 'testing' && typeof e.invoke_id === 'string' && e.invoke_id.startsWith('testing-')) {
+      const attempt = e.invoke_id.slice('testing-'.length);
+      if (units.has(`work-unit-author-${attempt}`)) startedTesting.push(attempt);
     }
     if (e.type === 'visual_round' && typeof e.visual_attempt === 'string' && e.visual_attempt) {
       committed.add(e.visual_attempt);
     }
   }
-  const uncommitted = startedTesting.filter(id => !committed.has(id));
-  return uncommitted.length > 0 ? [uncommitted[uncommitted.length - 1]] : [];
+  const last = startedTesting.at(-1);
+  return last && !committed.has(last) ? [last] : [];
 }
 
 /**
@@ -450,8 +571,12 @@ export function collectLastCommittedVisualAttemptWindow(
 ): { attemptId: string; startMs: number; endMs: number } | null {
   const starts: Array<{ attemptId: string; invokeId: string; ts?: string }> = [];
   const committed = new Set<string>();
+  const unitAttempts = new Set(events.flatMap(event => event.type === 'visual_round' && event.visual_attempt
+    && event.invoke_id === `testing-${event.visual_attempt}` ? [event.visual_attempt] : []));
   for (const e of events) {
-    if (e.type === 'agent_invoke_start' && e.phase === 'testing' && typeof e.invoke_id === 'string') {
+    if (e.type === 'agent_invoke_start' && typeof e.invoke_id === 'string'
+      && (e.phase === 'testing' || e.phase === 'work-unit-author' && e.invoke_id.startsWith('work-unit-author-')
+        && unitAttempts.has(e.invoke_id.slice('work-unit-author-'.length)))) {
       const m = e.invoke_id.match(/-(i\d+)$/);
       if (m) starts.push({ attemptId: m[1], invokeId: e.invoke_id, ts: e.ts });
     }
@@ -461,7 +586,8 @@ export function collectLastCommittedVisualAttemptWindow(
   }
   const last = [...starts].reverse().find(s => committed.has(s.attemptId));
   if (!last) return null;
-  const endTs = [...events].reverse().find(e => e.invoke_id === last.invokeId)?.ts;
+  const endTs = [...events].reverse().find(e => e.invoke_id === last.invokeId || e.invoke_id === `testing-${last.attemptId}`
+    || e.type === 'visual_round' && e.visual_attempt === last.attemptId)?.ts;
   const startMs = Date.parse(last.ts ?? '');
   const endMs = Date.parse(endTs ?? '');
   return Number.isFinite(startMs) && Number.isFinite(endMs)
@@ -600,7 +726,7 @@ export function extractSupersedeTargets(events: GoalRunEvent[]): string[] {
  *
  * 硬约束语义：**supersede 不得刷新任何预算**。预算是 per-run 从各自 events 回放的，
  * 新 run_id 即清零——不折叠的话，"废弃旧 run 开后继"就是绕过
- * DEFAULT_MAX_BACKTRACKS 与 wall 熔断的无限循环通道（plan 判读 v3 教训原文）。
+ * 总调用与活跃时长熔断的无限循环通道（plan 判读 v3 教训原文）。
  *
  * 边界：
  * - **阶段完成状态不折叠**（resolveResumeState 只吃当前 run——预算跨 run 折叠、
@@ -645,76 +771,24 @@ function loadSupersedeLineage(opts: {
   return lineage;
 }
 
-/** plan c4e7a9b2 §3.3 B1：当前 run 自己 supersede 审计事件上的交付周期边界（祖先事件上的旧边界不参与）。 */
-function extractCycleBoundary(events: readonly GoalRunEvent[]): string | undefined {
-  let boundary: string | undefined;
-  for (const e of events) {
-    const t = e as { type?: string; delivery_cycle_boundary?: unknown };
-    if (t.type === 'supersede' && typeof t.delivery_cycle_boundary === 'string' && t.delivery_cycle_boundary) {
-      boundary = t.delivery_cycle_boundary;
-    }
-  }
-  return boundary;
-}
-
-/**
- * e9d4b7a3 t4：预算 lineage 折叠**唯一共享入口**——budgetFoldSeeds（CLI --supersede ∪
- * currentEvents 内 audited supersede）→ 收集祖先事件 → 拼 budgetFoldEvents。
- * runner 熔断 / progress.json / heartbeat 三处必须消费本入口，禁止各自复制公式
- * （曾经 progress/heartbeat 只计当前 run events → supersede 链显示 5/30 假象）。
- * seedTargets 为调用方 CLI 显式 --supersede（resume/progress 消费面传空——它们的事件
- * 流里已有 audited supersede 事件）；currentEvents 恒传当前 run 的权威事件。
- */
-export interface BudgetLineageFold {
-  /** 祖先 + 当前 run 事件（预算/回退计数/transient 的唯一计算源） */
-  budgetFoldEvents: GoalRunEvent[];
-  /** 仅祖先部分（runner 侧 transient 计数等已折叠消费仍需要） */
-  ancestorEvents: GoalRunEvent[];
-  /** 折叠种子（显式 ∪ 事件派生，去重保序） */
-  foldSeeds: string[];
-  /** 实际生效的交付周期边界（落在本次血缘内才生效）；undefined = 全血缘折叠 */
-  cycleBoundary?: string;
-}
-
-export function foldBudgetLineage(opts: {
-  projectRoot: string;
-  featuresDir: string;
-  feature: string;
-  seedTargets?: readonly string[];
-  currentEvents?: readonly GoalRunEvent[];
-  /**
-   * plan c4e7a9b2 §3.3 B1：交付周期边界 B（上一次 record ok 的完成 run）。fresh 出生显式传（同 seedTargets 先例——
-   * 出生时 supersede 事件尚未进 currentEvents）；缺省从当前 run supersede 事件的 `delivery_cycle_boundary` 读。
-   * 折叠 = 祖先(seeds) − ({B} ∪ 祖先(B))：上一周期不占本周期额度，本周期失败 run 照计。
-   */
-  cycleBoundary?: string;
-  /** 注入供测试；缺省读盘 */
+/** Existing supersede audit only; no quota fold or completed-cycle cutoff. */
+export function readSupersededAncestorRuns(opts: {
+  projectRoot: string; featuresDir: string; feature: string;
+  seedTargets?: readonly string[]; currentEvents?: readonly GoalRunEvent[];
   loadEvents?: (absPath: string) => GoalRunEvent[];
-}): BudgetLineageFold {
-  const current = [...(opts.currentEvents ?? [])];
-  const foldSeeds = [
-    ...new Set([...(opts.seedTargets ?? []), ...extractSupersedeTargets(current)]),
-  ];
-  const lineage = foldSeeds.length > 0 ? loadSupersedeLineage({ ...opts, seedTargets: foldSeeds }) : new Map<string, GoalRunEvent[]>();
-  const boundary = opts.cycleBoundary ?? extractCycleBoundary(current);
-  const cycleBoundary = boundary && lineage.has(boundary) ? boundary : undefined;
-  // B 在血缘内 ⇒ 祖先(B) 也都已在 lineage 里：就地从 B 沿 supersede 求闭包，不再读盘
-  const previousCycle = new Set<string>();
-  for (const queue = cycleBoundary ? [cycleBoundary] : []; queue.length > 0;) {
-    const id = queue.shift()!;
-    if (previousCycle.has(id) || !lineage.has(id)) continue;
-    previousCycle.add(id);
-    queue.push(...extractSupersedeTargets(lineage.get(id)!));
-  }
-  const ancestorEvents = sortByTs([...lineage].filter(([id]) => !previousCycle.has(id)).flatMap(([, evs]) => evs));
-  return {
-    budgetFoldEvents: ancestorEvents.length > 0 ? [...ancestorEvents, ...current] : current,
-    ancestorEvents,
-    foldSeeds,
-    ...(cycleBoundary ? { cycleBoundary } : {}),
-  };
+}): Array<{ run_id: string; events: GoalRunEvent[] }> {
+  const seedTargets = [...new Set([...(opts.seedTargets ?? []), ...extractSupersedeTargets([...(opts.currentEvents ?? [])])])];
+  return [...loadSupersedeLineage({ ...opts, seedTargets })].map(([run_id, events]) => ({ run_id, events }));
 }
 
+export function readExecutionActivity(events: GoalRunEvent[], nowMs = Date.now()): {
+  calls: number; active_ms: number; firstAuthoritativeStartMs: number | null;
+} {
+  const partition = partitionExecutionSessions(events, { tailCapMs: nowMs });
+  return { calls: partition.totalTurns, active_ms: partition.priorActiveMs, firstAuthoritativeStartMs: partition.firstAuthoritativeStartMs };
+}
+
+/** @deprecated Historical statistics compatibility; never used to limit new execution. */
 export function resolveResumedBudget(
   events: GoalRunEvent[],
   opts?: {
@@ -731,56 +805,6 @@ export function resolveResumedBudget(
     wallClockStartMs: resolveWallClockStartMs(events),
     priorActiveMs: p.priorActiveMs,
     firstAuthoritativeStartMs: p.firstAuthoritativeStartMs,
-  };
-}
-
-export interface ResumeGuardInput {
-  priorStatus?: string;
-  lastRunEndTs?: string;
-  forceResume?: boolean;
-  cooldownMinutes?: number;
-  /** Optional: summary mtime advanced after last run_end with changed blocking classification. */
-  blockingCleared?: boolean;
-}
-
-export interface ResumeGuardResult {
-  allowed: boolean;
-  reason?: string;
-}
-
-const TERMINAL_STATUSES = new Set(['HALTED', 'DEFERRED']);
-
-/**
- * Conservative resume guard — default refuse HALTED/DEFERRED unless --force-resume
- * or blocking classification demonstrably changed after last run_end.
- */
-export function checkTerminalResumeGuard(input: ResumeGuardInput): ResumeGuardResult {
-  const status = input.priorStatus;
-
-  // Non-terminal prior runs (COMPLETED/PARTIAL/unknown) are not subject to terminal debounce.
-  if (!status || !TERMINAL_STATUSES.has(status)) return { allowed: true };
-
-  const cooldownMin = input.cooldownMinutes ?? 5;
-  if (input.lastRunEndTs) {
-    const endMs = new Date(input.lastRunEndTs).getTime();
-    if (!Number.isNaN(endMs)) {
-      const elapsed = Date.now() - endMs;
-      const cooldownMs = cooldownMin * 60 * 1000;
-      if (elapsed < cooldownMs) {
-        return {
-          allowed: false,
-          reason: `resume cooldown: wait ${Math.ceil((cooldownMs - elapsed) / 1000)}s after run_end (${status})`,
-        };
-      }
-    }
-  }
-
-  if (input.blockingCleared) return { allowed: true };
-  if (input.forceResume) return { allowed: true };
-
-  return {
-    allowed: false,
-    reason: `last run status ${status}; pass --force-resume to continue`,
   };
 }
 
@@ -803,16 +827,13 @@ export function resolveEffectiveRunEnd(events: GoalRunEvent[]): GoalRunEvent | u
   return undefined;
 }
 
-/** Check run budget before each phase attempt (turns + wall clock). */
-export function checkRunBudget(
-  totalTurns: number,
-  maxTotalTurns: number,
-  elapsedMs: number,
-  wallClockMs: number,
-): 'ok' | 'wall_clock' | 'turns' {
-  if (elapsedMs > wallClockMs) return 'wall_clock';
-  if (totalTurns >= maxTotalTurns) return 'turns';
-  return 'ok';
+/** Shared public-entry compatibility: old policy is retired, original resources are not. */
+export function canRecheckLegacyBacktrackLimit(input: {
+  projectRoot: string; feature: string; runId: string; events: readonly unknown[];
+}): boolean {
+  const end = [...input.events].reverse().find(event => !!event && typeof event === 'object' && (event as Record<string, unknown>).type === 'run_end') as GoalRunEvent | undefined;
+  return end?.status === 'HALTED' && ['backtrack_limit', 'budget_turns', 'budget_wall_clock', 'content_retry_exhausted',
+    'external_retry_exhausted', 'agent_timeout_repeated', 'closure_wall_repeated'].includes(String(end.halt_reason));
 }
 
 /**
@@ -902,15 +923,6 @@ export function rebuildOutcomesFromEvents(
   return outcomes;
 }
 
-/** Resume state from events when goal-report.json is absent. */
-export function resolveResumeFromEvents(
-  chain: FeaturePhase[],
-  events: GoalRunEvent[],
-): ResumeState {
-  const priorOutcomes = rebuildOutcomesFromEvents(events, chain);
-  return resolveResumeState(chain, priorOutcomes);
-}
-
 /** Phases finished (PASS advance or DEFERRED) from events.jsonl. */
 export function parseCompletedPhasesFromEvents(events: GoalRunEvent[]): Set<FeaturePhase> {
   const done = new Set<FeaturePhase>();
@@ -977,119 +989,25 @@ export function loadEventsJsonlStrict(absPath: string): EventsLoadStrictResult {
  * 状态（预算/重试计数/棘轮/resume 重建/对账期望集）一律走本口径；纯审计/展示读取
  * 显式用 loadEventsJsonl 并注明。 */
 export function filterAuthoritativeEvents(events: GoalRunEvent[]): GoalRunEvent[] {
-  return partitionExecutionSessions(events).authoritativeEvents;
+  const partitioned = partitionExecutionSessions(events);
+  // plan 4e6fb3b6 批二 review R3：启动期（首个 run_start 之前）金丝雀换型号写下的两种事件——身份改写授权与替代记录——
+  // 不属于任何执行会话，会被上面的分段过滤掉；恢复时身份基线与"已试型号"都要读它们。只接回这两种，
+  // dry 标记的不接回（与 run_created 的接回同一思路；会话切分与计时不变）。
+  const firstSessionStart = partitioned.sessions.length > 0 ? partitioned.sessions[0].startIndex : 0;
+  const birthPrefix = events.slice(0, firstSessionStart).filter((e) =>
+    (e.type === 'manifest_identity_rebase' || e.type === 'adapter_model_substituted')
+    && (e as { dry_run?: unknown }).dry_run !== true);
+  return birthPrefix.length > 0 ? [...birthPrefix, ...partitioned.authoritativeEvents] : partitioned.authoritativeEvents;
 }
 
 export function loadAuthoritativeEvents(absPath: string): GoalRunEvent[] {
   return filterAuthoritativeEvents(loadEventsJsonl(absPath));
 }
 
-export interface ResumeState {
-  priorOutcomes: GoalPhaseOutcome[];
-  startIndex: number;
-  deferredUpstream: Array<{ phase: FeaturePhase; reason: string }>;
-}
-
-/**
- * Determine resume index and rehydrate prior outcomes from goal-report or events.
- */
-export function resolveResumeState(
-  chain: FeaturePhase[],
-  priorOutcomes: GoalPhaseOutcome[],
-): ResumeState {
-  const deferredUpstream = priorOutcomes
-    .filter((o) => o.deferred)
-    .map((o) => ({
-      phase: o.phase,
-      reason: o.deferred_reason ?? 'external_blocked',
-    }));
-
-  if (priorOutcomes.length === 0) {
-    return { priorOutcomes: [], startIndex: 0, deferredUpstream: [] };
-  }
-
-  const last = priorOutcomes[priorOutcomes.length - 1];
-  if (last.halted) {
-    const idx = chain.indexOf(last.phase);
-    return {
-      priorOutcomes: priorOutcomes.slice(0, -1),
-      startIndex: idx >= 0 ? idx : 0,
-      deferredUpstream,
-    };
-  }
-
-  // e5d8a2c4 步骤 3（垂直恢复闭环）：**最早一个尚未完成的 `WAITING(external)` phase
-  // 必须重新入队**。fa0663 实锤：设备停放的 outcome 是 `{verdict:'FAIL', halted:false,
-  // run_disposition:'WAITING', run_wait_kind:'external'}`——旧逻辑把它计入 done，
-  // resume `start_index=链长` 直接收口，停放话术承诺的"设备就绪后 --resume 继续"
-  // 永不发生（同一 run 恒 PARTIAL 的吸收态）。判据**消费既有投影字段**（写盘层对每条
-  // phase_halt 都落了 run_disposition/run_wait_kind，报告 phases 原样携带）；`halted`
-  // 只表示"当前会话是否停止推进"（设备门仅 AMBIGUOUS 置 true），不是跨 run 完成判据。
-  const isUnfinishedExternalWait = (o: GoalPhaseOutcome): boolean =>
-    o.run_disposition === 'WAITING' && o.run_wait_kind === 'external';
-  const firstWaitingIdx = chain.findIndex((p) =>
-    priorOutcomes.some((o) => o.phase === p && isUnfinishedExternalWait(o)));
-  if (firstWaitingIdx >= 0) {
-    // codex 第九批 P0 订正（前缀规则）：从 phase k 重跑，**只保留严格位于 k 之前的
-    // outcome**——初版只删后缀中的 WAITING、保留下游旧 PASS，会让重跑后的链把
-    // 过期 PASS 当完成态；deferredUpstream 同理**从保留前缀重算**（初版沿用全量，
-    // 会把正在重试的 phase 的旧 deferred 记录带进新一轮）。
-    const prefix = priorOutcomes.filter((o) => {
-      const i = chain.indexOf(o.phase);
-      return i >= 0 && i < firstWaitingIdx;
-    });
-    return {
-      priorOutcomes: prefix,
-      startIndex: firstWaitingIdx,
-      deferredUpstream: prefix
-        .filter((o) => o.deferred)
-        .map((o) => ({ phase: o.phase, reason: o.deferred_reason ?? 'external_blocked' })),
-    };
-  }
-
-  const done = new Set(priorOutcomes.map((o) => o.phase));
-  let startIndex = chain.length;
-  for (let i = 0; i < chain.length; i++) {
-    if (!done.has(chain[i])) {
-      startIndex = i;
-      break;
-    }
-  }
-
-  return { priorOutcomes, startIndex, deferredUpstream };
-}
-
-export interface PhaseSummaryPassReceipt {
-  verdict: string;
-  receipt_status?: string;
-  closure_status?: string;
-  mtimeMs: number;
-}
-
-/** Read on-disk phase summary + receipt closure fields for half-phase recovery. */
-export function readPhaseSummaryPassReceipt(
-  projectRoot: string,
-  feature: string,
-  phase: FeaturePhase,
-): PhaseSummaryPassReceipt | null {
-  const dir = featurePhaseReportsDir(projectRoot, feature, phase);
-  const summaryPath = path.join(dir, 'summary.json');
-  if (!fs.existsSync(summaryPath)) return null;
-  try {
-    const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf-8')) as {
-      verdict?: string;
-      receipt_status?: string;
-      closure_status?: string;
-    };
-    return {
-      verdict: summary.verdict ?? '',
-      receipt_status: summary.receipt_status,
-      closure_status: summary.closure_status,
-      mtimeMs: fs.statSync(summaryPath).mtimeMs,
-    };
-  } catch {
-    return null;
-  }
+/** Current invocations own their stream; old records without that directory use the legacy path. */
+export function invocationOutputLogPath(runDir: string, phase: string, invokeId?: string): string {
+  const directory = invokeId ? path.join(runDir, 'phases', phase, invokeId) : null;
+  return directory && fs.existsSync(directory) ? path.join(directory, 'agent-output.log') : path.join(runDir, 'phases', phase, 'agent-output.log');
 }
 
 /**
@@ -1324,71 +1242,143 @@ export function isReceiptFreshForInvokeStart(
   }
 }
 
-function phaseHasTerminalVerdict(events: GoalRunEvent[], phase: FeaturePhase): boolean {
-  for (const e of events) {
-    if (e.type !== 'phase_verdict' || e.phase !== phase) continue;
-    if (e.action === 'retry') continue;
-    return true;
+// ============================================================================
+// plan 6fd6c8c1 §4.2：两种运输**共同**的调用完成事实与验证优先资格
+// ----------------------------------------------------------------------------
+// 旧实现分两处：deriveHaltValidationOnlyEligibility 只看 phase_halt（后台），
+// sessionValidationOnlyEligibility 只看 handoff_report（会话）。fe4512 coding-i3 的停机和
+// 新收尾的会话报告因此会得出不同的恢复资格。这里归一为一条判据：
+//   1. 找到最新的**作者已完成**调用事实（进程 settled 或会话 handoff report）；
+//   2. 该事实之后不得有新的执行、回退、失效或**产品裁决**（PASS/FAIL 以外的停机投影除外）；
+//   3. 中断窗口（phase_halt WAITING 或 phase_verdict 的停机投影）只用于选择事实形状，
+//      由调用方决定是否要求（requireInterrupt）；运输差异只保留“进程要求 harness_end、
+//      会话要求 report 绑定同一 request”这两种完成观察适配。
+// 不保存第三份资格状态：输入是事件与可选产物谓词，输出仍是 {phase, invoke_id}。
+// ============================================================================
+
+export type InvocationTransport = 'process' | 'session';
+
+export interface InvocationCompletionFact {
+  phase: string;
+  invoke_id: string;
+  transport: InvocationTransport;
+  /** 事实在事件流中的下标（调用方只读；不持久化）。 */
+  index: number;
+}
+
+export interface ValidationOnlyOptions {
+  /** 是否必须有中断窗口（回复路径要求；会话报告消费不要求——pending report 本身即停等）。 */
+  requireInterrupt?: boolean;
+  /** 产物/写入事实在场谓词；缺省不额外要求（由正式 gate 复查）。 */
+  artifactsOk?: (fact: InvocationCompletionFact) => boolean;
+  phase?: string;
+  /** 当前共同处置要求重核的原发现；只有调用方同时验证产物/业务输入时才可复用旧外层 FAIL。 */
+  verificationRequiredFindingIds?: readonly string[];
+}
+
+/** 停机投影：不是“产品通过/失败”，而是“作者已完成、只差验证”的中断形状。 */
+export function isInterruptionVerdict(event: Record<string, unknown>): boolean {
+  if (event.type !== 'phase_verdict') return false;
+  // 普通 FAIL(action=halt) 是真实失败，不派生验证优先；只有框架自身故障/外部条件推迟才是中断投影。
+  if (event.failure_kind === 'framework_bug') return true;
+  return event.verdict === 'INCOMPLETE'
+    && (event.action === 'defer_external_and_continue_if_allowed' || event.action === 'defer_external_and_halt');
+}
+
+function phaseOf(event: Record<string, unknown>): string | null {
+  return typeof event.phase === 'string' && event.phase.length > 0 ? event.phase : null;
+}
+
+/**
+ * 统一入口。两运输共用同一份“最新事实 + 后来失效”判断；包装函数（goal-phase-runtime 的
+ * deriveHaltValidationOnlyEligibility、session-execution-handoff 的 sessionValidationOnlyEligibility）
+ * 只传 requireInterrupt，不再各自裁决业务资格。
+ */
+export function resolveValidationOnlyEligibility(
+  events: ReadonlyArray<Record<string, unknown>>,
+  opts: ValidationOnlyOptions = {},
+): { phase: string; invoke_id: string } | null {
+  let fact: InvocationCompletionFact | null = null;
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index];
+    const phase = phaseOf(event);
+    if (!phase || opts.phase && phase !== opts.phase) continue;
+    const invokeId = typeof event.invoke_id === 'string' && event.invoke_id.length > 0 ? event.invoke_id : null;
+    if (!invokeId || event.timed_out === true || event.kill_reason === 'agent_timeout') continue;
+    const start = [...events.slice(0, index)].reverse().find(row => row.type === 'agent_invoke_start'
+      && row.invoke_id === invokeId && phaseOf(row) === phase);
+    const chainPhase = event.chain_phase ?? start?.chain_phase;
+    if (typeof chainPhase === 'string' && chainPhase && chainPhase !== phase) continue;
+    // 进程运输：settled 是完成观察；有 repair 请求时还须该请求的修复调用已完成。
+    if (event.type === 'agent_process_settled') {
+      if (!events.slice(index + 1).some(row => row.type === 'harness_end' && phaseOf(row) === phase && row.invoke_id === invokeId)) continue;
+      const ownerRequest = [...events].reverse().find(row => row.type === 'phase_backtrack_requested');
+      if (ownerRequest?.to_phase === phase && !repairInvocationCompleted(events as never, phase, invokeId)) continue;
+      fact = { phase, invoke_id: invokeId, transport: 'process', index };
+      break;
+    }
+    // 会话运输：handoff report 是完成观察；必须绑定同一 request 的 phase_start。
+    if (event.type === 'agent_invoke_end' && event.handoff_report) {
+      if ((event as { chain_phase?: unknown }).chain_phase && (event as { chain_phase?: unknown }).chain_phase !== phase) continue;
+      if (event.status === 'waiting') continue;
+      const report = event.handoff_report as { request_sha256?: unknown };
+      if (typeof report?.request_sha256 !== 'string') continue;
+      const issued = events.slice(0, index).reverse().find(row => row.type === 'phase_start'
+        && (row.handoff_request as { sha256?: unknown } | undefined)?.sha256 === report.request_sha256);
+      if (!issued) continue;
+      fact = { phase, invoke_id: invokeId, transport: 'session', index };
+      break;
+    }
   }
-  return false;
-}
+  if (!fact) return null;
+  if (opts.artifactsOk && !opts.artifactsOk(fact)) return null;
 
-function phaseHasRecoveredVerdict(events: GoalRunEvent[], phase: FeaturePhase): boolean {
-  for (const e of events) {
-    if (e.type === 'phase_verdict' && e.phase === phase && e.recovered === true) return true;
+  const designAttempt = [...events].reverse().find(event => event.type === 'design_authority_repair' && event.phase === fact!.phase
+    && event.stage === 'attempted' && event.handoff_context);
+  const designWaiting = !!designAttempt && events.slice(events.indexOf(designAttempt) + 1).some(event => event.type === 'agent_invoke_end'
+    && event.chain_phase === fact!.phase && event.status === 'waiting' && (event.purpose === 'author' || event.purpose === 'questioning'))
+    && !events.slice(events.indexOf(designAttempt) + 1).some(event => event.type === 'design_authority_repair'
+      && event.signature === designAttempt.signature && (event.stage === 'failed' || event.stage === 'published'));
+
+  const after = events.slice(fact.index + 1);
+  let interruptSeen = false;
+  for (const event of after) {
+    if (event.type === 'run_end' && event.status === 'INTERRUPTED') interruptSeen = true;
+    // 新回退窗口优先：任何 halt 之后的 backtrack 都把资格交给 applyInvalidationsToResume，
+    // 旧 settled 不得覆盖新窗口（review P1；会话与后台同判）。
+    if (event.type === 'phase_backtrack_requested') return null;
+    if (event.type === 'phase_invalidated' && phaseOf(event) === fact.phase) return null;
+    if (event.type === 'agent_invoke_start' && phaseOf(event) === fact.phase) return null;
+    if (phaseOf(event) !== fact.phase) continue;
+    if (event.type === 'agent_process_settled' || event.type === 'agent_invoke_end') return null;
+    if (isInterruptionVerdict(event)) { interruptSeen = true; continue; }
+    // 产品裁决（PASS/FAIL/其它 verdict）说明该阶段已经重新判定过，旧事实不再是“只差验证”。
+    if (event.type === 'phase_verdict') {
+      // The original author ended before the chain-external design responsibility
+      // paused. Re-run the real gate/transaction, not that already completed author.
+      if (designWaiting && event.action === 'halt' && event.run_disposition === 'WAITING') { interruptSeen = true; continue; }
+      const ids = typeof event.blocker_signature === 'string' ? event.blocker_signature.split('|').filter(Boolean) : [];
+      const original = event.reconcile_observation as { blockers?: unknown[]; deterministic_defects?: unknown[]; signals?: Record<string, unknown> } | undefined;
+      const gate = [...events.slice(fact.index + 1, events.indexOf(event))].reverse().find(row => row.type === 'harness_end'
+        && row.phase === fact!.phase && row.invoke_id === fact!.invoke_id);
+      const findingReverification = !!opts.artifactsOk && !!opts.verificationRequiredFindingIds?.length
+        && event.invoke_id === fact.invoke_id && event.verdict === 'FAIL' && event.harness_exit === 0
+        && event.stale_summary === false && event.agent_failed === false && gate?.exit_code === 0 && gate.timed_out !== true
+        && ids.length > 0 && ids.every(id => id.startsWith('open_finding:') && opts.verificationRequiredFindingIds!.includes(id))
+        && Array.isArray(original?.blockers) && original.blockers.length === 0
+        && Array.isArray(original?.deterministic_defects) && original.deterministic_defects.length === 0
+        && !Object.values(original.signals ?? {}).some(Boolean);
+      if (!findingReverification) return null;
+      interruptSeen = true;
+    }
+    if (event.type === 'phase_halt' && event.run_disposition === 'WAITING') interruptSeen = true;
   }
-  return false;
-}
-
-/** Detect half-completed phase eligible for resume recovery (fresh PASS summary, unclosed invoke). */
-export function detectHalfCompletedPhaseRecovery(
-  events: GoalRunEvent[],
-  projectRoot: string,
-  feature: string,
-): { phase: FeaturePhase; invokeStartTs: string } | null {
-  const unclosed = findUnclosedAgentInvokeStart(events);
-  if (!unclosed?.phase || !unclosed.ts) return null;
-
-  const phase = unclosed.phase as FeaturePhase;
-  if (phaseHasTerminalVerdict(events, phase) || phaseHasRecoveredVerdict(events, phase)) {
-    return null;
+  // process 候选已逐条核过对应 harness_end；session report 自带完成观察。
+  if (opts.requireInterrupt && !interruptSeen) {
+    // 新中断窗口（halt/verdict）之外，也接受旧 phase_halt WAITING 形状（后台普通停等）。
+    const halts = events.filter(event => event.type === 'phase_halt' && phaseOf(event) === fact!.phase
+      && event.run_disposition === 'WAITING');
+    if (!halts.length) return null;
   }
-
-  const summary = readPhaseSummaryPassReceipt(projectRoot, feature, phase);
-  if (!summary || summary.verdict !== 'PASS') return null;
-  if (summary.closure_status !== 'closed') return null;
-
-  const startMs = new Date(unclosed.ts).getTime();
-  if (Number.isNaN(startMs) || summary.mtimeMs <= startMs) return null;
-
-  return { phase, invokeStartTs: unclosed.ts };
-}
-
-export interface HalfPhaseRecoveryEvent {
-  type: string;
-  phase: FeaturePhase;
-  [key: string]: unknown;
-}
-
-/** Build compensation events for half-completed phase (orchestrator writes before rebuild). */
-export function buildHalfPhaseRecoveryEvents(
-  detected: { phase: FeaturePhase; invokeStartTs: string },
-): HalfPhaseRecoveryEvent[] {
-  const ts = new Date().toISOString();
-  return [
-    {
-      type: 'agent_invoke_recovered',
-      ts,
-      phase: detected.phase,
-      invoke_start_ts: detected.invokeStartTs,
-    },
-    {
-      type: 'phase_verdict',
-      ts,
-      phase: detected.phase,
-      verdict: 'PASS',
-      action: 'advance',
-      recovered: true,
-    },
-  ];
+  return { phase: fact.phase, invoke_id: fact.invoke_id };
 }

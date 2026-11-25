@@ -1,3 +1,4 @@
+import { adapterModelBinding } from './adapter-model';
 /**
  * goal-runner preflight — adapter-aware / provenance-aware (not bare personal-setup gate).
  */
@@ -43,12 +44,16 @@ import { resolveUiRelevanceForRun } from './fidelity-shared';
 import {
   buildCanaryPrompt,
   generateRandomCanaryAnswerKey,
+  isModelUnsupportedFailure,
   renderCanaryImage,
   resolveCanaryCacheDecision,
   resolveCanaryHardCliFailure,
   resolveCanaryStdoutEnvelope,
   VISION_CANARY_PROBE_VERSION,
 } from './vision-canary';
+
+/** 金丝雀单次调用的固定允许时长；实际取它与剩余墙钟预算的较小者（plan 4e6fb3b6 §6.3）。 */
+export const VISION_CANARY_TIMEOUT_MS = 120_000;
 
 export type AdapterProvenance =
   | 'argv_adapter'
@@ -355,7 +360,7 @@ export function decideVisionCanaryProbe(input: {
   // 无 pin 时 modelPin=undefined，谓词精确退化为 canaryAdmissibleForRun（run 绑定一步不少，
   // 防 v5 公式把本处退化到只剩 fresh 而重新引入 07-24 跨 run 缓存事故）；pin 在场时才追加
   // 模型匹配（resume 改 pin 同 run_id 的旧模型缓存不再被跳过重探）。
-  const modelPin = manifest.adapter_model_pin?.value;
+  const modelPin = adapterModelBinding(manifest.adapter_model_pin);
   if (!forceRefresh && isVisionCanaryFresh(canary, adapter)) {
     if (canaryAdmissibleForExecution(canary, { runId: manifest.run_id, modelPin })) {
       return { action: 'skip', reason: 'fresh_cache_present' };
@@ -396,11 +401,19 @@ export async function runVisionCanaryProbe(input: {
   answerKeyFn?: typeof generateRandomCanaryAnswerKey;
   /** plan c4e8a1f7 T1a：session 级 resolved binary（与正式 invoke 同一绝对路径） */
   resolvedBinary?: ResolvedHeadlessBinary | null;
+  /** plan 4e6fb3b6 §6.3：单次允许时长——调用方取固定 120 秒与剩余墙钟预算的较小者；缺省 120 秒。 */
+  timeoutMs?: number;
+  /** 实际执行者的请求运输；使用同一随机卷、判卷与缓存，不探测另一个CLI。 */
+  executePrompt?: (prompt: string, answerKey: import('./vision-canary').CanaryAnswerKey, imagePath: string) => ReturnType<typeof invokeAgentHeadless>;
+  /** 非驻留运输待报告时保留本次调用材料。 */
+  retainMaterials?: () => boolean;
 }): Promise<{
   ran: boolean;
   outcome?: VisionCanaryProbeOutcome;
   verdict?: 'tool_read' | 'ocr_capable' | 'none';
   error?: string;
+  /** hard_cli_failure 且属"模型不受支持"（isModelUnsupportedFailure）——获准替代只看这一类。 */
+  modelUnsupported?: boolean;
 }> {
   const { projectRoot, frameworkRoot, manifest } = input;
   const adapter = (manifest.adapter ?? 'generic').trim() || 'generic';
@@ -427,23 +440,25 @@ export async function runVisionCanaryProbe(input: {
       FEATURE: manifest.feature,
       PHASE: manifest.start_phase,
     };
-    const plan = resolveHeadlessInvokePlan(
+    const plan = input.executePrompt ? null : resolveHeadlessInvokePlan(
       adapter,
       cap.capability,
       manifest.unattended,
       prompt,
       vars,
-      manifest.adapter_model_pin?.value,
+      adapterModelBinding(manifest.adapter_model_pin),
       input.resolvedBinary,
     );
-    const invoke = await (input.invokeFn ?? invokeAgentHeadless)(plan, projectRoot, { timeoutMs: 120_000 });
+    const invoke = input.executePrompt ? await input.executePrompt(prompt, answerKey, imagePath) : await (input.invokeFn ?? invokeAgentHeadless)(plan!, projectRoot, {
+      timeoutMs: input.timeoutMs ?? VISION_CANARY_TIMEOUT_MS,
+    });
     // plan d7f3a9c4 t4：硬失败分类在写盘判卷**之前**——child spawn race 与 CLI/config 参数
     // 不兼容只这两类升 hard_cli_failure（由 goal-runner 在 action==='probe' 真实路径升 BLOCKER）；
     // 其余 invoke 结果（auth/quota/API/无效答卷/超时/静默杀）保持既有非阻断语义。
     // "无有效 stdout" 复用 parseCanaryAnswer（传 answerKey）——CLI banner 等非答卷不压签名。
     // plan e6b3f8d2 t1：信封方言按 adapter 解析——claude 家族看 tool_event_provenance，
     // codex 自 `--json` 接入后恒为 JSONL（不做投影会把作答判成没作答）。
-    const canaryEnvelope = resolveCanaryStdoutEnvelope(adapter, cap.capability.tool_event_provenance);
+    const canaryEnvelope = input.executePrompt ? 'none' : resolveCanaryStdoutEnvelope(adapter, cap.capability.tool_event_provenance);
     const canaryStructuredStdout = canaryEnvelope !== 'none';
     const hardCli = resolveCanaryHardCliFailure(invoke, {
       answerKey,
@@ -451,26 +466,29 @@ export async function runVisionCanaryProbe(input: {
       ...(canaryStructuredStdout ? { structuredStdoutFormat: canaryEnvelope } : {}),
     });
     if (hardCli) {
-      return { ran: true, outcome: 'hard_cli_failure', error: hardCli };
+      return {
+        ran: true, outcome: 'hard_cli_failure', error: hardCli,
+        ...(isModelUnsupportedFailure(invoke) ? { modelUnsupported: true } : {}),
+      };
     }
     const decision = resolveCanaryCacheDecision({
-      stdout: invoke.stdout,
-      exitCode: invoke.exitCode,
-      timed_out: invoke.timed_out,
-      silent_killed: invoke.silent_killed,
-      skipped: invoke.skipped,
+      ...invoke,
       // P0-1（plan 7c4f2e9b）：claude+structured_events 的 stdout 是 NDJSON 信封，
       // 判卷前须归一投影——与 claudeArgv 注入条件严格同构。
       structured_stdout: canaryStructuredStdout,
       ...(canaryStructuredStdout ? { structured_stdout_format: canaryEnvelope } : {}),
     }, answerKey);
     if (decision.kind !== 'valid') {
-      // 调用失败时带出 adapter terminal 原文（codex turn.failed 等），不让 400/401 只剩一个 exitCode。
+      // 明确终态优先；缺席时保留 stderr 尾行供排障，不将其定性为失败原因（plan c3f8a2d7 §3.4）。
       const excerpt = decision.kind === 'invoke_failed' ? invoke.terminal_error_excerpt : undefined;
+      const stderrTail = decision.kind === 'invoke_failed' && !excerpt
+        ? (invoke.stderr ?? '').split(/\r?\n/).map(line => line.replace(/\x1b\[[0-?]*[ -/]*[@-~]|[\x00-\x1f\x7f]/g, ' ').trim()).filter(Boolean).pop()
+        : undefined;
       return {
         ran: true,
         outcome: decision.kind === 'invoke_failed' ? 'invoke_failed_not_cached' : 'invalid_not_cached',
-        error: excerpt ? `${decision.detail}：${excerpt.slice(0, 500)}` : decision.detail,
+        error: excerpt ? `${decision.detail}：${excerpt.slice(0, 500)}`
+          : stderrTail ? `${decision.detail}；stderr 尾行（仅供排障、未必是原因）：${stderrTail.slice(0, 500)}` : decision.detail,
       };
     }
     const existing = loadLocalConfig(projectRoot) ?? { schema_version: LOCAL_SCHEMA_VERSION };
@@ -489,7 +507,7 @@ export async function runVisionCanaryProbe(input: {
           // （cursor auto 等），诚实记 unknown；scope 判级据此封顶 run_probed 且不跨 run。
           // plan d7f3a9c4 t3：**pin 在场时前提不再成立**——模型是用户显式指定并已回放进
           // argv，receipt 记 pin.value（采信须模型匹配）；无 pin 时继续记 'unknown'（现状）。
-          model: manifest.adapter_model_pin?.value ?? 'unknown',
+          model: adapterModelBinding(manifest.adapter_model_pin) ?? 'unknown',
           probe_context: 'goal_preflight',
           run_id: manifest.run_id,
         },
@@ -506,7 +524,7 @@ export async function runVisionCanaryProbe(input: {
     // b7e4d2a9 Todo4：成功/失败/无效答卷三态都删随机卷 PNG；删除失败只警告不 HALT，
     // 不落事件不建清理账本——hard-kill 最坏残留当前 run 下一个固定文件。
     try {
-      fs.rmSync(imagePath, { force: true });
+      if (!input.retainMaterials?.()) fs.rmSync(imagePath, { force: true });
     } catch (rmErr) {
       console.warn(`[vision-canary] preflight 随机卷清理失败（不阻断）：${(rmErr as Error).message}`);
     }
@@ -713,7 +731,7 @@ export function evaluateFidelityTierPreflight(input: FidelityPreflightInput): Fi
       ? { requirementSourceFiles: manifest.requirement_source_files }
       : {}),
     // plan d7f3a9c4 t3：preflight 能力探测带最终裁决 pin（manifest 派生）。
-    ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
+    ...(manifest.adapter_model_pin ? { modelPin: adapterModelBinding(manifest.adapter_model_pin)! } : {}),
     // plan ab072691 t2①：视觉委托身份同样只从 manifest 冻结值派生（不重读 local）。
     ...(manifest.visual_provider_pin ? { visualProviderPin: manifest.visual_provider_pin } : {}),
     now: input.now,
@@ -773,7 +791,7 @@ function evaluateDownstreamStartFidelity(input: FidelityPreflightInput): Fidelit
   );
   const identity = {
     runId: manifest.run_id,
-    ...(manifest.adapter_model_pin ? { modelPin: manifest.adapter_model_pin.value } : {}),
+    ...(manifest.adapter_model_pin ? { modelPin: adapterModelBinding(manifest.adapter_model_pin)! } : {}),
   };
   const probe = resolveContextAdapterImageInput(projectRoot, frameworkRoot, manifest.adapter, identity);
   const ocrAvailable = resolveOcrAvailableForRun(projectRoot, input.profileDir ?? '', manifest.adapter, identity);

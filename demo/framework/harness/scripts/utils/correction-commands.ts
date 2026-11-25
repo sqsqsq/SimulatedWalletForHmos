@@ -57,6 +57,10 @@ import {
   type AdapterEnforcementManifest,
 } from './runtime-policy';
 import { isGoalOrchestrationEnv } from './phase-state';
+import { isBlockingCheck } from './check-disposition';
+import { standaloneReportDir } from './standalone-report-dir';
+import { inspectCompletionRecord } from './verify-feature-completion';
+import { resolveChangeUnitExpectedExecution } from './change-unit-completion';
 
 // --------------------------------------------------------------------------
 // 公共装配
@@ -88,7 +92,6 @@ function readActiveStateFeature(projectRoot: string): string | null {
 /**
  * 已闭环 phase 集（track-aware，cursor 批次 2 review P1）：
  *   - full：receipt 文件存在（§5.1 闭环判据的确定性侧）；
- *   - lite：receipt 或该 phase script-report verdict=PASS——lite 无 receipt 机器件，
  *     以 exit/change 脚本报告为过渡闭环判据；供修正路由的 revalidate 提示使用，
  *     C2 verification-matrix 统一 policy 后收敛为 receipt∨policy 判定。
  */
@@ -96,22 +99,13 @@ export function closedPhasesFor(
   projectRoot: string,
   feature: string,
   phases: readonly string[],
-  track: 'lite' | 'full',
+  track: 'full',
   frameworkRoot?: string,
 ): string[] {
   return phases.filter((p) => {
     try {
       if (fs.existsSync(resolveReceiptFilePath(projectRoot, feature, p).path)) return true;
-      if (track !== 'lite') return false;
-      const reportAbs = path.join(
-        featurePhaseReportsDir(projectRoot, feature, p, frameworkRoot),
-        'script-report.json',
-      );
-      if (!fs.existsSync(reportAbs)) return false;
-      const doc = JSON.parse(fs.readFileSync(reportAbs, 'utf-8')) as {
-        summary?: { verdict?: string };
-      };
-      return doc.summary?.verdict === 'PASS';
+      return false;
     } catch {
       return false;
     }
@@ -140,6 +134,17 @@ export function runCorrectionInit(projectRoot: string, opts: CorrectionInitOpts)
         return false;
       }
     },
+    hasTrustedCompletion: (feature) => {
+      try {
+        // 只检查历史记录，不把本轮代码/证据 drift 当成重新进入正式流程的理由。
+        return inspectCompletionRecord({
+          projectRoot, feature, frameworkRoot: opts.frameworkRoot,
+          ...resolveChangeUnitExpectedExecution(projectRoot, feature, false, opts.frameworkRoot),
+        }).verdict === 'VALID';
+      } catch {
+        return false; // 无可信完成记录（含旧 receipt-only Feature）维持既有归属。
+      }
+    },
   });
 
   if (target.kind === 'ask_user') {
@@ -158,7 +163,9 @@ export function runCorrectionInit(projectRoot: string, opts: CorrectionInitOpts)
   if (target.kind === 'feature') {
     // plan 07a41ec6 T1：feature 修正不写状态、无收口命令——三问只用于归责与重验提示，
     // 重验由 --revalidate 只跑脚本门禁；修正历史仍记进 feature.yaml（可追溯性，非契约）。
-    const routing = resolveFeatureCorrectionRouting(projectRoot, target.feature, opts.answers, opts.frameworkRoot);
+    let routing: FeatureCorrectionRouting;
+    try { routing = resolveFeatureCorrectionRouting(projectRoot, target.feature, opts.answers, opts.frameworkRoot); }
+    catch (error) { console.error(`correction-init: ${(error as Error).message}`); return 1; }
     appendFeatureCorrectionHistory(projectRoot, target.feature, {
       at: new Date().toISOString(),
       type: 'correction',
@@ -230,24 +237,23 @@ export function resolveFeatureCorrectionRouting(
 ): FeatureCorrectionRouting {
   const fw = loadFrameworkConfig(projectRoot);
   const spec = resolveWorkflowSpec(projectRoot, { config: fw, frameworkRoot });
-  // track 必须按**本 run** 解析：有效 run 是 full 而 feature.yaml 仍声明 lite 时，
-  // 不带 run id 会把 spec/plan 映射成 change，root_layer 与 in_scope 一起判错。
   const effectiveRunId = runId ?? process.env.MAISON_GOAL_RUN_ID?.trim();
   const track = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature, effectiveRunId));
   const closed = closedPhasesFor(projectRoot, feature, workflowFeaturePhases(spec, track), track, frameworkRoot);
-  const cls = classifyCorrection({ answers, spec, track, closedPhases: closed });
+  const scope = loadEffectiveExecutionScope(projectRoot, feature, effectiveRunId);
+  const cls = classifyCorrection({ answers, spec, track, closedPhases: closed, context: { projectRoot, feature,
+    frameworkRoot: frameworkRoot ?? inferRepoLayout(projectRoot).frameworkRoot, runId: effectiveRunId, workflow: spec, executionScope: scope } });
   const base = { feature, root_layer: cls.root_layer, touched_layers: cls.touched_layers, revalidate: cls.revalidate };
   // 责任阶段落在**有效范围**之外时只如实呈现（见上：不产提议、不落 backtrack_target_absent）。
   if (!effectiveRunId) return { ...base, in_scope: true };
-  const scope = loadEffectiveExecutionScope(projectRoot, feature, effectiveRunId);
   if (!scope) return { ...base, in_scope: true };
   const executable = new Set([...scope.phase_chain, ...scope.reused_phases.map(reuse => reuse.phase)]);
   if (executable.has(cls.root_layer)) return { ...base, in_scope: true };
   return { ...base, in_scope: false };
 }
 
-export function adhocReportsRoot(harnessRoot: string): string {
-  return path.join(harnessRoot, 'reports', '_adhoc');
+export function adhocReportsRoot(projectRoot: string): string {
+  return path.join(projectRoot, 'doc', 'reports', '_adhoc');
 }
 
 // --------------------------------------------------------------------------
@@ -308,7 +314,7 @@ function buildAdhocCheckContext(
   } as CheckContext;
 }
 
-const VERIFICATION_CATEGORIES = new Set(['verification', 'ut', 'testing', 'exit']);
+const VERIFICATION_CATEGORIES = new Set(['verification', 'ut', 'testing']);
 
 export async function runAdhocCorrection(
   projectRoot: string,
@@ -336,6 +342,8 @@ export async function runAdhocCorrection(
 
   const results: CheckResult[] = [];
   const ctx = buildAdhocCheckContext(projectRoot, harnessRoot, frameworkRoot);
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const outDir = standaloneReportDir(projectRoot, frameworkRoot, path.relative(projectRoot, path.join(adhocReportsRoot(projectRoot), ts)));
 
   // 1) changed-files：git diff base_commit ∪ 工作区（含 staged/untracked）
   const diff = diffChangedFiles({ projectRoot, baseRef: state.base_commit });
@@ -403,7 +411,7 @@ export async function runAdhocCorrection(
       status: 'PASS',
       details: 'capability SKIP：按 profile 声明跳过',
     });
-  } else if (!host) {
+  } else if (!host?.compileProject) {
     results.push({
       id: 'adhoc_compile',
       category: 'structure',
@@ -414,7 +422,7 @@ export async function runAdhocCorrection(
     });
   } else {
     try {
-      const rs = await host.checkCodingCompile(ctx);
+      const { checks: rs } = host.compileProject({ projectRoot, frameworkRoot, harnessRoot, resolvedProfile: ctx.resolvedProfile, reportDir: outDir });
       results.push(...rs.map((r) => ({ ...r, id: r.id.startsWith('adhoc_') ? r.id : `adhoc_${r.id}` })));
     } catch (err) {
       results.push({
@@ -550,10 +558,8 @@ export async function runAdhocCorrection(
   }
 
   // 报告落盘（确定性路径，不落 features_dir；不建临时假 feature 目录）
-  const ts = new Date().toISOString().replace(/[:.]/g, '-');
-  const outDir = path.join(adhocReportsRoot(harnessRoot), ts);
   fs.mkdirSync(outDir, { recursive: true });
-  const blockerFails = results.filter((r) => r.severity === 'BLOCKER' && r.status === 'FAIL');
+  const blockerFails = results.filter((r) => isBlockingCheck(r));
   const verdict = blockerFails.length === 0 ? 'PASS' : 'FAIL';
   const generatedAt = new Date().toISOString();
   fs.writeFileSync(

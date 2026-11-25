@@ -143,7 +143,7 @@ export function runRevalidate(
   const startedAt = new Date().toISOString();
   // plan 6c22ae8b：与 --sync-closure / --report-reconcile-only 同源取 run 身份；有身份时链 = run 有效范围。
   const runId = process.env.MAISON_GOAL_RUN_ID?.trim() || undefined;
-  const resolution = resolveUpstreamPhaseChain(projectRoot, feature, runId);
+  const resolution = resolveUpstreamPhaseChain(projectRoot, feature, runId, from, frameworkRoot);
   // 权威解析失败（已转交却无身份 / run 范围记录损坏）返回空链：不能当成"无需重验"写成功账本。
   if (resolution.degraded && resolution.chain.length === 0) {
     console.error(`错误: 无法确定 feature ${feature} 的执行范围权威：${resolution.degradedReason ?? '未知原因'}`);
@@ -152,7 +152,7 @@ export function runRevalidate(
   const chain = [...resolution.chain];
   const hasSummary = (phase: string): boolean =>
     fs.existsSync(path.join(featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot), 'summary.json'));
-  const before = recomputePhaseEvidenceStaleness(projectRoot, feature, chain, { frameworkRoot });
+  const before = recomputePhaseEvidenceStaleness(projectRoot, feature, chain, { frameworkRoot, runId, pendingOwnerPhase: from });
 
   console.log(`\n🔁 revalidate: feature=${feature}${from ? `, from=${from}` : ''}`);
   console.log(`   链：${chain.join(' → ')}${resolution.degraded ? `（workflow 链退化：${resolution.degradedReason}）` : ''}`);
@@ -169,7 +169,7 @@ export function runRevalidate(
   }
   const results: RevalidationPhaseResult[] = [];
   const writeRecord = (exitCode: number): void => {
-    const after = recomputePhaseEvidenceStaleness(projectRoot, feature, chain, { frameworkRoot });
+    const after = recomputePhaseEvidenceStaleness(projectRoot, feature, chain, { frameworkRoot, runId });
     const record = {
       schema_version: '1.0',
       feature,
@@ -218,7 +218,7 @@ export function runRevalidate(
     const run = spawnSync(
       isWin ? 'npx.cmd' : 'npx',
       ['ts-node', '--transpile-only', path.join(harnessRoot, 'harness-runner.ts'), '--phase', target.phase, '--feature', feature],
-      { cwd: harnessRoot, shell: isWin, stdio: 'inherit', env: { ...process.env, [REVALIDATE_ENV]: '1' } },
+      { windowsHide: true, cwd: harnessRoot, shell: isWin, stdio: 'inherit', env: { ...process.env, [REVALIDATE_ENV]: '1' } },
     );
     let summary = readSummary(projectRoot, feature, target.phase, frameworkRoot);
     const verdict = summary?.verdict ?? 'UNKNOWN';
@@ -255,7 +255,7 @@ export function runRevalidate(
     });
   }
 
-  const after = recomputePhaseEvidenceStaleness(projectRoot, feature, chain, { frameworkRoot });
+  const after = recomputePhaseEvidenceStaleness(projectRoot, feature, chain, { frameworkRoot, runId });
   const allFresh = after.every(s => s.verdict === 'fresh' || !hasSummary(s.phase));
   console.log('\n📋 revalidate 结果');
   console.log('| phase | 脚本 | 闭环 | verifier | 标注 |');

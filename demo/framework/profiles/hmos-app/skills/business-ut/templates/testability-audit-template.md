@@ -1,5 +1,7 @@
 # 可测性预检（testability-audit）模板
 
+有具体上游缺口时，可在既有 fenced YAML records 之外追加 review 同款 `## 问题清单`（ID、严重程度、涉及文件、问题描述/依据、修复建议、状态）；无问题不补表。涉及文件写要修的权威产物，依据用当前 `工程相对路径:行号` 引源码/日志。原 verifier 逐条核实后才交 owner；拒修理由返回 UT，不改断言洗绿。详见 `skills/reference/coding-workflow-detail.md` 的“可选上游问题与拒修返回”。
+
 > **产出路径**：`<features_dir>/<feature>/ut/testability-audit.md`
 > **时机**：business-ut · Step 1.5，**早于** DAG / mock-plan / `*.test.ets`。  
 > Harness 会静态校验：每条 `acceptance.yaml` 中 `ut_layer ∈ {unit, both}` 的 **AC/BD** 均有一条对应记录；**L3** 必须 `selected` 二选一并完成登记。
@@ -68,12 +70,7 @@ records:
 
 ## 可测性等级（L0–L3）
 
-| 等级 | 含义 | 典型特征 | UT 策略 |
-|------|------|----------|---------|
-| **L0** | 纯函数 / 无外部 IO | 仅入参→出参，无单例/系统 API | 直接单测 |
-| **L1** | 可注入 / 可替换边界 | 构造参数、工厂、可被 Spy 的类 | Spy / 子类化 |
-| **L2** | 可子类化或 seams | 非 final 类、`protected` 可覆盖、可命名方法抽出 | 子类 Spy / 包装类 |
-| **L3** | 不可测或成本过高 | 全局单例、inline lambda 内嵌、无接缝 | **必须 STOP**：`option_a` 降级 device-only **或** `option_b` 源码改造（回 coding owner 改造并重走 review→ut；gap-notes 只是记录，不放行 `ut_no_src_mutation`） |
+分级与行动复用 [共享 UT 方法](../../../../../skills/reference/business-ut-workflow-detail.md#共享-ut-方法)；本模板只包装正式 audit 的字段。L3 不授权 UT 改产品或降低验收，回既有责任方处理。
 
 ## 依赖 `kind` 与可选 `seam`
 
@@ -148,7 +145,7 @@ records:
         seam: none
     verdict: downgrade_device
     recommendation:
-      option_a: "标记 device-only，在 acceptance.yaml 对应条目填写 device_focus"
+      option_a: "提请 spec 裁定验收分层/device_focus；UT 不改 acceptance，不自批取消 unit 义务"
       option_b: "源码改造：交回 coding owner 完成 JumpManager 构造注入并重走 review→ut"
-    selected: option_a   # 用户确认后填写 option_a 或 option_b
+    selected: option_a   # 记录待裁定的定义问题，不代表获准降低验收
 ```

@@ -580,7 +580,7 @@ def run_tap_step(
         ...,
         "--json",
         "-j",
-        help='Planned tap JSON, e.g. {"touch":{"by_text":"OK"}}',
+        help='Touch JSON: mode normal (default)/double/long; long press_time defaults to 2 seconds. Example: {"touch":{"by_text":"OK","mode":"long","press_time":3}}',
     ),
     device_sn: Optional[str] = typer.Option(None, "--device-sn"),
     mock_port: Optional[int] = typer.Option(None, "--mock-port"),
@@ -780,7 +780,7 @@ def screenshot_cmd(
         ...,
         "--out",
         "-o",
-        help="Output image path (.jpeg or .png).",
+        help="Output image path (.png, .jpg or .jpeg; encoding follows suffix).",
     ),
     device_sn: Optional[str] = typer.Option(None, "--device-sn"),
     session: Optional[Path] = typer.Option(

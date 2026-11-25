@@ -14,6 +14,7 @@ import { sha256Bytes } from './component-blueprint-path';
 import {
   CHANGE_UNIT_ARTIFACT,
   ChangeUnitArtifact,
+  ChangeUnitIssue,
   ChangeUnitRecord,
   ChangeUnitRef,
   changeUnitNonEmpty,
@@ -24,7 +25,8 @@ import { blockerChangeUnitIssues, validateChangeUnit } from './change-unit-valid
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
 
 export class ChangeUnitResolutionError extends Error {
-  constructor(public readonly code: string, message: string) {
+  /** `issues`：仅 `change_unit_invalid` 携带验证器原始 issue（路线与原因码由消费方直接取，不猜错误码字符串）。 */
+  constructor(public readonly code: string, message: string, public readonly issues?: readonly ChangeUnitIssue[]) {
     super(message);
     this.name = 'ChangeUnitResolutionError';
   }
@@ -79,6 +81,8 @@ export function loadCanonicalChangeUnit(
   projectRoot: string,
   blueprintId: string,
   changeUnitId: string,
+  /** 展示收集器的本次文件快照；严格消费者默认仍从 canonical 读取。 */
+  sourceBytes?: Buffer,
 ): LoadedChangeUnit {
   const canonicalPath = changeUnitPath(projectRoot, blueprintId, changeUnitId);
   if (!fs.existsSync(canonicalPath)) {
@@ -87,7 +91,7 @@ export function loadCanonicalChangeUnit(
       `canonical Change Unit 不存在：${canonicalPath}；loader 不扫描 Feature/legacy 路径，不回退旧根 blueprint/component/。`,
     );
   }
-  const bytes = fs.readFileSync(canonicalPath);
+  const bytes = sourceBytes ?? fs.readFileSync(canonicalPath);
   let parsed: unknown;
   try {
     parsed = YAML.parse(bytes.toString('utf8'));
@@ -114,15 +118,19 @@ export function loadCanonicalChangeUnit(
 }
 
 /** M5A §8.1：枚举同一工作区子目录中含 change-unit.yaml 者（排除 blueprint/），按目录名排序。 */
-export function enumerateCanonicalChangeUnits(projectRoot: string, blueprintId: string): LoadedChangeUnit[] {
+export function enumerateCanonicalChangeUnitIds(projectRoot: string, blueprintId: string): string[] {
   const dir = changeUnitDirectory(projectRoot, blueprintId);
   if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir, { withFileTypes: true })
     .filter(entry => entry.isDirectory() && entry.name !== 'blueprint'
       && fs.existsSync(path.join(dir, entry.name, 'change-unit.yaml')))
     .map(entry => entry.name)
-    .sort((a, b) => a < b ? -1 : a > b ? 1 : 0)
-    .map(changeUnitId => loadCanonicalChangeUnit(projectRoot, blueprintId, changeUnitId));
+    .sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+}
+
+
+export function enumerateCanonicalChangeUnits(projectRoot: string, blueprintId: string): LoadedChangeUnit[] {
+  return enumerateCanonicalChangeUnitIds(projectRoot, blueprintId).map(id => loadCanonicalChangeUnit(projectRoot, blueprintId, id));
 }
 
 export function validateChangeUnitRefShape(value: unknown): ChangeUnitRef {
@@ -146,7 +154,7 @@ export function validateChangeUnitRefShape(value: unknown): ChangeUnitRef {
   return value as ChangeUnitRef;
 }
 
-export function createChangeUnitRef(loaded: LoadedChangeUnit): ChangeUnitRef {
+export function createChangeUnitRef(loaded: Pick<LoadedChangeUnit, 'changeUnit' | 'artifactSha256'>): ChangeUnitRef {
   const cu = loaded.changeUnit;
   return validateChangeUnitRefShape({
     artifact: CHANGE_UNIT_ARTIFACT,
@@ -158,9 +166,9 @@ export function createChangeUnitRef(loaded: LoadedChangeUnit): ChangeUnitRef {
   });
 }
 
-export function resolveChangeUnitRef(projectRoot: string, value: unknown): LoadedChangeUnit & { ref: ChangeUnitRef } {
+/** 纯 canonical 身份绑定，不读取 Feature 产物；严格消费者仍使用 resolveChangeUnitRef。 */
+export function resolveChangeUnitRefFromLoaded(loaded: LoadedChangeUnit, value: unknown): LoadedChangeUnit & { ref: ChangeUnitRef } {
   const ref = validateChangeUnitRefShape(value);
-  const loaded = loadCanonicalChangeUnit(projectRoot, ref.blueprint_id, ref.change_unit_id);
   const mismatches: string[] = [];
   if (loaded.changeUnit.component_id !== ref.component_id) {
     mismatches.push(`component_id yaml=${String(loaded.changeUnit.component_id)} ref=${ref.component_id}`);
@@ -190,7 +198,17 @@ export function resolveChangeUnitRef(projectRoot: string, value: unknown): Loade
     );
     throw new ChangeUnitResolutionError('change_unit_identity_mismatch', mismatches.join('；'));
   }
-  const issues = blockerChangeUnitIssues(validateChangeUnit(loaded.changeUnit, {
+  return { ...loaded, ref };
+}
+
+export function resolveChangeUnitRef(projectRoot: string, value: unknown, readers?: {
+  loadChangeUnit?: typeof loadCanonicalChangeUnit;
+  changeUnitIssues?: (root: string, loaded: LoadedChangeUnit) => ChangeUnitIssue[];
+}): LoadedChangeUnit & { ref: ChangeUnitRef } {
+  const ref = validateChangeUnitRefShape(value);
+  const loaded = (readers?.loadChangeUnit ?? loadCanonicalChangeUnit)(projectRoot, ref.blueprint_id, ref.change_unit_id);
+  resolveChangeUnitRefFromLoaded(loaded, ref);
+  const issues = blockerChangeUnitIssues(readers?.changeUnitIssues ? readers.changeUnitIssues(projectRoot, loaded) : validateChangeUnit(loaded.changeUnit, {
     projectRoot,
     canonicalPath: loaded.canonicalPath,
   }));
@@ -198,6 +216,7 @@ export function resolveChangeUnitRef(projectRoot: string, value: unknown): Loade
     throw new ChangeUnitResolutionError(
       'change_unit_invalid',
       `canonical Change Unit 未通过 schema/语义门：${issues.map(item => `${item.id}@${item.path}`).join(', ')}。`,
+      issues,
     );
   }
   const binding = inspectDerivedFeatureBinding(projectRoot, ref.blueprint_id, ref.change_unit_id, ref.component_id);
@@ -208,6 +227,25 @@ export function resolveChangeUnitRef(projectRoot: string, value: unknown): Loade
     );
   }
   return { ...loaded, ref };
+}
+
+/** `validateChangeUnit` 对「蓝图已升到更高 admitted revision、CU 仍指旧 revision」的 issue id。 */
+export const BLUEPRINT_REF_STALE_ISSUE = 'change_unit_blueprint_ref_stale';
+
+/**
+ * plan 9c3d7e1a §3：只读判别「仅发现指针过期、可以尝试机械调和」——canonical CU 的 BLOCKER 只有
+ * `change_unit_blueprint_ref_stale`。不是「纯指针问题」的证明：新蓝图内容坏了或 carry-forward 不过在这一步看不出来，
+ * 由调和器的跳过条件与调和后的重评兜住。非 CU feature、CU 加载失败一律 false。
+ */
+export function pointerStaleCandidate(projectRoot: string, feature: string): boolean {
+  try {
+    const identity = parseCuFeatureId(feature);
+    const loaded = loadCanonicalChangeUnit(projectRoot, identity.blueprintId, identity.changeUnitId);
+    const blockers = blockerChangeUnitIssues(validateChangeUnit(loaded.changeUnit, { projectRoot, canonicalPath: loaded.canonicalPath }));
+    return blockers.length > 0 && blockers.every(item => item.id === BLUEPRINT_REF_STALE_ISSUE);
+  } catch {
+    return false;
+  }
 }
 
 /** M5A §5.4 Feature binding 状态机（CU 目录与 Feature 目录合一后）。 */
@@ -251,6 +289,7 @@ export function inspectDerivedFeatureBinding(
     const contracts = YAML.parse(fs.readFileSync(contractsPath, 'utf8')) as unknown;
     const root = isChangeUnitRecord(contracts) ? contracts : undefined;
     const section = isChangeUnitRecord(root?.change_unit) ? root!.change_unit as ChangeUnitRecord : undefined;
+    if (root && !section) return { status: 'in_progress', featureId, featurePath };
     const ref = validateChangeUnitRefShape(section?.change_unit_ref);
     if (ref.blueprint_id !== blueprintId || ref.change_unit_id !== changeUnitId
       || (componentId !== undefined && ref.component_id !== componentId)) {

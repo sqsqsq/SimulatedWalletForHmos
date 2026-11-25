@@ -18,6 +18,7 @@ import { loadLocalConfig } from './framework-local-config';
 import {
   defaultProcessProbe,
   reclaimManagedDevice,
+  classifyTargetKind,
   spawnManagedDevice,
   type ManagedProcessIdentity,
 } from './device-session';
@@ -413,13 +414,13 @@ const PIN_CONTAINER_ID = 'Digital_PSD_Input_Tip';
  * 锁屏跳到别处；若那个界面也有 0–9（应用支付密码框等），PIN 就会被逐位敲进该应用。
  * 现在键位只从**被判定为锁屏的那棵树**的锁屏根组件子树里取，非锁屏时恒为空。
  */
-export function readLockScreenSnapshot(serial: string): LockScreenSnapshot {
+export function readLockScreenSnapshot(serial: string, execute: (args: string[]) => { ok: boolean; out: string } = runHdc): LockScreenSnapshot {
   const unavailable = (): LockScreenSnapshot => ({
     locked: undefined,
     keypad: [],
     cooldown: { state: 'ambiguous', ruleId: 'snapshot_unavailable' },
   });
-  const raw = dumpLayoutJson(serial);
+  const raw = dumpLayoutJson(serial, execute);
   if (raw === null) return unavailable();
   let tree: unknown;
   try {
@@ -434,7 +435,10 @@ export function readLockScreenSnapshot(serial: string): LockScreenSnapshot {
 export function parseLockScreenTree(tree: unknown): LockScreenSnapshot {
   const lockRoot = findLockRoot(tree);
   if (!lockRoot) {
-    return { locked: false, keypad: [], cooldown: { state: 'not_cooldown', ruleId: 'not_locked' } };
+    const focused = childrenOf(tree).map(nodeAttrs).find(attrs => attrs?.focused === true || attrs?.focused === 'true');
+    const systemSetup = focused?.bundleName === 'com.huawei.hmos.hwstartupguide'
+      ? { bundleName: focused.bundleName } : undefined;
+    return { locked: false, keypad: [], cooldown: { state: 'not_cooldown', ruleId: 'not_locked' }, ...(systemSetup ? { systemSetup } : {}) };
   }
   const lockBounds = boundsOf(lockRoot);
   const kp = collectDigitKeysWithDiag(lockRoot);
@@ -452,12 +456,12 @@ export function probeScreenLocked(serial: string): boolean | undefined {
   return readLockScreenSnapshot(serial).locked;
 }
 
-function dumpLayoutJson(serial: string): string | null {
-  const dump = runHdc(['-t', serial, 'shell', 'uitest', 'dumpLayout']);
+function dumpLayoutJson(serial: string, execute: (args: string[]) => { ok: boolean; out: string } = runHdc): string | null {
+  const dump = execute(['-t', serial, 'shell', 'uitest', 'dumpLayout']);
   if (!dump.ok) return null;
   const m = dump.out.match(/layout_(\d+)\.json/);
   if (!m) return null;
-  const cat = runHdc(['-t', serial, 'shell', 'cat', `/data/local/tmp/layout_${m[1]}.json`]);
+  const cat = execute(['-t', serial, 'shell', 'cat', `/data/local/tmp/layout_${m[1]}.json`]);
   if (!cat.ok || !cat.out.trim()) return null;
   return cat.out;
 }
@@ -782,12 +786,15 @@ export function resolveAttemptCredentialRef(projectRoot: string): string | null 
   const frozen = process.env.MAISON_DEVICE_CREDENTIAL_REF?.trim();
   if (frozen) return frozen;
   if (process.env.MAISON_DEVICE_ATTEMPT_FROZEN === '1') return null;
+  // Select-only has frozen permission, while its readiness gate is still pending.
+  if (process.env.MAISON_DEVICE_ATTEMPT_FROZEN === '0'
+    && process.env.HARNESS_HDC_TARGET?.trim() && process.env.MAISON_DEVICE_SESSION_ID?.trim()) return null;
   return resolveUnlockCredentialRef(projectRoot);
 }
 
 export function buildDeviceReadinessInput(projectRoot: string): DeviceReadinessInput {
   const emulatorProfile = resolveEmulatorProfile(projectRoot);
-  const unlockRef = resolveUnlockCredentialRef(projectRoot);
+  const unlockRef = resolveAttemptCredentialRef(projectRoot);
   const deps: DeviceReadinessDeps = {
     listTargets: listHdcTargets,
     isLocked: probeScreenLocked,
@@ -876,6 +883,7 @@ function credentialIsReady(ref: string | null, serial?: string): boolean {
 export function probeDeviceReadiness(
   projectRoot: string,
   probe: ReadinessProbeName = 'device_readiness',
+  requirePhysical = false,
 ): DeviceReadinessProbeResult {
   const input = buildDeviceReadinessInput(projectRoot);
   const targets = input.deps.listTargets().map(s => s.trim()).filter(Boolean);
@@ -894,7 +902,7 @@ export function probeDeviceReadiness(
           keypad: [],
           cooldown: { state: 'ambiguous' as const, ruleId: 'snapshot_unavailable' },
         });
-  return evaluateDeviceReadinessProbe(
+  const result = evaluateDeviceReadinessProbe(
     {
       configuredSerial: configured,
       targets,
@@ -903,4 +911,9 @@ export function probeDeviceReadiness(
     },
     probe,
   );
+  if (result.ready && requirePhysical && selectedSerial && classifyTargetKind({ serial: selectedSerial,
+    knownEmulatorSerials: input.deps.knownEmulatorSerials?.() ?? [], physicalAttested: input.deps.attestPhysical?.(selectedSerial) }) !== 'physical') {
+    return { ...result, ready: false, reason: '当前目标没有 physical 正面证据；仍需真机条件' };
+  }
+  return result;
 }

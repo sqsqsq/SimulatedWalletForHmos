@@ -7,12 +7,15 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+/** SDK 点分命名空间不是可声明的 ohpm vendor scope；架构和构建归因共用。 */
+export const SDK_RESERVED_SCOPE = /^@(?:ohos|kit|system|arkts)(?:\.|$)/i;
+
 function readFileIfExists(filePath: string): string | null {
   if (!fs.existsSync(filePath)) return null;
   return fs.readFileSync(filePath, 'utf-8');
 }
 
-function parseJson5(content: string): unknown {
+export function parseJson5(content: string): unknown {
   let stripped = content.replace(/^\s*\/\/.*$/gm, '');
   stripped = stripped.replace(/([^"':])\s*\/\/.*$/gm, '$1');
   stripped = stripped.replace(/\/\*[\s\S]*?\*\//g, '');

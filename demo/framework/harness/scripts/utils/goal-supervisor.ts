@@ -25,18 +25,8 @@
 import { reduceRunState, supervisorAction, type SupervisorAction } from './run-state-reducer';
 import { assessLivenessBeacon, isBeaconStale, readLivenessBeacon } from './liveness-beacon';
 import type { ProcessProbe } from './device-session';
-
-/** 单 run 的重启上限——防重启风暴。超过即停手并留痕，绝不无限拉。 */
-export const MAX_SUPERVISED_RESTARTS = 3;
-
-/** 退避基数；第 n 次重启前等待 base × 2^(n-1)（指数退避，上界见 MAX_BACKOFF_MS）。 */
-export const RESTART_BACKOFF_BASE_MS = 30_000;
-export const MAX_RESTART_BACKOFF_MS = 10 * 60_000;
-
-export function restartBackoffMs(restartsSoFar: number): number {
-  if (restartsSoFar <= 0) return 0;
-  return Math.min(RESTART_BACKOFF_BASE_MS * 2 ** (restartsSoFar - 1), MAX_RESTART_BACKOFF_MS);
-}
+import { canRecheckLegacyBacktrackLimit } from './goal-runner-phase';
+import { invocationCompleted } from './invocation-completion';
 
 export type SupervisorDecision =
   | { action: 'no_op'; reason: string }
@@ -45,21 +35,20 @@ export type SupervisorDecision =
       reason: string;
       backoff_ms: number;
       restart_seq: number;
-      successor_required?: boolean;
-      successor_start_phase?: string;
     }
   | { action: 'never_restart'; reason: string }
-  /** 重启次数已达上限——与 never_restart 分开，便于报告区分「结构上不该重启」与「已重启太多次」 */
-  | { action: 'restart_budget_exhausted'; reason: string; restarts: number };
+  ;
 
 export interface SupervisorInput {
   /** run 的 events（authoritative 顺序）——只用于折叠 disposition 投影 */
   events: readonly unknown[];
-  /** 本 run 已由 supervisor 重启过几次（从 events 的 supervisor_restart 计数） */
+  /** 已由 supervisor 重启过几次（events 的 supervisor_restart 计数；后继 run 另加同一交付周期内被承接 run 的次数——上限不因起后继重置） */
   restartsSoFar: number;
   beaconStale: boolean;
   /** Same-source condition probe recorded on a machine-observable WAITING halt. */
   condition?: { probe: string; ready: boolean; reason?: string; phase?: string };
+  /** Current policy rechecked against original hard resources at the public entry. */
+  legacyLimitRecheck?: boolean;
 }
 
 function eventAtCurrentProjection(
@@ -71,39 +60,34 @@ function eventAtCurrentProjection(
   return raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
 }
 
+/**
+ * 当前投影的来源事件若是带探针的 WAITING(external)，返回探针与责任阶段。
+ * plan 4e6fb3b6 §5.2：以 HALTED 收尾时 run_end 复制停机事件的处置字段，来源事件随之变成
+ * run_end——它同样带 probe（责任阶段记在 probe_phase，run_end 本身没有 phase），判据与停机事件相同。
+ */
 function currentExternalWaitingProbe(
   events: readonly unknown[],
   sourceEventIndex: number | null,
 ): { probe: string; phase?: string } | null {
   const event = eventAtCurrentProjection(events, sourceEventIndex);
   if (
-    !event || event.type !== 'phase_halt' || event.run_disposition !== 'WAITING' ||
+    !event || (event.type !== 'phase_halt' && event.type !== 'run_end') ||
+    event.run_disposition !== 'WAITING' ||
     event.run_wait_kind !== 'external' || typeof event.probe !== 'string' || !event.probe.trim()
   ) {
     return null;
   }
+  const phase = event.type === 'run_end' ? event.probe_phase : event.phase;
   return {
     probe: event.probe.trim(),
-    ...(typeof event.phase === 'string' && event.phase.trim() ? { phase: event.phase.trim() } : {}),
+    ...(typeof phase === 'string' && phase.trim() ? { phase: phase.trim() } : {}),
   };
 }
 
-function currentSuccessorRequest(
-  events: readonly unknown[],
-  sourceEventIndex: number | null,
-): string | null {
-  const event = eventAtCurrentProjection(events, sourceEventIndex);
-  if (event?.type !== 'phase_halt' || event.successor_required !== true) return null;
-  // runner-owned-machine-facts 收口（codex）：事件显式声明后继起点时**优先**——halt 发生
-  // 的 phase 不一定是该重跑的 phase（coding-start 链 plan closure 漂移：halt 在 coding、
-  // 后继须从 plan 起；review 基线缺口：halt 在 review、后继须回 coding）。按 event.phase
-  // 推导会原地重启、反复撞同一缺口。
-  const explicit =
-    typeof event.successor_start_phase === 'string' && event.successor_start_phase.trim()
-      ? event.successor_start_phase.trim()
-      : null;
-  if (explicit) return explicit;
-  return typeof event.phase === 'string' && event.phase.trim() ? event.phase.trim() : null;
+/** run 当前有效的「带探针的 WAITING(external)」：supervisor 唤醒与接续决策（plan 9c3d7e1a §5.3）共用这一个提取，不各写一份。 */
+export function externalWaitingProbe(events: readonly unknown[]): { probe: string; phase?: string } | null {
+  const state = reduceRunState(events);
+  return state.run_disposition === 'WAITING' ? currentExternalWaitingProbe(events, state.source_event_index) : null;
 }
 
 /**
@@ -112,6 +96,7 @@ function currentSuccessorRequest(
  */
 export function decideSupervision(input: SupervisorInput): SupervisorDecision {
   const state = reduceRunState(input.events);
+  if (input.legacyLimitRecheck) state.run_disposition = 'RESUME_READY';
   const waitingProbe = currentExternalWaitingProbe(input.events, state.source_event_index);
   const probeWokeWaiting =
     input.beaconStale &&
@@ -119,7 +104,6 @@ export function decideSupervision(input: SupervisorInput): SupervisorDecision {
     waitingProbe !== null &&
     input.condition?.probe === waitingProbe.probe &&
     input.condition.ready === true;
-  const successorStartPhase = currentSuccessorRequest(input.events, state.source_event_index);
   const base: SupervisorAction = probeWokeWaiting
     ? 'resume'
     : supervisorAction({
@@ -138,23 +122,30 @@ export function decideSupervision(input: SupervisorInput): SupervisorDecision {
   if (base === 'never_restart') {
     return { action: 'never_restart', reason: `run_disposition=${state.run_disposition}——结构上无法继续` };
   }
-  // base === 'resume'
-  if (input.restartsSoFar >= MAX_SUPERVISED_RESTARTS) {
-    return {
-      action: 'restart_budget_exhausted',
-      restarts: input.restartsSoFar,
-      reason:
-        `已由 supervisor 重启 ${input.restartsSoFar} 次（上限 ${MAX_SUPERVISED_RESTARTS}）——` +
-        '停手求人：反复拉起同一个 run 说明问题不在进程死亡本身',
-    };
+  const events = input.events.filter(event => !!event && typeof event === 'object') as Record<string, unknown>[];
+  const restartedAt = events.map(event => event.type === 'supervisor_restart').lastIndexOf(true);
+  if (restartedAt >= 0) {
+    const after = [...events.slice(restartedAt + 1)].reverse().find(event => event.type === 'run_end');
+    const returned = events.slice(restartedAt + 1, after ? events.indexOf(after) : undefined).some(event => {
+      if (typeof event.invoke_id !== 'string') return false;
+      const preceding = events.slice(0, events.indexOf(event));
+      const startType = event.type === 'agent_invoke_end' ? 'agent_invoke_start' : event.type === 'harness_end' ? 'harness_start' : undefined;
+      if (!startType || !preceding.some(row => row.type === startType && row.invoke_id === event.invoke_id)
+        || preceding.some(row => row.type === event.type && row.invoke_id === event.invoke_id)) return false;
+      return event.type === 'agent_invoke_end' ? invocationCompleted({ ...event, exitCode: event.exit_code })
+        : typeof event.exit_code === 'number' && !event.timed_out && !event.skipped && event.status !== 'waiting';
+    });
+    if (input.condition?.ready !== true && after?.reason === 'uncaught_exception' && !returned) {
+      return { action: 'no_op', reason: `原运行器重启后尚无真实完成交回便再次异常：${String(after.error ?? '异常原文未知')}。成果保留；恢复该执行能力或用户明确继续后接原run，不按旧重启次数终态退出。` };
+    }
+    if (!events.slice(restartedAt + 1).some(event => event.type === 'run_start' || event.type === 'resume')) {
+      return { action: 'no_op', reason: '原启动请求尚未有真实run_start/交回；保留原调用，等待该启动结果或恢复原执行能力，不重发同一启动。' };
+    }
   }
   return {
     action: 'resume',
-    ...(successorStartPhase
-      ? { successor_required: true, successor_start_phase: successorStartPhase }
-      : {}),
     restart_seq: input.restartsSoFar + 1,
-    backoff_ms: restartBackoffMs(input.restartsSoFar),
+    backoff_ms: 0,
     reason:
       `beacon 陈旧（进程已死）且 run_disposition=${state.run_disposition}——` +
       (state.run_disposition === 'RECOVERY_PENDING'
@@ -180,9 +171,14 @@ export function superviseRun(args: {
   projectRoot: string;
   reportDir: string;
   runId: string;
+  feature?: string;
   events: readonly unknown[];
+  /** Restart accounting stays on the original request while execution signals may come from a child. */
+  restartEvents?: readonly unknown[];
   probe?: ProcessProbe;
   conditionProbe?: (probe: string, phase?: string) => { ready: boolean; reason?: string };
+  /** plan 9c3d7e1a §5.2：被本 run 承接的、同一交付周期内未完成 run 上已记的重启次数（起后继不重置上限）。 */
+  inheritedRestarts?: number;
 }): SupervisorDecision {
   const beacon = readLivenessBeacon(args.projectRoot, args.reportDir);
   const verdict = assessLivenessBeacon({ beacon, runId: args.runId, probe: args.probe });
@@ -190,7 +186,10 @@ export function superviseRun(args: {
   const waitingProbe = currentExternalWaitingProbe(args.events, state.source_event_index);
   return decideSupervision({
     events: args.events,
-    restartsSoFar: countSupervisorRestarts(args.events),
+    legacyLimitRecheck: !!args.feature && canRecheckLegacyBacktrackLimit({
+      projectRoot: args.projectRoot, feature: args.feature, runId: args.runId, events: args.events,
+    }),
+    restartsSoFar: countSupervisorRestarts(args.restartEvents ?? args.events) + (args.inheritedRestarts ?? 0),
     beaconStale: isBeaconStale(verdict),
     condition: (() => {
       if (!waitingProbe || !args.conditionProbe) return undefined;

@@ -2,9 +2,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { ChangeUnitArtifact } from './change-unit-model';
-import { changeUnitPath, loadCanonicalChangeUnit } from './change-unit-path';
+import { changeUnitPath, loadCanonicalChangeUnit, type LoadedChangeUnit } from './change-unit-path';
 import { assertValidChangeUnit } from './change-unit-validator';
-import { validateChangeUnitDesign } from './change-unit-design-gate';
+import { validateChangeUnitDesign, readChangeUnitDesignOwnership } from './change-unit-design-gate';
 
 export type ChangeUnitProviderSeam = 'cu_decomposition' | 'relation_ready_analysis' | 'candidate_selection';
 
@@ -44,6 +44,7 @@ export function validateChangeUnitProviderBoundary(
 export interface ChangeUnitCandidate {
   providerId: string;
   artifact: ChangeUnitArtifact;
+  construction_mapping?: import('./blueprint-skill-projection').ChangeUnitConstructionMapping;
 }
 
 export function dropUnacceptedChangeUnitCandidates(_candidates: readonly ChangeUnitCandidate[]): ChangeUnitCandidate[] {
@@ -51,7 +52,8 @@ export function dropUnacceptedChangeUnitCandidates(_candidates: readonly ChangeU
 }
 
 export class ChangeUnitCandidateRejected extends Error {
-  constructor(public readonly code: string, message: string) {
+  constructor(public readonly code: string, message: string,
+    public readonly designAuthority?: import('./blueprint-skill-projection').DesignAuthorityFinding[]) {
     super(message);
     this.name = 'ChangeUnitCandidateRejected';
   }
@@ -63,7 +65,7 @@ export class ChangeUnitCandidateRejected extends Error {
  *
  * 单候选与批量接受都必须经过它，避免两份会漂移的 provenance/schema/design 逻辑。
  */
-function validateCandidateForAcceptance(projectRoot: string, candidate: ChangeUnitCandidate): string {
+export function validateChangeUnitCandidate(projectRoot: string, candidate: ChangeUnitCandidate, existing?: LoadedChangeUnit): string {
   const artifact = candidate.artifact;
   if (!artifact.provenance.extraction_method.includes(candidate.providerId)) {
     throw new ChangeUnitCandidateRejected(
@@ -72,12 +74,13 @@ function validateCandidateForAcceptance(projectRoot: string, candidate: ChangeUn
     );
   }
   const target = changeUnitPath(projectRoot, artifact.blueprint_id, artifact.change_unit_id);
-  if (fs.existsSync(target)) {
+  if (fs.existsSync(target) && !existing) {
     throw new ChangeUnitCandidateRejected(
       'change_unit_candidate_already_exists',
-      `canonical CU 已存在，重复接受 fail-closed：${target}。契约变化请新建 change_unit_id 并以 supersedes 引用旧单元；蓝图升版只需指针原位升版（reconcileChangeUnitBlueprintRefs）。`,
+      `canonical CU 已存在，重复接受 fail-closed：${target}。未完成活动单元经 reviseChangeUnitContent 修订；完成后新增工作用新 change_unit_id + supersedes，蓝图身份变化走原指针调和。`,
     );
   }
+  if (existing && path.resolve(target) !== path.resolve(existing.canonicalPath)) throw new ChangeUnitCandidateRejected('change_unit_candidate_blueprint_mismatch', '内容修订不得改变 CU/Feature identity 或目录。');
   try {
     assertValidChangeUnit(artifact as unknown as Record<string, unknown>, { projectRoot, canonicalPath: target });
   } catch (error) {
@@ -90,7 +93,7 @@ function validateCandidateForAcceptance(projectRoot: string, candidate: ChangeUn
   if (design.verdict !== 'constructable') {
     throw new ChangeUnitCandidateRejected(
       'change_unit_candidate_design_rejected',
-      `候选 ${artifact.change_unit_id} 未通过设计闭包门（${design.verdict}）：${design.issues.map(item => item.id).join(',')}`,
+      `候选 ${artifact.change_unit_id} 未通过设计闭包门（${design.verdict}）：${design.issues.map(item => `${item.id}: ${item.message}`).join('；')}`,
     );
   }
   return target;
@@ -127,6 +130,11 @@ export function acceptChangeUnitCandidates(
       '设计准备子流程必须写出 1..N 个 canonical CU；零候选不构成一次接受。',
     );
   }
+  for (const candidate of candidates) {
+    if (fs.existsSync(changeUnitPath(projectRoot, candidate.artifact.blueprint_id, candidate.artifact.change_unit_id))) {
+      throw new ChangeUnitCandidateRejected('change_unit_candidate_already_exists', 'canonical CU 已存在；未完成活动单元经 reviseChangeUnitContent 修订，不得重复接受覆盖。');
+    }
+  }
   const seen = new Set<string>();
   const targets: string[] = [];
   for (const candidate of candidates) {
@@ -138,22 +146,58 @@ export function acceptChangeUnitCandidates(
       );
     }
     seen.add(id);
-    targets.push(validateCandidateForAcceptance(projectRoot, candidate));
+    targets.push(validateChangeUnitCandidate(projectRoot, candidate));
+  }
+  for (const blueprintId of new Set(candidates.map(candidate => candidate.artifact.blueprint_id))) {
+    const ownership = readChangeUnitDesignOwnership(projectRoot, blueprintId,
+      candidates.filter(candidate => candidate.artifact.blueprint_id === blueprintId).map(candidate => candidate.artifact));
+    if (ownership.length) throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected',
+      ownership.map(issue => `${issue.id}: ${issue.message}`).join('\n'));
   }
 
   const written: string[] = [];
+  const projections: Array<{ file: string; previous?: Buffer }> = [];
+  let projectionCandidate: ChangeUnitCandidate | undefined;
   try {
     candidates.forEach((candidate, index) => {
       writeCanonicalChangeUnit(targets[index]!, candidate.artifact, `${process.pid}-${index}`);
       written.push(targets[index]!);
     });
+    const { materializeBlueprintSkillInputs, resolveChangeUnitConstructionInputs, BLUEPRINT_PROJECTION_FILES } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
+    const { deriveChangeUnitFeatureId } = require('./change-unit-path') as typeof import('./change-unit-path');
+    const { resolveFeatureArtifact } = require('../../config') as typeof import('../../config');
+    const { resolveProbeFrameworkRoot } = require('../../repo-layout') as typeof import('../../repo-layout');
+    for (const candidate of candidates) {
+      projectionCandidate = candidate;
+      const feature = deriveChangeUnitFeatureId(candidate.artifact.blueprint_id, candidate.artifact.change_unit_id);
+      const frameworkRoot = resolveProbeFrameworkRoot(projectRoot);
+      if (!candidate.construction_mapping && resolveChangeUnitConstructionInputs(projectRoot, feature, frameworkRoot).gap) continue;
+      for (const name of Object.values(BLUEPRINT_PROJECTION_FILES)) {
+        const location = resolveFeatureArtifact(projectRoot, feature, name);
+        projections.push({ file: location.exists ? location.actualPath : location.canonicalPath,
+          ...(location.exists ? { previous: fs.readFileSync(location.actualPath) } : {}) });
+      }
+      materializeBlueprintSkillInputs(projectRoot, feature, frameworkRoot, undefined, undefined, candidate.construction_mapping);
+    }
   } catch (error) {
+    const { BlueprintProjectionPreparationError, classifyDesignAuthorityCodes } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
+    const projection = error instanceof BlueprintProjectionPreparationError ? error.projection : undefined;
+    const codes = (projection?.codes ?? []).filter(code => classifyDesignAuthorityCodes([code]).artifacts.every(kind => kind === 'blueprint'));
+    const verdict = classifyDesignAuthorityCodes(codes);
+    const designAuthority = projection?.state === 'invalid' && codes.length && projectionCandidate
+      ? [{ check: 'authoritative_content_aligned', class: verdict.class, codes,
+        artifacts: [...new Set(projectionCandidate.artifact.design_refs.map(ref => require('./component-blueprint-path').componentBlueprintPath(projectRoot, ref.blueprint_id) as string))]
+          .map(file => path.relative(projectRoot, file).replace(/\\/g, '/')),
+        basis: projection.detail ?? (error as Error).message, needs: verdict.needs, ...(projection.locations ? { locations: projection.locations } : {}) }] : undefined;
+    for (const projection of projections) if (projection.previous) fs.writeFileSync(projection.file, projection.previous);
+    else if (fs.existsSync(projection.file)) fs.unlinkSync(projection.file);
     for (const target of written) {
       if (fs.existsSync(target)) fs.unlinkSync(target);
     }
     throw new ChangeUnitCandidateRejected(
       'change_unit_decomposition_write_failed',
       `原子写出失败并已回滚本批：${(error as Error).message}`,
+      designAuthority,
     );
   }
   return candidates.map(candidate => loadCanonicalChangeUnit(

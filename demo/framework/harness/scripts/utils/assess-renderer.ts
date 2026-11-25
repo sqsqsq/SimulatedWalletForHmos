@@ -8,7 +8,6 @@ import {
   type AssessResult,
 } from './assess';
 import { loadGoalManifestFromRun } from './goal-manifest';
-import { mapCategoryToChainPhase } from './correction-routing';
 
 export interface AssessRenderOptions {
   projectRoot: string;
@@ -42,8 +41,8 @@ export function formatAssessNextStep(
     `feature=${result.feature} phase=${meta.phase} mode=${meta.mode} status=${oneLine(meta.status, 96)}`,
     `observed_fingerprint=${result.observed_fingerprint.slice(0, 16)} gaps=${result.gaps.length} fused=${result.stop.fused}`,
     `recommendation=${target}`,
-    `reason=${oneLine(result.recommendation.reason)}`,
-    `authorization=driver_required policy=${result.authorization_context.mode}`,
+    `reason=${result.recommendation.reason}`,
+    `authorization=${result.recommendation.requires_driver_authorization === false ? 'none' : 'driver_required'} policy=${result.authorization_context.mode}`,
     'END_NEXT_STEP',
   ].join('\n');
 }
@@ -59,30 +58,8 @@ export function formatRepairCandidatesMenu(
   result: AssessResult,
   options: Pick<AssessRenderOptions, 'phase' | 'mode'>,
 ): string | null {
-  if (options.mode !== 'manual') return null;
-  // 候选来自 assess 观测（其唯一真源=phase summary）——不再单独读文件，三模式同事实。
-  const candidates = result.observed.phases.find((p) => p.phase === options.phase)?.repair_candidates ?? [];
-  if (candidates.length === 0) return null;
-  const chainPhases = result.observed.phases.map((p) => p.phase);
-  const targets = [...new Set(candidates.map((c) => c.category))]
-    .map((category) => mapCategoryToChainPhase(category, chainPhases, result.track))
-    .filter((p): p is string => p !== null && p !== options.phase);
-  const upstream = targets.sort(
-    (a, b) => chainPhases.indexOf(a) - chainPhases.indexOf(b),
-  )[0];
-  if (!upstream) return null;
-  return [
-    '',
-    'REPAIR_CANDIDATES',
-    `${options.phase} 发现 ${candidates.length} 个可信可修缺陷，责任阶段为 ${upstream}：`,
-    ...candidates.slice(0, 6).map((c) => `  - ${c.id}: ${oneLine(c.summary ?? '', 120)}`),
-    '',
-    `1. 返回 ${upstream} 修复，随后重新执行 ${options.phase}`,
-    '2. 暂停',
-    '3. 其它处理方式',
-    '（请向用户呈现以上选项并等待确认——manual 模式不得未经确认跨阶段修改文件）',
-    'END_REPAIR_CANDIDATES',
-  ].join('\n');
+  // Runtime owns the dedicated author handoff in every presentation mode.
+  return null;
 }
 
 /**
@@ -96,7 +73,7 @@ export function assessAndRenderNextStep(options: AssessRenderOptions): AssessRes
     const runId = options.runId ?? (process.env.MAISON_GOAL_RUN_ID?.trim() || undefined);
     let goalEnd = options.goalEnd;
     let minimumAssurance = options.minimumAssurance;
-    if (runId && (options.mode === 'goal_mode' || process.env.MAISON_GOAL_GATE_HARNESS === '1') && (!goalEnd || !minimumAssurance)) {
+    if (runId && (!goalEnd || !minimumAssurance)) {
       const manifest = loadGoalManifestFromRun(options.projectRoot, runId, {
         feature: options.feature,
       });
@@ -112,7 +89,7 @@ export function assessAndRenderNextStep(options: AssessRenderOptions): AssessRes
       authorization: { mode: options.mode },
       runId,
       attemptId: options.attemptId ?? (process.env.MAISON_GOAL_ATTEMPT?.trim() || undefined),
-      writeProjection: true,
+      writeProjection: false,
     });
     console.log('');
     console.log(formatAssessNextStep(result, options));

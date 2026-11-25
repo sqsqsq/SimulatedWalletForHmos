@@ -7,13 +7,13 @@
 与 **`coding.compile`** 类似，`testing` 阶段可由脚本 harness 触发 **`device_test.build`**（hvigor，产出 **`reports/<feature>/testing/hvigor-app-build.log`**）及 **`device_test.install`**（`hdc install -r`，日志 **`hdc-app-install.log`**）。能力与 **`profile.yaml > capabilities`** 对齐：`hvigor_app` / `hdc_app`。
 
 - **产物指纹**：成功时在 **`reports/<feature>/testing/device-test-build.result.json`** 写入 `resolvedProduct`、`resolvedBuildMode`、`hapPath`、`hapBuiltAt`、`reused` 等字段。
-- **HAP 落盘路径**：hvigor 产出在 **`<模块 srcPath>/build/<segment>/outputs/<outputsDir>/*-signed.hap`**——`segment`/`outputsDir` **不保证等于 `default`**，实测常见与 `product` 名相同（如 `01-Product/Phone/build/product/outputs/product/Phone-product-signed.hap`）。产物发现（`discoverAppHapArtifacts`）会枚举全部 `build/*/outputs/*` 目录并按四级确定性排序键（segment → modules 声明序 → outputs 子目录 → 文件名）选出首选候选，不再硬编码 `outputs/default`。**不会**复制到 `reports/`；`device-test-build.result.json` 的 `hapPath` 为绝对路径索引，`scannedDirs`/`candidateCount` 记录本轮实际扫描/命中情况。
-- **构建复用**：当 **业务源码 mtime ≤ 已有 HAP mtime** 且 product/buildMode 一致时，**跳过 hvigor**（`reused: true`，门禁仍 PASS）。`timestamp` 为本次跑门禁时刻，**不是** HAP 生成时间——以资源管理器中 HAP 修改时间或 `hapBuiltAt` 为准。
+- **HAP 落盘路径**：主应用只采用 `<模块 srcPath>/build/<所选 product>/outputs/<target>/*-signed.hap`，支持 `outputs/default` 和自定义 target，不在目标缺包时回退其它 product。`discoverAppHapArtifacts` 的候选与扫描目录用于诊断，不等于可安装产物。实际选中 signed 必须在同模块、同输出目录按同 basename 配对 unsigned；signed 较旧或配对未知/不可读均不下传安装路径。UT 使用同 product 的 `outputs/ohosTest`。不复制到 reports；结果 JSON 记录绝对 `hapPath`、`scannedDirs`/`candidateCount` 及配对诊断。
+- **构建复用**：只读当前 Feature/phase 的 `device-test-build.result.json`；原可采用成功记录的 product/buildMode、当前路径/完整 SHA256、源码新鲜度和当前配对均须匹配。缺记录、旧字段或包被覆盖时执行正常构建，不跨 Feature 查缓存。`timestamp` 为本次调用时刻，包时间看 `hapBuiltAt`；正常增量可采用旧但配对有效的包，不要求晚于本次启动。
 - **交互默认值**：见 **`framework/profiles/hmos-app/harness/testing-build-conventions.ts`**（导出 **`listAvailableProducts`**、**`describeDeviceTestHarnessEnvHints`** 等）。
 - **可选构建矩阵**：通过环境变量覆盖：`HARNESS_DEVICE_TEST_PRODUCT`、`HARNESS_DEVICE_TEST_BUILD_MODE`（`debug`|`release`）。不要用 **`HARNESS_SKIP_DEVICE_TEST_BUILD` / `HARNESS_SKIP_DEVICE_TEST_INSTALL`** 作为出口——testing harness 会判 **FAIL**。**goal 模式下禁止 agent 临时覆盖这两个变量**（plan d9e4b7c1）：runner 在 attempt 开始已冻结 {product, buildMode} 并注入环境（agent 与外层 gate 同源），覆盖会让 hvigor 生成物（模块根 `BuildProfile.ets`）与冻结配置不符、被写保护判违规。
 - **goal 正式 gate 强装与 evidence**（plan d9e4b7c1）：goal 模式的外层 testing gate 会注入 `HARNESS_DEVICE_TEST_FORCE_INSTALL=1`（强制 `hdc install -r`，装机复用只保留给 agent 自检与普通模式）并在 build→install→run 全部完成后由 check-testing 协调层统一写 **`reports/<feature>/testing/device-test-evidence.json`**（覆盖式、当前轮专属：goal 身份 + 设备元组 + 完整 HAP sha256 + `written_at` + 结构化 cases 四分类）。goal-runner 只消费该 evidence 驱动 testing→coding 回修（仅 `target_kind=physical` 且 `classification=product_actionable|product_state`）；agent 自检产物仅供参考、runner 在 spawn gate 前会删除旧 evidence——**不要手写该文件**。
 - **强制重编**：`HARNESS_DEVICE_TEST_FORCE_BUILD=1` 时始终执行 hvigor。
-- **真编译前停 daemon**：源码新于 HAP、需执行 hvigor 时，harness 会先 **`hvigor --stop-daemon`** 再 assemble，并注入 DevEco **JBR** 到子进程 `Path`（避免旧 daemon worker 在 PackageHap 阶段 `spawn java ENOENT`）。复用 HAP（`reused: true`）时不调 hvigor，亦不停 daemon。
+- **主应用执行策略**：打包装机使用 `--no-daemon`，保留正常 parallel/incremental，不预先 stop-daemon。设备安装调用冻结的 product/buildMode 在 extraArgs 之后落实，普通 coding 仍可按其配置覆盖。UT/纯 compile 沿原 daemon 配置/goal/恢复策略，不扩大冷启动。有效 JAVA_HOME 保留，缺失/失效才按原规则回退 JBR；元数据分别记录 JAVA_HOME 与子进程 PATH 首个 Java，不据此推断签名 400 根因。
 
 打包语义依赖宿主 **`framework.local.json > toolchain.devEcoStudio`** / **`toolchain.hvigor`** 配置（与 coding 门禁同源）；装机语义依赖 **`hdc` 可执行并在 PATH**。
 
@@ -135,7 +135,7 @@
 - **Nav 子页回 Tab**：必须用 `{"back":{}}` 或 `{"back":{"mode":"swipe","side":"RIGHT"}}`（Hypium `press_back` / `swipe_to_back`）。**禁止**用无 `area` / `at` / `scroll_target` 的 `swipe RIGHT`/`LEFT` 代替系统/Nav 返回（那是内容区滑动，无法 pop `NavPathStack`）。
 - **进入子页的 TC**：预期含「进入××页」时，若后续仍有要求「已在首页 Tab」的用例，本 TC 末步建议 `{"back":{}}` teardown，或让后续 TC 首步为 `back`。
 - **派生前必读**：`derive-hint-from-plan.json` 中每条 `test_cases[].navigation_hint`（`suggested_preamble_steps` / `forbidden_patterns`）。
-- **Harness 门禁**：`check-testing` 对派生表执行 **NAV-001/002/003** 静态 lint；失败时 `coverage_reason=invalid_derived_steps`，须在新 `testing/reports/<timestamp>/hylyre/` **重新派生**，勿手改旧目录下的 `test-plan.hylyre.md`。
+- **Harness 门禁**：`check-testing` 对派生表执行 **NAV-001/002/003** 静态 lint；本轮 `script-report.json` 的 `device_test_run.structured.derive_hint` 提供 `coverage_reason=invalid_derived_steps` 和完整建议，须在新 `testing/reports/<timestamp>/hylyre/` **重新派生**，勿手改旧目录下的 `test-plan.hylyre.md`。
 
 ### `hylyre dump-ui` 与快照缓存
 
@@ -148,13 +148,13 @@
 
 ### plan 派生缺失时的结构化提示
 
-- 若尚未落盘 **`…/testing/reports/<timestamp>/hylyre/test-plan.hylyre.md`** 就跑 **`testing` harness**，脚本 **`check-testing.ts`** 会 **FAIL**，并写入 **`<features_dir>/<feature>/testing/reports/derive-hint-from-plan.json`**（schema 4）：顶层用例行 + **`navigation_hint`** + 可选 **`lint_violations`**，以及**机读步骤目录**（`allowed_step_roots` / `step_shape_catalog` / `canonical_format`——翻译步骤以此为准，不依赖已读语法文档），便于下一轮 Agent 派生。
+- 若尚未落盘 **`…/testing/reports/<timestamp>/hylyre/test-plan.hylyre.md`** 就跑 **`testing` harness**，脚本 **`check-testing.ts`** 会 **FAIL**，并建立 **`<features_dir>/<feature>/testing/reports/derive-hint-from-plan.json`**（schema 4）源语义基线：顶层用例行、**`navigation_hint`** 与**机读步骤目录**（`allowed_step_roots` / `step_shape_catalog` / `canonical_format`）。输入语义未变不重写；最新 coverage/lint/suggested_fix、选中/拒绝路径、原 mtime 转入本轮 `script-report.json` 的 `device_test_run.structured.derive_hint`，NEXT 指向该报告，勿从旧 hint 读取当前诊断。
 - **SSOT 覆盖门禁（execution_channel）**：顶层 **`test-plan.md`** 为唯一用例清单权威，且每条 TC 声明唯一 **`execution_channel`**（`hylyre | visual | manual:<gap_class> | provider:<capability-id>`）。**`testing/reports/*/hylyre/test-plan.hylyre.md`** 中声明的 TC（表格「用例编号」列）必须与顶层 `channel=hylyre` 的集合**完全相等**——缺失 missing FAIL、多出 extra FAIL。含「烟测占位」等标记的派生文件视为**无效**，不参与选中。未执行的顶层 TC（包括 P1/P2）不能让 testing 通过；只有机器证明的 known manual gap 或 inactive/SKIP provider 可记 `unsupported_gap`，其余非法写法在任何设备动作前失败。
 - **派生器没有 skip 决策权（BLOCKER）**：正式派生计划**禁止**写 `explicit_skip_tc_ids`（frontmatter 与 `derive-manifest.json` 同禁），登记本身即 BLOCKER。某条 `channel=hylyre` 的 TC 写不成可靠 Hylyre JSON 时，**整份 Hylyre 计划不启动**，回报该 TC 根因与下一责任阶段，交回顶层计划作者改通道或补入口定义——不得降级成跳过。
   - **legacy（只读兼容，禁止复制）**：历史产物里的 `explicit_skip_tc_ids` 仍可被解析，仅用于诊断旧 run；它**不贡献 PASS**、**不产 coding candidate**，等同「未执行」保持 testing FAIL，也不得按 TC 名称或报告散文投 coding。新计划/新派生器一律不写。
 - **选派生文件**：在 `testing/reports` 多个子目录并存时，按各 `test-plan.hylyre.md` 的 **mtime 从新到旧** 试用，**跳过占位**，首个有效者即为本次 `hylyre run` 输入。勿依赖目录名字典序。
-- **新鲜度**：若顶层 **`test-plan.md`** 的 mtime **新于**选中的派生文件，脚本 **BLOCKER**（`coverage_reason=stale`），须重派生或更新派生文件。
-- **派生入口 CLI**：先运行 `cd framework/harness && npm run derive-hylyre-plan-hint -- --feature <feature>`，默认输出 stdout 并把源 TC 基线写到 canonical testing reports 下 `derive-hint-from-plan.json`，然后再生成派生计划；不需要先跑 harness 失败。`--out <path>` 保留给显式导出，正式派生使用默认 canonical 路径。
+- **新鲜度**：对账源 TC 行与执行语法/reset/selector 机器语法；真实变化更新 canonical 基线，派生必须晚于该基线。标题/表外说明、诊断、缓存页或无关 selector 候选变化不误 stale；当前 selector 静态门与 native 真值仍独立执行。只刷新 hint 或改时间不能洗绿旧步骤，须真实重派生并验证。
+- **派生入口 CLI**：先运行 `cd framework/harness && npm run derive-hylyre-plan-hint -- --feature <feature>`，读本次 stdout 的完整派生上下文，然后生成派生计划；不需要先跑 harness 失败。语义不变时 canonical 字节/mtime/generated_at 不变，stdout 仍带最新缓存/selector 候选并保留原 generated_at。`--out <另一文件>` 显式导出当前完整上下文但不替代源基线；指向 canonical 时仍幂等且同时输出 stdout。旧 schema 4 缺辅助字段不强制重派生，不得据当前 TC 补造丢失的旧源快照。
 
 ### 即席模式（`_adhoc`）
 
@@ -162,7 +162,7 @@
 - **写前 lint**：`npm run lint-adhoc-steps -- --file <path>`（`--normalize` 可 unwrap 常见格式错误）。**STEP-TOUCH** 拦截 `touch.selector` 嵌套；**STEP-002** 禁 `start_app` / `dump_ui`。
 - **Agent 纪律（BLOCKER）**：**禁止**向 `framework/harness/` Write 即席 steps / trace / report / plan-lint；steps 写到 **`doc/features/_adhoc/testing/staging/test-steps.json`**（`steps_file_contract.recommended_write_path`）。**禁止**向 `doc/app-snapshot-cache/<bundle>/` **根目录** Write page 结构 JSON；cache 仅由 **`hylyre app page save`** / warmup 写入 `pages/`。page save 失败时读 `ADHOC_PAGE_SAVE_EXIT` / `device-test-run.meta.json`，**勿**自行 Write 替代。
 - **执行协议（Step 4.B）**：derive（`adhoc-device-test --steps` 写 `derive-adhoc-last.json`）→ 读 contract → 手写 staging **`test-steps.json`**（观察 NL **不进** steps）→ **`lint-adhoc-steps`** → **`adhoc-device-test --steps-file`** → 成功后 **`--dump-ui-only`** + **`summarize-adhoc-dump`**。执行报告目录：**`doc/features/_adhoc/testing/reports/<timestamp>/hylyre/`**（stderr **`ADHOC_HYLYRE_RUN_DIR=`** / **`ADHOC_TRACE_FILE=`**）。
-- **执行**：`adhoc-device-test --bundle <id> --plan …` / `--steps-file …`；**默认冷重启**（`ADHOC_COLD_RESTART=1`）；`--continue-session` 保留 Nav 栈；`--dump-ui-only`；`--observe-ui`；`--skip-page-save`。Python/Hypium 子进程 spawn 前 harness 会将 **`framework.local.json` → `toolchain.devEcoStudio.installPath` 推导的 toolchains** prepend 到 `PATH`（与 Node 侧 `resolveHdcExecutableSync` 同源）；CLI 子进程未继承用户 PATH 时仍应能找到 `hdc`。
+- **执行**：`adhoc-device-test --bundle <id> --plan …` / `--steps-file …`；**默认冷重启**（`ADHOC_COLD_RESTART=1`）；`--continue-session` 保留 Nav 栈；`--dump-ui-only`（缺省落 `doc/features/_adhoc/testing/reports/dump-ui-<时间戳>.json`）；`--observe-ui`；`--skip-page-save`；coding 返修诊断用 `--install-current-build`（当前工作树出包、强制装机，结果落 `_adhoc`）与 `--measure-screen <screen_id> --feature <f>`（量测落 `_adhoc`，不是验收证据）。Python/Hypium 子进程 spawn 前 harness 会将 **`framework.local.json` → `toolchain.devEcoStudio.installPath` 推导的 toolchains** prepend 到 `PATH`（与 Node 侧 `resolveHdcExecutableSync` 同源）；CLI 子进程未继承用户 PATH 时仍应能找到 `hdc`。
 - **重跑**：前次 trace `outcome≠success` 且用 `--continue-session` 时 stderr `ADHOC_UI_RESET_RECOMMENDED=1`（读固定 **`device-test-run.meta.json`** 的 `trace_summary.outcome`，非本次新 timestamp trace）；`device-test-run.meta.json` / trace `artifacts` 含 `last_step_index`、`ui_reset_hint`。
 - **汇总**：`npm run summarize-adhoc-dump -- --file <dump-ui.json>` → `ADHOC_SUMMARY_JSON=`。
 - **App 元数据**：`doc/app-snapshot-cache/<bundle>/app-meta.json`（`mainAbility`、`source`）；外部 bundle 可配 `framework.config.json → tools.hylyre.bundle_abilities`。
@@ -228,3 +228,9 @@
 - **SSOT**：应用工程集成的 Maison 发布件为 harness / device-testing 源码；须使用包含所需能力的已验证发布版本（含 `lint-adhoc-steps`、默认冷重启、`mergeEnvWithHdcOnPath`、flat cache 扫描、`STEP-TOUCH` 等），不以宿主 HEAD/commit 判断版本。
 - **同步后**：在应用工程根执行 framework-init render（或手动复制 `.cursor/rules/framework-agent-execution.mdc`、device-testing 跳板）；重跑 `npm run adhoc-device-test -- --bundle <id> --steps "…"` 刷新 `derive-adhoc-last.json`（schema 4 + `cache_layout_*`）。
 - **Cache**：若 stderr `ADHOC_CACHE_LAYOUT_MISMATCH=1`，将根目录 page JSON 迁入 `pages/` 或修 page save；**勿** agent Write 根目录替代。
+
+### P0 义务与视觉恢复
+
+P0 device/both 义务不以 linked_flow 或 flows 是否填写判断。缺 UI 定义回 spec，工具确实不支持才按能力缺口披露。执行者消费目标简报中的“本次延后”，不把参考图背景差异直接提升为已授权需求。
+
+harness 会在实质输入未变时复用已采信的视觉观察，仍按当前严格度裁决；不要手改旧回执身份或 hash。视觉首评默认最多600秒，至多一次不带图的格式纠错最多300秒，均受 gate/run 剩余预算约束；格式恢复不重新操作设备，真实 native 失败保持失败。

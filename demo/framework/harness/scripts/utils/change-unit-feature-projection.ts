@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { featureFilePath, loadArchitectureDsl } from '../../config';
+import { featureFilePath, loadArchitectureDsl, type ArchitectureDsl } from '../../config';
 import { AdmittedModules, componentDependencyAllowed, resolveAdmittedModules } from './component-assets';
 import { TermFact, terminologyFacts } from './blueprint-discovery';
 import {
@@ -21,6 +21,7 @@ import {
   sameBlueprintTarget,
 } from './change-unit-model';
 import {
+  BLUEPRINT_REF_STALE_ISSUE,
   ChangeUnitResolutionError,
   asChangeUnitArtifact,
   deriveChangeUnitFeatureId,
@@ -32,22 +33,21 @@ import { AcceptanceSpec, CheckContext, CheckResult, ContractsSpec } from './type
 import { validateChangeUnitEvolutionSeam } from './change-unit-evolution-seam';
 import { validateChangeUnitDesign } from './change-unit-design-gate';
 import { validateProjectRelativePath } from './project-relative-path';
-import { checkComponentSelections, componentProjectionErrors } from './component-selection-check';
+import { checkComponentSelections, componentProjectionFindings, projectComponentSelections } from './component-selection-check';
 
-/**
- * M7：`change` 是 lite 轨的首个 phase，扮演 full 轨 `plan` 在"冻结施工契约"上的角色。
- * CU-bound lite Feature 复用同一 `contracts.yaml.change_unit` sidecar，不在 change.md
- * 另造降维映射协议（拒绝 Markdown / contracts 两套真源）。
- */
-type ProjectionPhase = 'change' | 'plan' | 'coding' | 'review' | 'ut';
+type ProjectionPhase = 'plan' | 'coding' | 'review' | 'ut';
 
 /** 施工契约冻结阶段：此时 implementation ref 允许 `planned:` 前缀（尚未落地）。 */
-const CONTRACT_FREEZE_PHASES: ReadonlySet<ProjectionPhase> = new Set<ProjectionPhase>(['plan', 'change']);
+const CONTRACT_FREEZE_PHASES: ReadonlySet<ProjectionPhase> = new Set<ProjectionPhase>(['plan']);
 
 export interface ChangeUnitProjectionIssue {
   id: string;
   message: string;
   route: 'repair_feature_mapping' | 'repair_change_unit' | 'reconcile_blueprint';
+  /** plan 9c3d7e1a §3：reconcile_blueprint 路线的结构化原因（缺省 'other'）；取自验证器 issue code。 */
+  reason?: 'blueprint_ref_stale';
+  /** plan 9c3d7e1a §5.0：canonical CU 未过门时验证器的原始 issue code（分类表按它判）；缺省即本条 issue 的 id。 */
+  codes?: string[];
 }
 
 export interface ChangeUnitProjectionResult {
@@ -126,12 +126,8 @@ function checkConstructionRefs(
       out.push(issue('change_unit_mapping_path_invalid', (error as Error).message));
       continue;
     }
-    if (planned && !plannedAllowed && phase !== 'coding' && phase !== 'review') {
-      out.push(issue('change_unit_mapping_planned_ref_not_allowed', `${owner} 的 ${role} ref=${rawRef} 在 ${phase} 阶段必须已有真实消费落点。`));
-      continue;
-    }
     // A frozen planned path becomes checkable through its real file/symbol, not a contract rewrite.
-    if (planned && plannedAllowed) continue;
+    if (role === 'implementation' || (planned && plannedAllowed)) continue;
     const absolute = path.resolve(projectRoot, normalized);
     if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) {
       out.push(issue('change_unit_mapping_file_missing', `${owner} 的 ${role} 文件不存在：${normalized}`));
@@ -296,14 +292,11 @@ function checkVerticalSlice(
   projectRoot: string,
   cu: ChangeUnitArtifact,
   contracts: ContractsSpec,
+  resolveRef = resolveComponentBlueprintRef,
 ): ChangeUnitProjectionIssue[] {
-  const roles = new Set(cu.target_predicates.map(item => item.role));
   const issues: ChangeUnitProjectionIssue[] = [];
   const flowRefs = cu.design_refs.filter(ref => ref.target.kind === 'flow');
   if (flowRefs.length > 0) {
-    for (const role of ['behavior', 'owner', 'consumer', 'recovery'] as const) {
-      if (!roles.has(role)) issues.push(issue('change_unit_runtime_vertical_role_missing', `runtime vertical slice 缺 ${role} predicate。`, 'repair_change_unit'));
-    }
     for (const ref of flowRefs) {
       const mapped = (contracts.state_management ?? []).find(state => state.design_ref && sameBlueprintTarget(ref, state.design_ref));
       if (!mapped) {
@@ -311,7 +304,7 @@ function checkVerticalSlice(
         continue;
       }
       try {
-        const flow = resolveComponentBlueprintRef(projectRoot, ref).target as BlueprintRecord;
+        const flow = resolveRef(projectRoot, ref).target as BlueprintRecord;
         if (!nonEmptyString(mapped.owner_ref) || asStrings(mapped.contract_refs).length === 0) {
           issues.push(issue('change_unit_runtime_owner_contract_missing', `${blueprintRefAddress(ref)} 缺真实 owner_ref/contract_refs。`));
         }
@@ -352,7 +345,7 @@ function checkVerticalSlice(
         if (expectedOwner && mapped.owner_ref !== expectedOwner) {
           issues.push(issue('change_unit_runtime_stable_id_mismatch', `${blueprintRefAddress(ref)} owner_ref 必须为 ${expectedOwner}。`));
         }
-        const expectedContracts = new Set(asStrings(flow.logical_contract_refs));
+        const expectedContracts = new Set([...asStrings(flow.logical_contract_refs), ...asStrings(flow.external_contract_refs)]);
         const actualContracts = new Set(asStrings(mapped.contract_refs));
         if ([...expectedContracts].some(id => !actualContracts.has(id))
           || [...actualContracts].some(id => !expectedContracts.has(id))) {
@@ -410,7 +403,7 @@ function checkVerticalSlice(
   }
   for (const ref of cu.design_refs.filter(item => item.target.kind === 'decision')) {
     try {
-      const decision = resolveComponentBlueprintRef(projectRoot, ref).target as BlueprintRecord;
+      const decision = resolveRef(projectRoot, ref).target as BlueprintRecord;
       const providers = cu.requires.flatMap(requirement => {
         try {
           return [asChangeUnitArtifact(loadCanonicalChangeUnit(
@@ -436,7 +429,7 @@ function checkVerticalSlice(
  *
  * - 普通 Feature（identity 不以 `cu-` 派生）→ 不适用，零结果，既有行为不变；
  * - 合法 `cu-*` identity 且 canonical CU 存在 → **BLOCKER**：CU-bound Feature 必须有
- *   sidecar 承载机器映射（lite 与 full 同一份真源）；
+ *   sidecar 承载机器映射；
  * - 合法 `cu-*` identity 但 canonical CU 不存在 → BLOCKER，回 P1/P2 调和（不静默放行）；
  * - 非法 `cu-*` payload → 按既有 identity 规则 fail-closed（`parseChangeUnitFeatureId` 抛错）。
  */
@@ -467,7 +460,7 @@ function requireSidecarForChangeUnitFeature(
     applicable: true,
     issues: [issue(
       'change_unit_contracts_sidecar_missing',
-      `Feature ${feature} 由 canonical CU ${parsed.blueprintId}/${parsed.changeUnitId} 派生，必须在 contracts.yaml 提供 change_unit sidecar（change_unit_ref + predicate/provide/design_ref mappings）；lite 轨同样不免除该机器契约。`,
+      `Feature ${feature} 由 canonical CU ${parsed.blueprintId}/${parsed.changeUnitId} 派生，必须在 contracts.yaml 提供 change_unit sidecar（change_unit_ref + predicate/provide/design_ref mappings）。`,
       'repair_feature_mapping',
     )],
   };
@@ -477,10 +470,10 @@ function requireSidecarForChangeUnitFeature(
  * plan a3c7e9d1 t2：「可修改模块集合」**只从 CU touches[].design_ref** 经既有 addressing resolver
  * 解析到 development 节点取 `module` 去重（design_refs 只是设计依赖闭包）；resolver 同一 stale 语义，失败即抛。
  */
-export function deriveModifiableModules(projectRoot: string, cu: ChangeUnitArtifact): string[] {
+export function deriveModifiableModules(projectRoot: string, cu: ChangeUnitArtifact, resolveRef: typeof resolveComponentBlueprintRef = resolveComponentBlueprintRef): string[] {
   const modules = new Set<string>();
   for (const touch of cu.touches ?? []) {
-    const node = asRecord(resolveComponentBlueprintRef(projectRoot, touch.design_ref).target);
+    const node = asRecord(resolveRef(projectRoot, touch.design_ref).target);
     if (!nonEmptyString(node?.module)) throw new Error(`${blueprintRefAddress(touch.design_ref)} 缺 module，无法派生可修改模块集合；回 /component-design 补齐。`);
     modules.add(node!.module as string);
   }
@@ -501,9 +494,15 @@ export function relevantArchitectureImpactDecisions(
   blueprint: BlueprintRecord,
   modifiable: string[],
   designDecisionIds: string[] = [],
+  architecture?: ArchitectureDsl,
 ): BlueprintRecord[] {
-  const admitted = resolveAdmittedModules(projectRoot, blueprint);
+  const admitted = resolveAdmittedModules(projectRoot, blueprint, architecture);
   const touched = new Set([...modifiable, ...modifiable.map(name => admitted.modules.get(name)).filter((l): l is string => Boolean(l))]);
+  return selectRelevantArchitectureImpactDecisions(blueprint, touched, designDecisionIds);
+}
+
+/** 施工门、摘要与纯展示共用同一相关性谓词；touched 的层归属仍由原责任方提供。 */
+export function selectRelevantArchitectureImpactDecisions(blueprint: BlueprintRecord, touched: ReadonlySet<string>, designDecisionIds: string[]): BlueprintRecord[] {
   return asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions).filter(decision => decision.kind === 'architecture_impact'
     && MACHINE_CHECKED_ARCHITECTURE_CHANGES.includes(String(decision.change ?? ''))
     && (designDecisionIds.includes(String(decision.decision_id ?? '?')) || architectureImpactEndpoints(decision).some(name => touched.has(name))));
@@ -520,18 +519,19 @@ export function architectureImpactIssues(
   blueprint: BlueprintRecord,
   modifiable: string[],
   designDecisionIds: string[] = [],
+  architecture: ArchitectureDsl = loadArchitectureDsl(projectRoot),
 ): { issues: ChangeUnitProjectionIssue[]; warnings: string[] } {
   const issues: ChangeUnitProjectionIssue[] = [];
   const warnings: string[] = [];
-  const admitted = resolveAdmittedModules(projectRoot, blueprint);
-  const layers = new Set(loadArchitectureDsl(projectRoot).outer_layers.map(layer => layer.id));
+  const admitted = resolveAdmittedModules(projectRoot, blueprint, architecture);
+  const layers = new Set(architecture.outer_layers.map(layer => layer.id));
   const fail = (id: string, message: string) => issues.push(issue('cu_architecture_impact_not_effective', `decision:${id} ${message}`, 'reconcile_blueprint'));
   for (const decision of asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions)) {
     if (decision.kind === 'architecture_impact' && decision.change === 'dsl_other') {
       warnings.push(`decision:${String(decision.decision_id ?? '?')} dsl_other（${asStrings(decision.affected_items).join('、')}）不机检：请人工核对该 DSL 变更已经权威批准并经 framework-init 获准路径落盘。`);
     }
   }
-  for (const decision of relevantArchitectureImpactDecisions(projectRoot, blueprint, modifiable, designDecisionIds)) {
+  for (const decision of relevantArchitectureImpactDecisions(projectRoot, blueprint, modifiable, designDecisionIds, architecture)) {
     const id = String(decision.decision_id ?? '?');
     const change = String(decision.change ?? '');
     const endpoints = architectureImpactEndpoints(decision);
@@ -544,8 +544,8 @@ export function architectureImpactIssues(
     if (change !== 'dependency_edge') continue;
     const unresolved = endpoints.filter(name => !admitted.modules.has(name) && !layers.has(name));
     if (unresolved.length > 0) { fail(id, `端点无法解析为获准模块或外层 id：${unresolved.join('、')}。`); continue; }
-    const allowed = componentDependencyAllowed(projectRoot, endpoints[0], endpoints[1], admitted.declared);
-    if (decision.direction === 'add' && !allowed) fail(id, `${endpoints[0]} → ${endpoints[1]} 当前 DSL 不允许；先经 framework-init 获准路径（init 预设 / 手工编辑 config 后重跑 UPDATE）改 DSL，plan 不是 DSL writer。`);
+    const allowed = componentDependencyAllowed(projectRoot, endpoints[0], endpoints[1], admitted.declared, architecture);
+    if (decision.direction === 'add' && !allowed) fail(id, `${endpoints[0]} → ${endpoints[1]} 当前 DSL 不允许；先经 设计 owner 的正式 DSL 修订通道（无人值守原需求内自动修订）改 DSL，plan 不是 DSL writer。`);
     if (decision.direction === 'remove' && allowed) fail(id, `${endpoints[0]} → ${endpoints[1]} 已批准删除但当前 DSL 仍允许（删除未生效）；先经 framework-init 获准路径改 DSL。`);
   }
   return { issues, warnings };
@@ -602,17 +602,16 @@ export function validateChangeUnitFeatureProjection(
   useCasesPresent: boolean,
   phase: ProjectionPhase,
   dags: DagProjectionLike[] = [],
-  options: { changeUnitOverride?: ChangeUnitArtifact } = {},
+  options: { changeUnitOverride?: ChangeUnitArtifact; designOnly?: boolean; resolveBlueprintRef?: typeof resolveComponentBlueprintRef; architecture?: ArchitectureDsl } = {},
 ): ChangeUnitProjectionResult {
   const section = asRecord(contracts?.change_unit);
-  if (!section) {
+  if (!section && !options.designOnly) {
     // M7：缺 sidecar 时"不适用"只对**普通 Feature**成立。Feature identity 以 `cu-` 派生
-    // 时它归属某份蓝图，缺 `contracts.yaml.change_unit` 就是缺机器映射真源——lite 轨没有
-    // 强制 contracts.yaml 的阶段前置，若在这里静默放行，CU-bound lite 会一路假绿到闭环。
+    // 时它归属某份蓝图，缺 `contracts.yaml.change_unit` 就是缺机器映射真源，不能静默放行。
     return { ...requireSidecarForChangeUnitFeature(projectRoot, feature), useCasesRequired: false, dagRequired: false };
   }
   const issues: ChangeUnitProjectionIssue[] = [];
-  for (const key of Object.keys(section)) {
+  for (const key of Object.keys(section ?? {})) {
     if (!CHANGE_UNIT_ALLOWED_KEYS.has(key)) issues.push(issue('change_unit_projection_unknown_field', `contracts.change_unit.${key} 不属于 ID-only 投影。`));
   }
   for (const forbidden of ['runtime_flow_slices', 'use_cases_required', 'dag_required']) {
@@ -623,11 +622,18 @@ export function validateChangeUnitFeatureProjection(
   let cu: ChangeUnitArtifact | undefined = options.changeUnitOverride;
   if (!cu) {
     try {
-      const loaded = resolveChangeUnitRef(projectRoot, section.change_unit_ref);
+      const loaded = resolveChangeUnitRef(projectRoot, section?.change_unit_ref);
       cu = asChangeUnitArtifact(loaded.changeUnit);
     } catch (error) {
       const code = error instanceof ChangeUnitResolutionError ? error.code : 'change_unit_ref_unresolvable';
-      issues.push(issue(code, (error as Error).message, code.includes('blueprint') ? 'reconcile_blueprint' : 'repair_feature_mapping'));
+      // 路线直接取验证器 issue 的 route：canonical CU 的 BLOCKER 全是 reconcile_blueprint（指针过期）才回设计 owner，其余仍是映射修复。
+      const blockers = error instanceof ChangeUnitResolutionError ? error.issues ?? [] : [];
+      const reconcile = blockers.length > 0 && blockers.every(item => item.route === 'reconcile_blueprint');
+      issues.push({
+        ...issue(code, (error as Error).message, reconcile ? 'reconcile_blueprint' : 'repair_feature_mapping'),
+        ...(reconcile && blockers.every(item => item.id === BLUEPRINT_REF_STALE_ISSUE) ? { reason: 'blueprint_ref_stale' as const } : {}),
+        ...(blockers.length ? { codes: blockers.map(item => item.id) } : {}),
+      });
       return { applicable: true, issues, useCasesRequired: false, dagRequired: false };
     }
   }
@@ -635,28 +641,33 @@ export function validateChangeUnitFeatureProjection(
   if (feature !== expectedFeature) {
     issues.push(issue('change_unit_feature_identity_mismatch', `Feature=${feature}，canonical 派生 identity=${expectedFeature}。`));
   }
-  const design = validateChangeUnitDesign(projectRoot, cu as unknown as ChangeUnitRecord);
+  const design = validateChangeUnitDesign(projectRoot, cu as unknown as ChangeUnitRecord, { resolveBlueprintRef: options.resolveBlueprintRef });
   issues.push(...design.issues.map(item => issue(
     item.id,
     item.message,
     item.route === 'reconcile_blueprint' ? 'reconcile_blueprint' : 'repair_change_unit',
   )));
   for (const forbidden of ['purpose', 'target_predicates', 'provides', 'design_refs', 'verification_refs']) {
-    if (Object.prototype.hasOwnProperty.call(section, forbidden)) {
+    if (Object.prototype.hasOwnProperty.call(section ?? {}, forbidden)) {
       issues.push(issue('change_unit_definition_copied', `contracts.change_unit 不得复制 canonical ${forbidden}。`));
     }
   }
-  issues.push(...changeUnitMappingIssues(projectRoot, section, cu, phase));
-  issues.push(...componentProjectionErrors(projectRoot, contracts!, cu).map(message => issue('component_asset_projection', message)));
+  if (!options.designOnly) {
+    try { contracts = projectComponentSelections(projectRoot, contracts!, cu); }
+    catch (error) { issues.push(issue('component_asset_projection', `蓝图选型权威不可解析：${(error as Error).message}`, 'reconcile_blueprint')); }
+    issues.push(...changeUnitMappingIssues(projectRoot, asRecord(contracts!.change_unit)!, cu, phase));
+    issues.push(...componentProjectionFindings(projectRoot, contracts!, cu, options.resolveBlueprintRef)
+      .map(finding => issue('component_asset_projection', finding.message, finding.route)));
+  }
   const warnings: string[] = [];
   try {
-    const modifiable = deriveModifiableModules(projectRoot, cu);
+    const modifiable = deriveModifiableModules(projectRoot, cu, options.resolveBlueprintRef);
     const outside = [...new Set((contracts!.modules ?? []).map(item => item.name))].filter(name => !modifiable.includes(name)).sort();
     if (outside.length > 0) {
-      issues.push(issue('cu_scope_matches_blueprint', `contracts.modules 越出蓝图派生的可修改模块集合 [${modifiable.join(', ')}]（只来自 CU touches）：${outside.join(', ')}；回 /component-design 调和蓝图 touches / development 节点，plan 内无扩展出口。`, 'reconcile_blueprint'));
+      warnings.push(`实际计划涉及预测 touches 之外的模块：${outside.join(', ')}。review 须核实必要性、公共契约兼容与影响；真实架构变化仍回设计责任方。`);
     }
     const designDecisionIds = cu.design_refs.filter(ref => ref.target.kind === 'decision').map(ref => ref.target.id);
-    const architecture = architectureImpactIssues(projectRoot, resolveComponentBlueprintRef(projectRoot, cu.component_blueprint_ref).blueprint, modifiable, designDecisionIds);
+    const architecture = architectureImpactIssues(projectRoot, (options.resolveBlueprintRef ?? resolveComponentBlueprintRef)(projectRoot, cu.component_blueprint_ref).blueprint, modifiable, designDecisionIds, options.architecture);
     issues.push(...architecture.issues);
     warnings.push(...architecture.warnings);
   } catch (error) {
@@ -664,7 +675,7 @@ export function validateChangeUnitFeatureProjection(
   }
   const runtime = runtimeFacts(contracts!);
   issues.push(...runtime.issues);
-  issues.push(...checkVerticalSlice(projectRoot, cu, contracts!));
+  issues.push(...checkVerticalSlice(projectRoot, cu, contracts!, options.resolveBlueprintRef));
   const useCasesRequired = runtime.useCasesRequired || acceptanceNeedsUseCase(acceptance);
   const dagRequired = acceptanceNeedsDag(acceptance) || (hasUnitScope(acceptance) && runtime.dagComplexity);
   if (useCasesRequired && !useCasesPresent) {
@@ -688,7 +699,7 @@ export function checkChangeUnitFeatureProjection(
   phase: ProjectionPhase,
   dags: DagProjectionLike[] = [],
 ): CheckResult[] {
-  const componentChecks = ['plan', 'change', 'coding', 'review'].includes(phase) ? checkComponentSelections(ctx) : [];
+  const componentChecks = ['plan', 'coding', 'review'].includes(phase) ? checkComponentSelections(ctx) : [];
   const result = validateChangeUnitFeatureProjection(
     ctx.projectRoot,
     ctx.feature,
@@ -699,6 +710,22 @@ export function checkChangeUnitFeatureProjection(
     dags,
   );
   if (!result.applicable) return componentChecks;
+  const implementationNotes: string[] = [];
+  if (!CONTRACT_FREEZE_PHASES.has(phase)) {
+    const section = asRecord(ctx.featureSpec.contracts?.change_unit);
+    const refs = [...new Set(['predicate_mappings', 'provide_mappings', 'design_ref_mappings']
+      .flatMap(key => records(section?.[key]).flatMap(row => asStrings(row.implementation_refs))))];
+    for (const raw of refs) {
+      const ref = raw.startsWith('planned:') ? raw.slice(8) : raw;
+      const [file, symbol] = ref.split('#');
+      try {
+        const safe = validateProjectRelativePath(ctx.projectRoot, file, 'implementation hint');
+        const absolute = path.join(ctx.projectRoot, safe);
+        if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()
+          || symbol && !fs.readFileSync(absolute, 'utf8').includes(symbol)) implementationNotes.push(raw);
+      } catch { /* Invalid references already belong to the structural check above. */ }
+    }
+  }
   // plan c4e7a9b2 A1：plan 责任阶段门——手写 contracts 与当前设计权威对齐。不放进 validateChangeUnitFeatureProjection：
   // 投影自己（deriveBlueprintSkillInput）调用它，放进去会自递归。惰性 require 同理避开模块环。
   /* eslint-disable-next-line @typescript-eslint/no-require-imports */
@@ -715,20 +742,31 @@ export function checkChangeUnitFeatureProjection(
       severity: 'BLOCKER' as const,
       status: 'FAIL' as const,
       details: item.message,
+      ...(item.id === 'component_asset_projection' ? {
+        affected_files: [path.relative(ctx.projectRoot, featureFilePath(ctx.projectRoot, ctx.feature, 'contracts.yaml')).replace(/\\/g, '/')],
+      } : {}),
+      ...(phase === 'ut' && item.id === 'change_unit_use_cases_required' ? {
+        repair_owner: 'plan' as const,
+        affected_files: [path.relative(ctx.projectRoot, featureFilePath(ctx.projectRoot, ctx.feature, 'contracts.yaml')).replace(/\\/g, '/')],
+      } : {}),
+      // Both canonical blueprint and CU definition issues use the existing design-owner recovery.
+      ...(item.route === 'reconcile_blueprint' || item.route === 'repair_change_unit' ? { repair_owner: 'external' as const, structured: { kind: 'design_authority', reason: item.reason ?? 'other', codes: item.codes ?? [item.id] } } : {}),
       suggestion: item.route === 'reconcile_blueprint'
         ? '停止 Feature 补模，返回 P1 调和 canonical blueprint。'
         : item.route === 'repair_change_unit'
           ? '修正 canonical CU 定义并重新绑定 Feature。'
-          : '修正 contracts.change_unit ID-only 映射或既有 state_management 施工事实。',
+          : item.id === 'component_asset_projection'
+            ? '在 contracts.change_unit.design_ref_mappings 修正组件映射，并按已引用 decision 对齐 resolution/component_ref；保留上游施工契约的组件理由。若选型结论本身需要改变，回原设计 owner 裁定，不在 plan 自行换选。'
+            : '修正 contracts.change_unit ID-only 映射或既有 state_management 施工事实。',
     }))];
   }
   return [...componentChecks, ...dslWarnings, ...authority, {
     id: 'change_unit_feature_projection',
     category: 'traceability',
     description: 'Change Unit → Feature ID-only 施工投影',
-    severity: 'BLOCKER',
-    status: 'PASS',
-    details: `canonical CU 映射完整；use_cases_required=${result.useCasesRequired}，dag_required=${result.dagRequired}。`,
+    severity: implementationNotes.length ? 'MAJOR' : 'BLOCKER',
+    status: implementationNotes.length ? 'WARN' : 'PASS',
+    details: `canonical CU 映射完整；use_cases_required=${result.useCasesRequired}，dag_required=${result.dagRequired}。实现引用仅作定位，不证明行为完成。` + (implementationNotes.length ? '\n以下私有实现定位未确认，review/UT须按实际源码核实，不要求凑预测名字：' + implementationNotes.join('、') : ''),
     affected_files: [featureFilePath(ctx.projectRoot, ctx.feature, 'contracts.yaml')],
   }];
 }

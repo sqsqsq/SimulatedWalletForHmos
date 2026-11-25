@@ -157,7 +157,7 @@ elements:
 - `pixel_1to1` 下 `disposition: defer` 是未满足的 strict 质量义务；`fidelity_deferrals` 仅用于兼容披露，`human_signed`/`signed_by` 不改变结论
 - `disposition: implement` 须被 ui-spec 节点 id 或 `must_have_elements` 覆盖
 - `disposition: excluded`（需求明文排除，≠ defer）：必带 `requirement_quote`，须逐字出现在需求原文，且该元素不得进 ui-spec，否则 `ref_elements_excluded` BLOCKER；参考图有而需求明确不要的元素（如"激活 NFC 本次先不需要"）一律登记 excluded——不是质量义务、不进 `fidelity_deferrals`/视觉债务，testing 对它的 `missing_render` 缺陷不返修
-- testing 的 `missing_render` 缺陷以 `ref_element` 指向本清单的 `element_id`；任何类别的缺陷只要 `ref_element` 或锚点 `element` 登记为 excluded 都不返修；缺失元素 / 缺陷锚点 / `reverse_missing` 条目在 ui-spec 与本清单都未登记时不作返修依据，只 WARN 交 spec 澄清；`missing_render` 缺 `ref_element`、其余类缺 `element`判证据不全须重评——所以参考图上每个可见元素都应在此登记 implement / defer / excluded
+- testing 的 `missing_render` 缺陷以 `ref_element` 指向本清单的 `element_id`；除 `unexpected_render` 外，任何类别的缺陷只要 `ref_element` 或锚点 `element` 登记为 excluded 都不返修；excluded 元素已被渲染出来时记 `unexpected_render`（锚点 `element`=该 `element_id`），进返修移除；缺失元素 / 缺陷锚点 / `reverse_missing` 条目在 ui-spec 与本清单都未登记时不作返修依据，只 WARN 交 spec 澄清；`missing_render` 缺 `ref_element`、其余类缺 `element`判证据不全须重评——所以参考图上每个可见元素都应在此登记 implement / defer / excluded
 
 ## 素材清单：`asset-manifest.yaml`（v2.4+）
 
@@ -246,7 +246,7 @@ ui-spec 生成后、进 plan 前：
   > 该组件的 `file` 列入 `contracts.files`。这条链是**硬地板**（`visual_parity_coverage`，
   > 不受 `coding.visual_parity_enforcement` 降级）；组件怎么实现由宿主自己决定。
   > `block` 字段已从 ui-spec schema 删除，写了会被 schema 校验判非法字段。
-- **图标/logo/插画**：走既有 `placeholder: true` + `asset-manifest.yaml` 机制，禁止声称"已核对视觉外观"；
+- **图标/logo/插画**：优先复用代码/资源引用已明确用途的工程素材（`acquisition: repo_ref`）；缺失或用途无法确定时才走既有 `placeholder: true` + `asset-manifest.yaml` 机制并披露。复用仍保持 `verified: unverified`，禁止声称"已核对视觉外观"；
   盲档下**禁止声明 `acquisition: crop`**（`blind_crop_prohibition` BLOCKER——盲模型不能执行/自证裁剪；
   用户/外部工具已裁好的可信产物按 c1-c3 条件放行），占位由 coding 期按 role 生成可见语义占位
   （brand_logo→文字头像 / illustration→中性插画框 / system_symbol→SymbolGlyph，禁空白 PNG）。

@@ -20,6 +20,7 @@
 // ============================================================================
 
 import type { LockScreenSnapshot, RevealOutcome, UnlockFailureKind } from './device-unlock-helper';
+import { DEVICE_SETUP_GUIDANCE } from './device-unlock-helper';
 
 import {
   capsTestingConclusion,
@@ -130,6 +131,7 @@ export function evaluateDeviceReadinessProbe(
     return fail('lock state is not observable');
   }
   if (!snapshot.locked) {
+    if (snapshot.systemSetup) return fail(DEVICE_SETUP_GUIDANCE);
     return { probe, ready: true, reason: 'device is unlocked', diagnostics };
   }
 
@@ -309,7 +311,8 @@ export async function ensureDeviceReady(input: DeviceReadinessInput): Promise<De
     (unlockAttempt ? { ...r, unlockAttempt } : r);
 
   // ② 重新探测锁屏
-  let locked = deps.isLocked(serial);
+  let snapshot = deps.snapshot?.(serial);
+  let locked = snapshot ? snapshot.locked : deps.isLocked(serial);
   if (locked === undefined) {
     return withAttempt({ state: 'BLOCKED' as const, reason: `无法判定设备 ${serial} 的锁屏状态`, notes });
   }
@@ -330,7 +333,8 @@ export async function ensureDeviceReady(input: DeviceReadinessInput): Promise<De
       };
       if (attempt.ok) {
         // 复验：不凭返回值宣称成功，必须重新探测
-        locked = deps.isLocked(serial);
+        snapshot = deps.snapshot?.(serial);
+        locked = snapshot ? snapshot.locked : deps.isLocked(serial);
         if (locked === undefined) {
           return withAttempt({ state: 'BLOCKED' as const, reason: `解锁后无法复验 ${serial} 锁屏状态`, notes });
         }
@@ -342,6 +346,7 @@ export async function ensureDeviceReady(input: DeviceReadinessInput): Promise<De
   }
 
   if (!locked) {
+    if (snapshot?.systemSetup) return withAttempt({ state: 'BLOCKED' as const, reason: DEVICE_SETUP_GUIDANCE, notes });
     return withAttempt({
       state: 'READY' as const,
       target: { serial, targetKind: classifyKind(input, serial, null) },
@@ -555,7 +560,12 @@ export async function runDeviceReadinessGate(opts: {
   input: DeviceReadinessInput;
   emitEvent: (event: Record<string, unknown>) => void;
 }): Promise<DeviceGateDecision> {
-  const res = await ensureDeviceReady(opts.input);
+  let res = await ensureDeviceReady(opts.input);
+  if (res.state === 'READY' && capsTestingConclusion(opts.phase, res.target.targetKind)) {
+    res = { state: 'BLOCKED', reason: `本次 ${opts.phase} 需要真机结论；${res.target.serial} 为 ${res.target.targetKind}，接入并正面确认 physical 目标后由原设备门复查。`,
+      notes: res.notes, ...(res.unlockAttempt ? { unlockAttempt: res.unlockAttempt } : {}),
+      ...(res.managed ? { orphanManaged: res.managed, orphanSerial: res.target.serial } : {}) };
+  }
 
   // t6：解锁尝试的**审计投影**——安全 SSOT 是机器级 Credential Manager 锁存
   //（device-credential-store），goal events 只作可回溯记录，**不参与放行判定**。
@@ -619,8 +629,8 @@ export async function runDeviceReadinessGate(opts: {
     };
   }
 
-  const halted = res.state === 'AMBIGUOUS';
-  const haltReason = halted ? 'device_target_ambiguous' : 'device_not_ready';
+  const halted = true;
+  const haltReason = res.state === 'AMBIGUOUS' ? 'device_target_ambiguous' : 'device_not_ready';
   opts.emitEvent({
     type: 'phase_halt',
     phase: opts.phase,
@@ -811,10 +821,24 @@ export async function runPhaseEntryDeviceGate(opts: {
     notes,
     // 复用 deviceEnvFor：env 形状**只有一份**。此前 profile 侧手拼字段漏了 settle，
     // 造成真机恒零等待（见 device-recovery-bridge 头注），不再手拼第二份。
-    env: deviceEnvFor(res.target, opts.sessionId ?? `harness-${opts.phase}-${process.pid}`, input.credentialRef ?? null),
+    env: deviceEnvFor(res.target, opts.sessionId ?? env.MAISON_DEVICE_SESSION_ID ?? `harness-${opts.phase}-${process.pid}`, input.credentialRef ?? null),
     target: res.target,
     ...(res.managed ? { managed: res.managed } : {}),
   };
+}
+
+/** Select and authorize the existing target without wake/unlock/install. Readiness remains the execution gate's job. */
+export function selectDeviceExecutionTarget(opts: { projectRoot: string; sessionId: string; env?: NodeJS.ProcessEnv }):
+  { target: DeviceTarget; env: Record<string, string> } | null {
+  const status = (require('../device-policy') as typeof import('../device-policy')).collectPolicyStatus(opts.projectRoot);
+  if (status.code !== 'ok') return null;
+  const input = (require('./device-readiness-deps') as typeof import('./device-readiness-deps')).buildDeviceReadinessInput(opts.projectRoot);
+  const targets = input.deps.listTargets().map(serial => serial.trim()).filter(Boolean);
+  const configured = (opts.env ?? process.env).HARNESS_HDC_TARGET?.trim() || input.configuredSerial?.trim();
+  const serial = configured && targets.includes(configured) ? configured : !configured && targets.length === 1 ? targets[0] : null;
+  if (!serial) return null;
+  const target = { serial, targetKind: classifyKind(input, serial, null) };
+  return { target, env: { ...deviceEnvFor(target, opts.sessionId, input.credentialRef ?? null), MAISON_DEVICE_ATTEMPT_FROZEN: '0' } };
 }
 
 /**

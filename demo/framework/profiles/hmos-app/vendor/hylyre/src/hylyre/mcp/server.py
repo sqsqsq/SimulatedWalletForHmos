@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hylyre.image_io import image_mime
+
 from hylyre.scenario.step_builder import step_response
 
 import base64
@@ -268,13 +270,13 @@ def build_mcp():  # type: ignore[no-untyped-def]
             if session_id:
                 agent = _session_agent(session_id)
                 raw = await agent.ui.screenshot()
+                mime = image_mime(raw)
             else:
                 import anyio
 
-                _mime, raw = await anyio.to_thread.run_sync(
+                mime, raw = await anyio.to_thread.run_sync(
                     lambda: loop_cmd.execute_screenshot_bytes(device_sn=device_sn)
                 )
-            mime = "image/jpeg" if raw.startswith(b"\xff\xd8\xff") else "image/png"
             payload = {
                 "mime": mime,
                 "base64": base64.standard_b64encode(raw).decode("ascii"),
@@ -417,7 +419,7 @@ def build_mcp():  # type: ignore[no-untyped-def]
 
     @mcp.tool(
         name="hylyre_run_tap",
-        description='One planned tap JSON root key "touch" (no VLM).',
+        description='Touch JSON root touch: mode normal (default), double or long; only long accepts press_time (seconds, default 2). Keeps wait_time after clicking.',
     )
     async def hylyre_run_tap(
         payload: dict[str, Any],
@@ -567,6 +569,11 @@ def build_mcp():  # type: ignore[no-untyped-def]
         from hylyre.cli.commands import steps_cmd
 
         async def _run() -> str:
+            from hylyre.scenario.plan_contract import validate_steps_contract
+
+            rejection = validate_steps_contract(steps) if steps else None
+            if rejection is not None:
+                return rejection.to_json()
             fd = Path(failure_dir).resolve() if failure_dir else None
             if feature or report_out or trace_out:
                 if not (feature and report_out and trace_out):

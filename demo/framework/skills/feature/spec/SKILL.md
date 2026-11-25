@@ -1,8 +1,12 @@
 # Spec 阶段 Skill (`spec`)
 
+正式阶段在产出前和收口前读取[当前工作与验收证据](../../reference/agents-entry-detail.md#当前工作与验收证据)，按本次共同处置完成本职任务或合法交接；原总 PASS、旧回执或 closed 不遮住当前必修。独立请求仍到其授权终点结束。
+
 **P3 设计调用优先规则**：收到显式 1.1 调用时，先消费已绑定验收，只补本次未明确的行为、预期、边界与分层；叙述格式仅检查 required_outputs 中指定的 spec.md，无视觉义务不补 UI 占位件。产品共同决策缺口回 component-design，外部契约回原 owner；只请求设计时止步，不追加 plan/coding。完整规则见 [蓝图设计输入](../../../docs/concepts/blueprint-design-inputs.md)。**单职责终点**：入口只请求本阶段时，只做本职责、在请求终点停止；不冒充 Feature 整体完成，也不自动追加后续阶段（完成判定由冻结范围决定）。
 
-> **输入协议边界**：旧版固定上游阅读口径仅适用于历史 1.0 输入。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。新默认使用 1.1 输入，调用上下文必须由入口解析，不得自行补造。
+**独立 spec-only 准备**：无 Goal、且绑定 canonical CU 时，动笔前在 `framework/harness` 运行 `npx ts-node scripts/prepare-blueprint-design.ts --feature <canonical-feature-id> --phase spec --project-root <工程根> --framework-root <工程根>/framework`，沿同源投影仅导出 acceptance；Goal 已机器准备的直接消费，不重复调用。已有内容与冲突保护保持，不覆盖冲突、不省略 `--phase` 一次导出其它阶段产物；非 CU 的局部设计保留原入口与终点。
+
+> **输入协议边界**：旧版固定上游阅读口径仅适用于历史 1.0 输入。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。新默认使用 1.1 输入，调用上下文必须由入口解析，不得自行补造。
 
 > **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `spec.terminology` / `spec.feature_path` / `spec.freeze` / `phase.next_step`。
 
@@ -12,7 +16,7 @@
 
 **Harness 运行时前置**：满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)。**Personal setup（BLOCKER）**：[personal-setup-gate](../../reference/personal-setup-gate.md)：`check-personal-setup.ts --json --ensure`；仅解析 JSON。**视觉能力自测（UI 相关需求·交互式）**：personal-setup `ok` 后按 [interactive-vision-canary](../../reference/interactive-vision-canary.md) 后台跑自测卷判卷 CLI（防死锁编排逐步照做）。
 
-**Feature 归档定位协议**：先基于 `framework.config.json > paths.features_dir` 解析 `<features_dir>/<feature>/`（本文档下称 `<features_dir>`）。 `<feature>` 语义见 [路径术语表](../../reference/agents-entry-detail.md)（物理 Feature 路径）；定位一律经框架解析（CLI/SSOT/harness 产物路径），不得手工拼接逻辑 identity（含编码 `cu-…`）。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`（或 `harness-runner --sync-closure`）；exit 0 → 已闭环，**停等 `phase.next_step`**，禁止仅凭 stale state 判未闭环。已存在目录 → 续写 `spec/spec.md`/`acceptance.yaml`；同级归档/同名前缀条目仅作旁证，不得当正式 feature；精确路径存在但非目录 → 停下请用户确认（`spec.feature_path`：`1=换名 2=清理恢复`）。
+**Feature 归档定位协议**：先基于 `framework.config.json > paths.features_dir` 解析 `<features_dir>/<feature>/`（本文档下称 `<features_dir>`）。 `<feature>` 语义见 [路径术语表](../../reference/agents-entry-detail.md)（物理 Feature 路径）；定位一律经框架解析（CLI/SSOT/harness 产物路径），不得手工拼接逻辑 identity（含编码 `cu-…`）。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`（或 `harness-runner --sync-closure`）；exit 0只说明原检查闭环；完整交付继续读取共同当前事实，专项请求到原终点停止，禁止仅凭 stale state 判未闭环。已存在目录 → 续写 `spec/spec.md`/`acceptance.yaml`；同级归档/同名前缀条目仅作旁证，不得当正式 feature；精确路径存在但非目录 → 停下请用户确认（`spec.feature_path`：`1=换名 2=清理恢复`）。
 
 ## 条件加载索引
 
@@ -42,15 +46,11 @@
 
 **CU-bound Feature**：若目标 Feature id 以 canonical `change_unit_ref` 派生，spec 只引用该 CU 的 purpose、target predicate/provide ID 和用户可见语义，不复制或改写 CU/蓝图定义；发现部件级 owner、主链或外部契约与蓝图冲突时停止并回 P1 调和，不在 Feature spec 用 TBD 补模。
 
-**正式性兜底复核（M7，非阻断）**：spec 是 full 轨第一次冻结施工意图的地方，也是正式需求的兜底复核点——**正式需求的 spec 一律位于蓝图与 Change Unit 之后，spec 不再是任何正式需求的第一个设计产物**。开始 Step 1 前先按判据自查一次：
+设计期已有 acceptance/contracts/use_cases 时直接消费 typed 推导输入并写本阶段 acceptance，正常交接不提前物化。P0 device/both 义务不依赖 linked_flow；UI 相关性沿有效 ui_change/需求判断，UI 义务缺 checkpoint 时由 spec 根据真实 ui-spec 补齐。linked_flow 只关联业务用例；flows 可选，声明才核屏链。spec 只补本职责的 checkpoint/屏幕流程等缺键，保留已有权威预期，通过原对齐与 P0 门；已有带来源戳文件也沿同一规则补充，不换戳绕过。缺内容才在本职责补设计，叙述文件仅按 required_outputs 产出。
 
-> **正式需求**＝有明确交付或验收责任，且拟改变**部件行为、外部契约、数据/NFR、运行语义或架构责任**的事项；不改变这些语义的纯文档和机械维护除外。
+**入口兜底复核（M7 口径由统一前门取代）**：本 Skill 只处理已派生的 spec 职责，先核 [统一前门](../../../docs/operations/project-entry.md) 的原始请求与有效范围。特别简单不因“正式需求”标签补蓝图/spec；小型按短蓝图原 request 消费验收，不为阶段形式新增 spec/plan；中型/复杂及已有 CU 继续完整蓝图/CU 准入。若本请求需要完整设计而缺蓝图/CU，把具体设计缺口交回 `/component-design`，保留草稿与已有成果，不能由 spec 追认已施工代码。
 
-- 事项**符合**该判据却**没有**经过部件内设计阶段（当前 Feature 不由某个 canonical `change_unit_ref` 派生）→ 说明"这应先经 [`/component-design`](../../project/component-design/SKILL.md) 建立部件演进蓝图"，给出回退入口，由用户裁决是回退还是按当前理解继续；命中即停的成本只是一份 spec 草稿；
-- **上游显式**把它标为正式需求时，该分类具有权威性，不得用本地判断降级；
-- 信息不足以判断时**问人**，不猜测；
-- 需要用户裁决时用共享确认点 `design.formality_routing`（与 `/component-design`、`/change-lite` 同一条目，见 [user-confirmation-ux.md](../../reference/user-confirmation-ux.md)），不另建状态；
-- 这是**指引不是门禁**：不加机器 BLOCKER、不改 `track_scoring`、不新增档位。
+上游真实预期和授权保留，但“正式”标签不替代四档事实。unknown 先复用已有验收、蓝图、catalog 和源码补依据，只有影响正确交付的真实语义缺口才用既有适用确认点；不新增分类表单、机器票据或新的确认状态。已有 CU/run 沿其职责与冻结范围恢复，不拆 request 降低在途义务。
 
 ## 流程骨架
 
@@ -82,9 +82,9 @@ cd framework/harness && npx ts-node harness-runner.ts --phase spec --feature {mo
 
 若本轮来自 attended `phase_execute_request`，上述阶段入口还必须追加同一组 `--goal-run-id <run_id> --goal-attempt-id <attempt_id> --goal-owner-id <owner_id> --goal-owner-epoch <owner_epoch>`；不得扫描 feature 下的 active run 自动绑定。完成 verifier 与 receipt 自证后，以**同一组参数**再次运行 `harness-runner.ts --sync-closure --phase spec --feature <feature>`；只有 exit 0 才可向 attended bridge 回传 `passed`。
 
-**AI Harness**：harness 输出 verifier request 时，agent 必须主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权，不得仅"告知用户可运行"），prompt 模板 `framework/harness/prompts/verify-spec.md`。 verifier 的 WARN/UNKNOWN 本轮不修（记入 `<phase>/notes.md` 带到下一阶段），只有 **BLOCKER 级 FAIL** 才触发修正与重审；材料未变时 harness 复用既有 verifier 报告，材料变了但历史有 PASS 时闭环标 `completed_with_prior_review`（不重跑 verifier，未重审差异登记在 `summary.verifier_closure`）。
+**AI Harness**：harness 输出 verifier request 时，agent 必须主动调用专用 verifier 角色（宿主以 Task 承载时显式选 `subagent_type: verifier`，宿主原生登记了 verifier 工具时直接调用它；不用通用研究/开发子 agent 顶替）（全局入口 §4.1 明示授权，不得仅"告知用户可运行"），prompt 模板 `framework/harness/prompts/verify-spec.md`。 原始 verifier 总判与当前工作分别读取：按[当前工作与验收证据](../../reference/agents-entry-detail.md#当前工作与验收证据)消费统一处置。原总 PASS 不免除本阶段真正必修项，建议不因 MAJOR 标签升级；待核交原 verifier，已核必修交合法责任方。材料未变复用报告；历史 PASS 未覆盖当前相关材料时先补核，不能只凭 `completed_with_prior_review` 结束。
 
-**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
+**调用的 prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 prompt 投给专用 verifier 角色——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
 
 **报告由你写入，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，用 Write 把它的回复**原样全文**写进 `summary.verifier_report` 指向的路径（`<reports>/verifier.report.<subject>.md`），再跑 `check-receipt`。不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入；只有终态块的报告能通过校验，却会把这些全部丢掉。
 
@@ -92,11 +92,11 @@ cd framework/harness && npx ts-node harness-runner.ts --phase spec --feature {mo
 
 ## 阶段闭环判定（全局入口 §5.1）
 
-**closed = 脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供**。要求哪几项由 harness 求解后输出（`HARNESS_EVIDENCE_POLICY` 行与 `check-receipt` 的逐项状态），不是写死的固定四件套——verifier 是否 required 由 harness 的 verifier plan 决定，判 disabled 时这一项不存在也不缺失。本阶段的常规形态：
+**closed = 脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供 ∧ 当前共同处置无本职责未完必修/待核**。要求哪几项由 harness 求解后输出（`HARNESS_EVIDENCE_POLICY` 行与 `check-receipt` 的逐项状态），不是写死的固定四件套——verifier 是否 required 由 harness 的 verifier plan 决定，判 disabled 时这一项不存在也不缺失。本阶段的常规形态：
 
-1. `<features_dir>/<feature>/spec/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS（**仅当 harness 为本阶段输出了 verifier request**；只跑一次——材料未变复用既有报告，材料变了但历史有 PASS 沿用并标 `completed_with_prior_review`）；4. `check-receipt.ts` 通过（回执由 harness 只读投影生成，agent 不手填；备注写 `<phase>/notes.md`）。required 证据齐备后只证明本阶段闭环；跨阶段资格与建议由 `assess@1` 输出。
+1. `<features_dir>/<feature>/spec/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS（**仅当 harness 为本阶段输出了 verifier request**；只跑一次——材料未变复用既有报告，历史 PASS 的适用性与补核按共同处置）；4. `check-receipt.ts` 通过（回执由 harness 只读投影生成，agent 不手填；备注写 `<phase>/notes.md`）。独立非 goal 入口按原职责闭环；goal 中这些自检事实只表示可交回 runtime，由 runtime 正式 gate/finalizer 统一提交阶段闭环。自检 PASS/closed 不表示 executor 应停止施工。跨阶段资格与建议由 `assess@1` 输出。
 
-**收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落；recommendation 由 `assess@1` 生成，执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
+**收尾与继续**：呈现共同当前处置的NEXT；完整交付依已有授权由原协调器持续推进，不按phase重复确认或派新作者。直接专项请求止于原终点，检查PASS不扩大授权。
 
 ## 输出规范
 

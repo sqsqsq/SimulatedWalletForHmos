@@ -8,8 +8,10 @@
 
 import type { CheckResult } from './types';
 import { resolveBlockerActionability } from './goal-failure-classifier';
+import { dropRedundantAggregates, isBlockingCheck } from './check-disposition';
 
 export interface SummaryBlockerEntry {
+  device_setup?: CheckResult['device_setup'];
   id: string;
   severity: string;
   status: string;
@@ -33,7 +35,9 @@ export interface SummaryBlockerEntry {
 }
 
 /**
- * 从 checks 过滤 FAIL+BLOCKER 并映射为 summary blockers[]。
+ * 按判定谓词筛出阻断本阶段的检查并映射为 summary blockers[]（plan f7045213 §4）。
+ * 聚合的运行状态检查只在同一失败已有源 blocker 表达时去掉（§4.4）——清单长度就是 blocker_count，
+ * 签名也由它得出。
  * excerpt / extractFailureClassification 由调用方注入（保持与 harness-runner 既有实现一致、不重复定义）。
  */
 export function buildSummaryBlockers(
@@ -41,8 +45,7 @@ export function buildSummaryBlockers(
   excerpt: (text: string, max: number) => string,
   extractFailureClassification: (details: string) => string | undefined,
 ): SummaryBlockerEntry[] {
-  return checks
-    .filter(c => c.status === 'FAIL' && c.severity === 'BLOCKER')
+  return dropRedundantAggregates(checks.filter(c => isBlockingCheck(c)))
     .map(c => {
       const classification = c.failure_kind ?? extractFailureClassification(c.details);
       // P0-4（plan 7c4f2e9b）：actionability 经单一注册表解析后落 summary（显式→映射→缺省）
@@ -58,6 +61,7 @@ export function buildSummaryBlockers(
         status: c.status,
         classification,
         ...(c.blocking_class ? { blocking_class: c.blocking_class } : {}),
+        ...(c.device_setup ? { device_setup: c.device_setup } : {}),
         details_excerpt: excerpt(c.details, 800),
         affected_files: c.affected_files,
         suggestion: c.suggestion,

@@ -1,4 +1,4 @@
-import { validateExecutionScope, type ExecutionScope } from './execution-scope';
+import { validateExecutionScope, type ExecutionScope, type ExecutionScopeInput } from './execution-scope';
 /**
  * Goal manifest parser — SSOT for goal-runner CLI and
  * {features_dir}/<feature>/goal-runs/<run-id>/manifest.json
@@ -16,25 +16,34 @@ import {
   type DependencyPolicy,
 } from './phase-transition-policy';
 import { isValidFidelityTarget } from './fidelity-shared';
-import type { ProviderRef } from './types';
+import { normalizeModelRouteFields, type AdapterModelRouteFields, type ProviderRef } from './types';
+import { relFeaturesDir } from '../../config';
 
+/** Read-only legacy declaration; current writers and execution do not consume it. */
 export interface GoalBudget {
   max_retries_per_phase?: number;
   max_total_turns?: number;
   wall_clock_minutes?: number;
-  /**
-   * P0-D（b8f36a12）：API 断流（transient_api_error）独立重试上限——与
-   * max_retries_per_phase **解耦**（一次断流不吃内容重试预算），仍受
-   * max_total_turns + wall_clock 兜底。计数从 events.jsonl 派生（跨 resume 不清零）。
-   */
   max_transient_api_retries?: number;
 }
 
-export interface AdapterModelPin {
+export interface AdapterModelPin extends AdapterModelRouteFields {
   /** 最终 effective adapter（resolveFinalModelPin 单点裁决后写入） */
   adapter: string;
-  /** 用户显式 --adapter-model 的权威模型值 */
+  /** 用户显式 --adapter-model 的权威模型值，或获准替代换上的型号（见 source） */
   value: string;
+  /**
+   * plan 4e6fb3b6 §6.4：钉值来源。只有获准替代写入时才落 'approved_alternative'；
+   * 缺省（含全部旧 manifest）= 用户显式钉值——这是读取语义，不回写、不改变既有身份摘要。
+   */
+  source?: ModelPinSource;
+}
+
+export type ModelPinSource = 'user' | 'frontend' | 'approved_alternative';
+
+/** 用户钉死的型号框架不替换；来源为获准替代的钉值不算用户钉死（plan 4e6fb3b6 §6.4）。 */
+export function isUserPinnedModel(pin: AdapterModelPin | undefined): boolean {
+  return Boolean(pin) && pin!.source !== 'approved_alternative';
 }
 
 export const RUN_ADAPTER_PROVENANCES = [
@@ -57,8 +66,10 @@ export type RunAdapterProvenance = (typeof RUN_ADAPTER_PROVENANCES)[number];
  * runner-owned gate、receipt/人签、journal 收编、设备与凭据规则一概不受影响。
  */
 export function effectiveHeadlessUnattended(raw?: UnattendedContract): UnattendedContract {
+  const { allowed_tools: _legacyApprovalList, max_turns: _turns, timeout_seconds: _timeout,
+    phase_timeout_seconds: _phaseTimeout, ...current } = raw ?? ({} as UnattendedContract);
   return {
-    ...(raw ?? ({} as UnattendedContract)),
+    ...current,
     write_mode: 'full-access',
     approval_mode: 'never',
   };
@@ -68,14 +79,18 @@ export interface UnattendedContract {
   write_mode: 'workspace-write' | 'accept-edits' | 'full-access';
   approval_mode: 'never' | 'on-request' | 'always';
   max_turns?: number;
-  /** 扁平全局超时（秒）；per-phase 未命中时的兜底。优先级见 utils/goal-timeout.ts。 */
+  /** @deprecated Read-only legacy declaration; never an execution deadline. */
   timeout_seconds?: number;
-  /** 显式 per-phase 超时覆盖（秒），最高优先。缺省走 goal-timeout 内置默认表。 */
+  /** @deprecated Read-only legacy declaration; current work has no phase deadline. */
   phase_timeout_seconds?: Partial<Record<FeaturePhase, number>>;
   allowed_tools?: string[];
 }
 
 export interface GoalManifest {
+  /** Absolute UTC deadline explicitly supplied by the user; never inferred from legacy budgets. */
+  user_deadline_at?: string;
+  /** Immutable original delivery locator; it grants no authority. */
+  delivery_origin?: { feature: string; run_id: string };
   execution_scope?: ExecutionScope;
   schema_version: '1.0';
   start_phase: FeaturePhase;
@@ -132,7 +147,8 @@ export interface GoalManifest {
    * identity 均忽略；新 CLI/manifest writer 不再生成它。
    */
   allow_blind_visual?: true;
-  budget: Required<GoalBudget>;
+  /** @deprecated Historical read-only statistics/configuration; new manifests never emit quotas. */
+  budget?: Required<GoalBudget>;
   dependency_policy: Required<DependencyPolicy>;
   unattended: UnattendedContract;
   run_id: string;
@@ -157,6 +173,58 @@ export interface GoalManifest {
   inherited_drift_fingerprints?: string[];
 }
 
+/** A request may be managed before a canonical CU or construction scope exists. */
+export type InitialDesignGoalManifest = Omit<GoalManifest,
+  'start_phase' | 'end_phase' | 'phase_chain' | 'chain_override' | 'execution_scope' | 'run_base_sha'> & {
+  initial_design: ExecutionScopeInput['request'];
+  /** Initial-request domain boundaries, not a running construction phase. Legacy roots omit both. */
+  start_phase?: GoalManifest['start_phase'];
+  end_phase?: GoalManifest['end_phase'];
+  phase_chain?: never;
+  chain_override?: never;
+  execution_scope?: never;
+  run_base_sha?: never;
+};
+
+export type GoalRunManifest = GoalManifest | InitialDesignGoalManifest;
+
+export function parseUserDeadlineAt(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(value)
+    || !Number.isFinite(Date.parse(value))) throw new Error('[goal-manifest] user_deadline_at must be an explicit UTC timestamp');
+  return new Date(value).toISOString();
+}
+
+export function isInitialDesignManifest(manifest: GoalRunManifest): manifest is InitialDesignGoalManifest {
+  return 'initial_design' in manifest;
+}
+
+export function validateDeliveryOrigin(value: unknown): { feature: string; run_id: string } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('[goal-manifest] delivery_origin must locate an existing run');
+  const origin = value as Record<string, unknown>;
+  if (typeof origin.feature !== 'string' || typeof origin.run_id !== 'string' || !origin.run_id
+    || origin.run_id.startsWith('.') || /[\\/]/.test(origin.run_id)) throw new Error('[goal-manifest] invalid delivery_origin');
+  featureRelativePath(origin.feature);
+  return { feature: origin.feature, run_id: origin.run_id };
+}
+
+function validateInitialDesignRequest(value: unknown): ExecutionScopeInput['request'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('[goal-manifest] initial_design request missing');
+  const request = value as Record<string, unknown>;
+  if (request.completion_target !== 'feature' || !Array.isArray(request.requested_results) || !request.requested_results.length
+    || !Array.isArray(request.requested_phases)
+    || [...request.requested_results, ...request.requested_phases].some(item => typeof item !== 'string' || !item.trim())) {
+    throw new Error('[goal-manifest] invalid initial_design request boundary');
+  }
+  return structuredClone(request) as ExecutionScopeInput['request'];
+}
+
+export function buildInitialDesignGoalManifest(input: Record<string, unknown>, opts: GoalManifestParseOptions): InitialDesignGoalManifest {
+  const { phase_chain, chain_override, execution_scope, run_base_sha, ...common } = buildGoalManifestFromInput(input, opts);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(common.feature)) throw new Error('[goal-manifest] initial design feature must be a blueprint workspace id');
+  return { ...common, initial_design: validateInitialDesignRequest(input.initial_design) };
+}
+
 export interface GoalManifestParseOptions {
   projectRoot: string;
   runId?: string;
@@ -173,12 +241,6 @@ export interface LoadGoalManifestFromRunOptions {
 
 const DEFAULT_FEATURES_DIR = 'doc/features';
 
-const DEFAULT_BUDGET: Required<GoalBudget> = {
-  max_retries_per_phase: 2,
-  max_total_turns: 30,
-  wall_clock_minutes: 480,
-  max_transient_api_retries: 3,
-};
 
 /**
  * 十轮 review P1：manifest **身份哈希**——覆盖 run 期不应变的安全相关字段
@@ -191,23 +253,26 @@ const DEFAULT_BUDGET: Required<GoalBudget> = {
 /** 十一轮 review P1：**逐字段**身份哈希——resume 时字段级 diff（哪些字段变了），
  * 支撑"只允许本次 override 覆盖对应字段"的字段级授权（裸 --override-start 不得放行
  * requirement/budget 等无关字段的漂移）。 */
-export function computeManifestIdentityFields(manifest: GoalManifest): Record<string, string> {
+export function computeManifestIdentityFields(manifest: GoalRunManifest): Record<string, string> {
   const fields: Record<string, unknown> = {
     schema_version: manifest.schema_version,
-    start_phase: manifest.start_phase,
+    start_phase: manifest.start_phase ?? null,
     minimum_assurance: manifest.minimum_assurance ?? null,
-    end_phase: manifest.end_phase,
+    end_phase: manifest.end_phase ?? null,
     feature: manifest.feature,
     requirement: manifest.requirement ?? null,
     chain_override: manifest.chain_override ?? null,
     fidelity: manifest.fidelity ?? null,
     fidelity_receipt: manifest.fidelity_receipt ?? null,
-    budget: manifest.budget,
+    ...(manifest.budget ? { budget: manifest.budget } : {}),
     dependency_policy: manifest.dependency_policy,
     unattended: manifest.unattended,
     pre_authorized_mutations: manifest.pre_authorized_mutations ?? null,
   };
+  if (manifest.user_deadline_at !== undefined) fields.user_deadline_at = manifest.user_deadline_at;
   if (Object.prototype.hasOwnProperty.call(manifest, 'execution_scope')) fields.execution_scope = JSON.parse(JSON.stringify(manifest.execution_scope ?? null));
+  if (isInitialDesignManifest(manifest)) fields.initial_design = manifest.initial_design;
+  if (Object.prototype.hasOwnProperty.call(manifest, 'delivery_origin')) fields.delivery_origin = manifest.delivery_origin;
   if (manifest.execution_scope && manifest.successor_of) fields.successor_of = manifest.successor_of;
   // adapter_model_pin 条件入集——键在场即在
   // 哈希，旧 manifest 无键不受影响（凭空补默认会让既有 run resume 多出字段→误判漂移）。
@@ -272,7 +337,8 @@ export function diffManifestIdentityFields(
   b: Record<string, string>,
 ): string[] {
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-  return [...keys].filter(k => a[k] !== b[k]).sort();
+  // These legacy declarations do not grant current native authority; the signed context does.
+  return [...keys].filter(k => k !== 'budget' && k !== 'unattended' && a[k] !== b[k]).sort();
 }
 
 /** override 旗标 → 其授权可变更的身份字段集（--override-manifest=整体替换，授权全部字段）。
@@ -283,8 +349,7 @@ export function overrideAuthorizedIdentityFields(argv: {
   'override-start'?: boolean;
   'override-end'?: boolean;
 }): 'all' | Set<string> {
-  if (argv['override-manifest']) return 'all';
-  const set = new Set<string>();
+  const set = new Set<string>(argv['override-manifest'] ? ['requirement', 'requirement_source_files', 'user_deadline_at'] : []);
   if (argv['override-start']) set.add('start_phase');
   if (argv['override-end']) set.add('end_phase');
   return set;
@@ -354,14 +419,9 @@ function mergeDependencyPolicy(raw?: Partial<DependencyPolicy>): Required<Depend
   };
 }
 
-function mergeBudget(raw?: GoalBudget): Required<GoalBudget> {
-  return {
-    max_retries_per_phase: raw?.max_retries_per_phase ?? DEFAULT_BUDGET.max_retries_per_phase,
-    max_total_turns: raw?.max_total_turns ?? DEFAULT_BUDGET.max_total_turns,
-    wall_clock_minutes: raw?.wall_clock_minutes ?? DEFAULT_BUDGET.wall_clock_minutes,
-    max_transient_api_retries:
-      raw?.max_transient_api_retries ?? DEFAULT_BUDGET.max_transient_api_retries,
-  };
+function currentUnattended(raw?: UnattendedContract): UnattendedContract {
+  const { max_turns: _turns, timeout_seconds: _timeout, phase_timeout_seconds: _phases, ...current } = raw ?? ({} as UnattendedContract);
+  return current as UnattendedContract;
 }
 
 export function validateUnattendedContract(u: Partial<UnattendedContract> | undefined): string[] {
@@ -457,19 +517,24 @@ function parsePreAuthorizedMutations(
   return out.length > 0 ? out : undefined;
 }
 
-function normalizeAdapterModelPin(raw: unknown): AdapterModelPin | undefined {
+export function normalizeAdapterModelPin(raw: unknown): AdapterModelPin | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error('[goal-manifest] adapter_model_pin 必须为对象');
   }
   const r = raw as Record<string, unknown>;
-  validateAdapterModelPinValue(r.adapter, r.value);
-  return { adapter: String(r.adapter).trim(), value: String(r.value).trim() };
+  validateAdapterModelPinValue(r.adapter, r.value, r.source);
+  return {
+    adapter: String(r.adapter).trim(),
+    value: String(r.value).trim(),
+    ...(r.source !== undefined ? { source: r.source as ModelPinSource } : {}),
+    ...normalizeModelRouteFields(r),
+  };
 }
 
 /** 已知 adapter 集（model pin 形状校验的 adapter ∈ 已知集约束）。 */
 const KNOWN_MODEL_PIN_ADAPTERS = new Set([
-  'codex', 'claude', 'codeagent', 'cursor', 'opencode', 'chrys', 'generic',
+  'codex', 'claude', 'codeagent', 'cursor', 'opencode', 'chrys', 'generic', 'deepseek-harness',
 ]);
 
 /**
@@ -477,14 +542,17 @@ const KNOWN_MODEL_PIN_ADAPTERS = new Set([
  * adapter 须为非空字符串且 ∈ 已知集；value 须为字符串、trim 后非空 ≤128 无控制字符。
  * 违规整体拒绝加载/解析。
  */
-export function validateAdapterModelPinValue(adapter: unknown, value: unknown): void {
+export function validateAdapterModelPinValue(adapter: unknown, value: unknown, source?: unknown): void {
+  if (source !== undefined && source !== 'user' && source !== 'frontend' && source !== 'approved_alternative') {
+    throw new Error('[goal-manifest] adapter_model_pin.source 键在场时须为 user|approved_alternative');
+  }
   if (typeof adapter !== 'string' || !adapter.trim()) {
     throw new Error('[goal-manifest] adapter_model_pin.adapter 必填且须为非空字符串');
   }
   const a = adapter.trim();
   if (!KNOWN_MODEL_PIN_ADAPTERS.has(a)) {
     throw new Error(
-      `[goal-manifest] adapter_model_pin.adapter 不在已知集（${['codex', 'claude', 'codeagent', 'cursor', 'opencode', 'chrys', 'generic'].join('|')}）`,
+      `[goal-manifest] adapter_model_pin.adapter 不在已知集（${[...KNOWN_MODEL_PIN_ADAPTERS].join('|')}）`,
     );
   }
   if (typeof value !== 'string') {
@@ -533,7 +601,7 @@ function normalizeVisualProviderPin(raw: unknown): ProviderRef | undefined {
   }
   const r = raw as Record<string, unknown>;
   validateVisualProviderPinValue(r.adapter, r.model);
-  return { adapter: String(r.adapter).trim(), model: String(r.model).trim() };
+  return { adapter: String(r.adapter).trim(), model: String(r.model).trim(), ...normalizeModelRouteFields(r) };
 }
 
 function validateLegacyBlindVisualField(input: Record<string, unknown>): void {
@@ -710,6 +778,8 @@ export function buildGoalManifestFromInput(
     : undefined;
 
   return {
+    ...(input.user_deadline_at === undefined ? {} : { user_deadline_at: parseUserDeadlineAt(input.user_deadline_at) }),
+    ...(input.delivery_origin === undefined ? {} : { delivery_origin: validateDeliveryOrigin(input.delivery_origin) }),
     ...(rawFidelity ? { fidelity: rawFidelity as GoalManifest['fidelity'] } : {}),
     ...(rawFidelityReceipt ? { fidelity_receipt: rawFidelityReceipt } : {}),
     ...(adapterModelPin ? { adapter_model_pin: adapterModelPin } : {}),
@@ -729,10 +799,9 @@ export function buildGoalManifestFromInput(
         ? input.adapter_provenance.trim()
         : undefined,
     chain_override: chainOverride,
-    budget: mergeBudget(input.budget as GoalBudget | undefined),
     dependency_policy: mergeDependencyPolicy(input.dependency_policy as DependencyPolicy | undefined),
     minimum_assurance: normalizeMinimumAssurance(input.minimum_assurance),
-    unattended: input.unattended as UnattendedContract,
+    unattended: currentUnattended(input.unattended as UnattendedContract),
     pre_authorized_mutations: parsePreAuthorizedMutations(input.pre_authorized_mutations),
     run_id: runId,
     report_dir: reportDir,
@@ -753,6 +822,54 @@ export const SCOPE_REVISION_FIELDS = ['execution_scope', 'phase_chain', 'start_p
 /** 合并后的 requirement 是否携带显式修复增量段。 */
 export function isSuccessorRepairRequirement(requirement: string | undefined | null): boolean {
   return typeof requirement === 'string' && requirement.includes(SUCCESSOR_REQUIREMENT_INCREMENT_MARKER);
+}
+
+/**
+ * plan 4e6fb3b6 批三返修 R1：本次需求文本是不是"重复"（不是需求增量）——接续决策与后继需求合并共用这一个判据。
+ * 只在能确认时判重（比较前只做首尾空白归一）：与合并后的全文相同；与原始请求全文相同；与整个历史增量块全文相同。
+ * 合并格式 `原请求\n标记\n增量1\n增量2…` 里各段历史增量之间只有换行、没有分隔符，拆不出单段边界——其余一律按增量处理
+ * （宁可多起一次后继，不丢需求）。任意子串或历史块内部的片段都不算重复。
+ */
+export function isRepeatedRequirement(prior: string | undefined | null, text: string): boolean {
+  return successorRequirementIncrement(prior, text) === undefined;
+}
+
+/** 按增量标记切成原请求段与历史增量块；没有标记时 history 为 undefined。 */
+function splitAtIncrementMarker(text: string): { head: string; history?: string } {
+  const at = text.indexOf(SUCCESSOR_REQUIREMENT_INCREMENT_MARKER);
+  if (at < 0) return { head: text.trim() };
+  return { head: text.slice(0, at).trim(), history: text.slice(at + SUCCESSOR_REQUIREMENT_INCREMENT_MARKER.length).trim() };
+}
+
+/**
+ * plan 4e6fb3b6 最终评审返修：本次需求文本里源需求还没有的部分；undefined = 没有新内容（重复）。
+ * 接续决策（经 isRepeatedRequirement）与两个后继入口共用。不带标记：沿用上面三种整段重复，其余整段都是新增。
+ * 带标记（本次文本已是合并格式）：标记不是丢弃内容的依据，只在能确认时剥离已有内容——原请求段与源的原请求全文相同才去掉；
+ * 增量段开头按整行与源的**整个**历史增量块相同才去掉那一截；部分相同、子串相同一律保留（宁可重复，不丢需求）。
+ * 剩下的内容里多余的标记去掉，由 mergeSuccessorRequirement 接到源全文后面，标记恒一个。
+ */
+export function successorRequirementIncrement(prior: string | undefined | null, text: string): string | undefined {
+  const t = text.trim();
+  if (!t) return undefined;
+  const p = (prior ?? '').trim();
+  if (t === p) return undefined;
+  const source = splitAtIncrementMarker(p);
+  if (t === source.head || (source.history !== undefined && t === source.history)) return undefined;
+  const request = splitAtIncrementMarker(t);
+  if (request.history === undefined) return t;
+  let rest = request.history;
+  if (source.history && (rest === source.history || rest.startsWith(`${source.history}\n`))) rest = rest.slice(source.history.length);
+  const parts = [
+    ...(request.head && request.head !== source.head ? [request.head] : []),
+    ...rest.split(SUCCESSOR_REQUIREMENT_INCREMENT_MARKER).map(part => part.trim()).filter(Boolean),
+  ];
+  return parts.length ? parts.join('\n') : undefined;
+}
+
+/** 后继的需求文本（两个入口共用）：没有新内容 → 源需求原样；否则源全文 + 新增段。 */
+export function deriveSuccessorRequirement(source: string | undefined, text: string): string | undefined {
+  const increment = successorRequirementIncrement(source, text);
+  return increment === undefined ? source : mergeSuccessorRequirement(source, increment);
 }
 
 /**
@@ -786,9 +903,8 @@ export function inheritSuccessorManifest(
     round: readonly string[];
     drift: readonly string[];
   },
+  options: { newDeliveryCycle?: boolean } = {},
 ): GoalManifest {
-  const unique = (values: readonly string[]): string[] =>
-    [...new Set(values.map(value => value.trim()).filter(Boolean))];
   if (manifest.feature !== source.feature) {
     throw new Error(
       `[goal-manifest] successor feature 不一致（当前=${manifest.feature}，源=${source.feature}）`,
@@ -806,10 +922,16 @@ export function inheritSuccessorManifest(
   // --visual-adapter/--visual-model 可覆盖，由 resolveFinalVisualProviderPin 裁决）。
   // legacy allow_blind_visual 没有运行语义；successor 不复制无效历史字段。
   delete inherited.allow_blind_visual;
+  delete inherited.budget;
+  delete inherited.inherited_round_fingerprints;
+  delete inherited.inherited_drift_fingerprints;
+  inherited.unattended = currentUnattended(inherited.unattended);
+  if (options.newDeliveryCycle) {
+    if (manifest.user_deadline_at) inherited.user_deadline_at = manifest.user_deadline_at;
+    else delete inherited.user_deadline_at;
+  }
   // successor 换 adapter 时禁止把旧 adapter 的模型字符串回放给新 adapter——继承 pin
   // 的 adapter 若与最终 effective adapter 不一致，resolveFinalModelPin 会 BLOCKER。
-  const sourceRound = source.inherited_round_fingerprints ?? [];
-  const sourceDrift = source.inherited_drift_fingerprints ?? [];
   // plan c4e8a1f7 T2：successor 继承源 requirement 来源列表，并在显式 file 增量时
   // 去重追加（manifest.requirement_source_files 由 CLI 显式 --requirement-file 解析产生）。
   const sourceFiles =
@@ -825,27 +947,7 @@ export function inheritSuccessorManifest(
     created_at: manifest.created_at,
     successor_of: source.run_id,
     ...(mergedSourceFiles.length > 0 ? { requirement_source_files: mergedSourceFiles } : {}),
-    inherited_round_fingerprints: unique([...sourceRound, ...fingerprints.round]),
-    inherited_drift_fingerprints: unique([...sourceDrift, ...fingerprints.drift]),
   };
-}
-
-/**
- * 治 2.3.0 历史 manifest：legacy 扁平 timeout_seconds=3600 且无 per-phase map →
- * 视为"未显式设置"，删除该字段，使 **resume 旧 run** 走 goal-timeout 的 per-phase 默认表
- * （否则历史续跑里 review/testing 仍只有 60min，等于没修这次现场问题）。
- * 只对恰等于 legacy 默认值的扁平超时生效；用户显式设的非 3600 值保持不动。
- *
- * **仅用于 resume 旧 run（loadGoalManifestFromRun）**——不要用于 loadGoalManifestFile：
- * 用户手写 --manifest 的 3600 是显式选择，须按"扁平覆盖所有 phase"契约尊重，不可误删。
- */
-const LEGACY_FLAT_TIMEOUT_SECONDS = 3600;
-export function applyLegacyTimeoutMigration(manifest: GoalManifest): GoalManifest {
-  const u = manifest.unattended;
-  if (u && u.timeout_seconds === LEGACY_FLAT_TIMEOUT_SECONDS && !u.phase_timeout_seconds) {
-    delete u.timeout_seconds;
-  }
-  return manifest;
 }
 
 export function loadGoalManifestFile(
@@ -853,17 +955,29 @@ export function loadGoalManifestFile(
   projectRoot: string,
   opts?: Pick<GoalManifestParseOptions, 'featuresDir' | 'dryRun' | 'runId'>,
 ): GoalManifest {
+  return loadGoalManifestDefinition(filePath, projectRoot, opts).manifest;
+}
+
+/** Preserve declared initial actions before normal Goal defaults are applied. */
+export function loadGoalManifestDefinition(filePath: string, projectRoot: string,
+  opts?: Pick<GoalManifestParseOptions, 'featuresDir' | 'dryRun' | 'runId'>): { manifest: GoalManifest; requestedPhases?: string[]; requestedResults?: string[] } {
   const abs = path.isAbsolute(filePath) ? filePath : path.join(projectRoot, filePath);
   const raw = YAML.parse(fs.readFileSync(abs, 'utf-8')) as Record<string, unknown>;
-  // 注意：不在此做 legacy 超时迁移——用户手写 --manifest 里的 timeout_seconds:3600
-  // 是显式选择，须按"扁平覆盖所有 phase"契约尊重。迁移只针对 resume 旧 run
-  // （那里的 3600 是 2.3.0 旧硬编码默认、非用户选择），见 loadGoalManifestFromRun。
-  return buildGoalManifestFromInput(raw, {
+  const nested = raw?.initial_design && typeof raw.initial_design === 'object' ? raw.initial_design as Record<string, unknown> : undefined;
+  const declared = (key: 'requested_phases' | 'requested_results'): string[] | undefined => {
+    const top = raw?.[key], inner = nested?.[key];
+    if (top !== undefined && inner !== undefined && JSON.stringify(top) !== JSON.stringify(inner)) throw new Error(`[goal-manifest] conflicting ${key} declarations`);
+    const value = top ?? inner;
+    if (value === undefined) return;
+    if (!Array.isArray(value) || value.some(item => typeof item !== 'string' || !item.trim())) throw new Error(`[goal-manifest] ${key} must be an array of explicit strings`);
+    return [...value];
+  };
+  return { manifest: buildGoalManifestFromInput(raw, {
     projectRoot,
     featuresDir: opts?.featuresDir,
     dryRun: opts?.dryRun,
     runId: opts?.runId,
-  });
+  }), requestedPhases: declared('requested_phases'), requestedResults: declared('requested_results') };
 }
 
 /**
@@ -976,32 +1090,12 @@ export function resolvePersistedAdapterProvenance(opts: {
   return opts.decisionProvenance;
 }
 
-function serializeGoalManifest(manifest: GoalManifest): string {
+function serializeGoalManifest(manifest: GoalRunManifest): string {
   return JSON.stringify(manifest, null, 2) + '\n';
 }
 
 function serializedGoalManifestSha256(manifest: GoalManifest): string {
   return crypto.createHash('sha256').update(serializeGoalManifest(manifest), 'utf-8').digest('hex');
-}
-
-/**
- * phase evidence 的旧条目保存的是全文件 hash，无法直接迁移为字段级 hash。兼容判断只
- * 枚举 adapter_provenance（身份哈希明确排除的审计元数据）；命中意味着其它每个字节
- * 都与闭环时一致。adapter/requirement/budget 等真实字段不参与枚举，仍 fail-closed。
- */
-export function goalManifestHashMatchesModuloAdapterProvenance(
-  manifest: GoalManifest,
-  expectedHash: string | null,
-): boolean {
-  if (!/^[0-9a-f]{64}$/.test(expectedHash ?? '')) return false;
-  if (serializedGoalManifestSha256(manifest) === expectedHash) return true;
-  const candidates: Array<RunAdapterProvenance | undefined> = [undefined, ...RUN_ADAPTER_PROVENANCES];
-  return candidates.some((provenance) => {
-    const candidate = { ...manifest };
-    if (provenance === undefined) delete candidate.adapter_provenance;
-    else candidate.adapter_provenance = provenance;
-    return serializedGoalManifestSha256(candidate) === expectedHash;
-  });
 }
 
 export type FrozenAdapterProvenanceRepair =
@@ -1046,7 +1140,7 @@ export function restoreFrozenAdapterProvenance(
   };
 }
 
-export function writeGoalManifest(manifest: GoalManifest, projectRoot: string): string {
+export function writeGoalManifest(manifest: GoalRunManifest, projectRoot: string): string {
   const abs = path.join(projectRoot, manifest.report_dir, 'manifest.json');
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, serializeGoalManifest(manifest), 'utf-8');
@@ -1055,7 +1149,7 @@ export function writeGoalManifest(manifest: GoalManifest, projectRoot: string): 
 
 /** Validate on-disk manifest matches canonical feature-bound evidence path (resume SSOT). */
 export function validateLoadedGoalManifest(
-  manifest: GoalManifest,
+  manifest: GoalRunManifest,
   opts: { featuresDir: string; feature: string; runId: string },
 ): void {
   const feature = opts.feature.trim();
@@ -1084,21 +1178,33 @@ export function validateLoadedGoalManifest(
   // plan d7f3a9c4 t2：加载时 shape 校验 adapter_model_pin（adapter/value shape 违规
   // 整体拒绝加载——停机篡改应命中既有 manifest_identity_drift）。
   if (manifest.adapter_model_pin !== undefined) {
+    normalizeAdapterModelPin(manifest.adapter_model_pin);
     validateAdapterModelPinValue(
       manifest.adapter_model_pin.adapter,
       manifest.adapter_model_pin.value,
+      manifest.adapter_model_pin.source,
     );
   }
   // plan ab072691 t1⑤：同款加载期 shape 校验（停机篡改命中既有 manifest_identity_drift）。
   if (manifest.visual_provider_pin !== undefined) {
+    normalizeVisualProviderPin(manifest.visual_provider_pin);
     validateVisualProviderPinValue(
       manifest.visual_provider_pin.adapter,
       manifest.visual_provider_pin.model,
     );
   }
+  if (manifest.user_deadline_at !== undefined) parseUserDeadlineAt(manifest.user_deadline_at);
   if (manifest.run_base_sha !== undefined && !/^[0-9a-f]{40}$/.test(manifest.run_base_sha)) {
     throw new Error('[goal-manifest] run_base_sha 必须为 exact 40-hex Git SHA');
   }
+  if (isInitialDesignManifest(manifest)) {
+    validateInitialDesignRequest(manifest.initial_design);
+    if (['phase_chain', 'chain_override', 'execution_scope', 'run_base_sha'].some(key => Object.prototype.hasOwnProperty.call(manifest, key))) {
+      throw new Error('[goal-manifest] initial design cannot contain construction identity');
+    }
+    if (Object.prototype.hasOwnProperty.call(manifest, 'start_phase') !== Object.prototype.hasOwnProperty.call(manifest, 'end_phase')) throw new Error('[goal-manifest] initial design domain requires both boundaries');
+  }
+  if (manifest.delivery_origin !== undefined) validateDeliveryOrigin(manifest.delivery_origin);
   if (Object.prototype.hasOwnProperty.call(manifest, 'execution_scope')) {
     validateExecutionScope(manifest.execution_scope);
     if (JSON.stringify(manifest.phase_chain) !== JSON.stringify(manifest.execution_scope!.phase_chain)) throw new Error('[goal-manifest] execution_scope/phase_chain mismatch');
@@ -1108,6 +1214,23 @@ export function validateLoadedGoalManifest(
   }
   if (manifest.allow_blind_visual !== undefined && manifest.allow_blind_visual !== true) {
     throw new Error('[goal-manifest] allow_blind_visual 键在场时必须为 true');
+  }
+}
+
+/** Execution boundary only: historical manifest readers remain unchanged. */
+export function assertSupportedGoalRunHistory(projectRoot: string, manifest: {
+  phase_chain?: readonly string[]; chain_override?: readonly string[]; start_phase?: string; end_phase?: string; report_dir?: string;
+}): void {
+  const { assertSupportedPhaseChain } = require('./runtime-policy') as typeof import('./runtime-policy');
+  assertSupportedPhaseChain([...(manifest.phase_chain ?? []), ...(manifest.chain_override ?? []), manifest.start_phase ?? '', manifest.end_phase ?? '']);
+  if (manifest.phase_chain?.length || !manifest.report_dir) return;
+  const { loadEventsJsonl, loadAuthoritativeEvents } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
+  const eventsPath = path.resolve(projectRoot, manifest.report_dir, 'events.jsonl');
+  const creation = loadEventsJsonl(eventsPath).find(event => event.type === 'run_created');
+  const startup = loadAuthoritativeEvents(eventsPath).find(event => event.type === 'run_start');
+  for (const event of [creation, startup]) {
+    const chain = event && ((event as { phase_chain?: unknown }).phase_chain ?? (event as { chain?: unknown }).chain);
+    if (Array.isArray(chain)) assertSupportedPhaseChain(chain.filter((phase): phase is string => typeof phase === 'string'));
   }
 }
 
@@ -1127,12 +1250,23 @@ export function loadGoalManifestFromRun(
       `[goal-manifest] --resume run_id 非法（dry-run 无 resume 语义，run_id 不得以 . 开头或含分隔符）: ${runId}`,
     );
   }
-  const featuresDir = opts.featuresDir ?? DEFAULT_FEATURES_DIR;
+  const featuresDir = opts.featuresDir ?? relFeaturesDir(projectRoot);
   const abs = path.join(projectRoot, featuresDir, featureRelativePath(feature), 'goal-runs', runId, 'manifest.json');
   if (!fs.existsSync(abs)) {
     throw new Error(`[goal-manifest] 未找到 run manifest: ${abs}`);
   }
   const manifest = JSON.parse(fs.readFileSync(abs, 'utf-8')) as GoalManifest;
+  if ('initial_design' in manifest) throw new Error('[goal-manifest] initial design request has no construction manifest; use loadGoalRunManifestFromRun');
   validateLoadedGoalManifest(manifest, { featuresDir, feature, runId });
-  return applyLegacyTimeoutMigration(manifest);
+  return manifest;
+}
+
+export function loadGoalRunManifestFromRun(projectRoot: string, runId: string, opts: LoadGoalManifestFromRunOptions): GoalRunManifest {
+  const featuresDir = opts.featuresDir ?? relFeaturesDir(projectRoot);
+  if (!opts.feature || !runId || runId.startsWith('.') || /[\\/]/.test(runId)) throw new Error('[goal-manifest] invalid run locator');
+  const file = path.join(projectRoot, resolveGoalReportDir({ featuresDir, feature: opts.feature, runId }), 'manifest.json');
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as GoalRunManifest;
+  if (!isInitialDesignManifest(raw)) return loadGoalManifestFromRun(projectRoot, runId, opts);
+  validateLoadedGoalManifest(raw, { featuresDir, feature: opts.feature, runId });
+  return raw;
 }

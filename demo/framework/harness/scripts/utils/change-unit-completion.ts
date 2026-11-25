@@ -3,7 +3,7 @@ import * as path from 'path';
 import { featureFilePath, relFeaturesDir } from '../../config';
 import { resolveWorkflowSpec, workflowForExistingRun } from '../../workflow-loader';
 import { classifyGoalRunsDir } from './fidelity-shared';
-import { filterAuthoritativeEvents, loadEventsJsonl, resolveEffectiveRunEnd } from './goal-runner-phase';
+import { filterAuthoritativeEvents, loadEventsJsonl } from './goal-runner-phase';
 import { featurePhasesFromWorkflow } from './phase-transition-policy';
 import { loadFeatureTrackDecl } from './feature-track';
 import { resolveBirthExecutionScope } from './feature-execution-scope';
@@ -14,6 +14,7 @@ import { executionCompletionPhases } from './execution-scope';
 import { isInsideProjectRoot } from './project-relative-path';
 import { resolvePhaseRunIds } from './verify-feature-completion';
 import { assessFeature, assessmentReasons, type FeatureAssessment } from './feature-assessment';
+import type { CurrentDisposition } from './check-disposition';
 import { SpecLoader } from './spec-loader';
 import { resolveCapabilityResolutionEntryInput } from './capability-resolution-entry-input';
 import { resolveCapabilityInputs, type ResolvedPhaseInputs } from './capability-resolution';
@@ -32,6 +33,7 @@ export interface ChangeUnitCompletionObservation {
   expectedTrack?: string;
   expectedChain?: string[];
   reasons: string[];
+  currentDisposition?: CurrentDisposition;
 }
 
 export interface ChangeUnitCompletionAdapterOptions {
@@ -53,8 +55,7 @@ export function hasSuccessfulTerminalChangeUnitRun(projectRoot: string, featureI
   const runsDir = featureFilePath(projectRoot, featureId, 'goal-runs');
   for (const runId of classifyGoalRunsDir(runsDir).runs) {
     const events = filterAuthoritativeEvents(loadEventsJsonl(path.join(runsDir, runId, 'events.jsonl')));
-    const runEnd = resolveEffectiveRunEnd(events);
-    if (runEnd?.status && SUCCESSFUL_RUN_END_STATUSES.has(runEnd.status)) return true;
+    if (events.some(event => event.type === 'run_end' && typeof event.status === 'string' && SUCCESSFUL_RUN_END_STATUSES.has(event.status))) return true;
   }
   return false;
 }
@@ -63,13 +64,15 @@ export function resolveChangeUnitExpectedExecution(
   projectRoot: string,
   featureId: string,
   forNewRun = false,
+  /** 调用方已知的框架根（框架与工程分开放时必须传）；缺省按工程布局推断。 */
+  frameworkRoot?: string,
 ): { expectedTrack: string; expectedChain: string[] } {
-  let workflow = resolveWorkflowSpec(projectRoot);
-  let frozenTrack: string | undefined;
+  let workflow = resolveWorkflowSpec(projectRoot, { frameworkRoot });
+  let frozenTrack: 'full' | undefined;
   if (forNewRun && workflow.schema_version === '1.2') {
     // 第五轮阻断 2：新 run 的交接期望链必须与**出生入口**同源。原来直接从候选算
     //（`resolveFeatureExecutionScope`），feature 已 S0→S1 时交接给的是 S0、出生用的是 S1。
-    const scope = resolveBirthExecutionScope(projectRoot, featureId, workflow).scope!;
+    const scope = resolveBirthExecutionScope(projectRoot, featureId, workflow, frameworkRoot).scope!;
     if (scope.completion_target !== 'feature') throw new Error('CU 施工交接需要 Feature 完成目标');
     return { expectedTrack: 'full', expectedChain: [...scope.phase_chain] };
   }
@@ -95,12 +98,12 @@ export function resolveChangeUnitExpectedExecution(
         if (scope) return { expectedTrack: 'full', expectedChain: executionCompletionPhases(scope) };
         const manifestFile = featureFilePath(projectRoot, featureId, 'goal-runs/' + record.run_id + '/manifest.json');
         const legacy = fs.existsSync(manifestFile) ? JSON.parse(fs.readFileSync(manifestFile, 'utf8')) : {};
-        workflow = workflowForExistingRun(workflow, legacy, inferRepoLayout(projectRoot).frameworkRoot);
+        workflow = workflowForExistingRun(workflow, legacy, frameworkRoot ?? inferRepoLayout(projectRoot).frameworkRoot, projectRoot);
         if (Array.isArray(legacy.phase_chain)) frozenTrack = resolveFeatureTrack(undefined, legacy.phase_chain);
       }
     }
   }
-  const track = frozenTrack === 'lite' ? 'lite' : frozenTrack === 'full' ? 'full' : resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, featureId));
+  const track = frozenTrack ?? resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, featureId));
   return { expectedTrack: track, expectedChain: featurePhasesFromWorkflow(workflow, track) };
 }
 
@@ -167,6 +170,12 @@ export function observeChangeUnitCompletion(
         reasons: ['Goal run reducer 已确认成功终局，但 feature-completion 投影缺失；不得降级为 ABSENT。'],
       };
     }
+    const runsDir = featureFilePath(projectRoot, featureId, 'goal-runs');
+    const completionDir = featureFilePath(projectRoot, featureId, 'completion');
+    if (classifyGoalRunsDir(runsDir).runs.some(runId => fs.existsSync(path.join(runsDir, runId, 'feature-completion.json')))
+      || (fs.existsSync(completionDir) && fs.readdirSync(completionDir).some(name => name.endsWith('.json')))) {
+      return { state: 'INVALID', featureId, reasons: ['完成原件存在但 feature-completion 投影缺失；不能证明从未完成，按原恢复处理。'] };
+    }
     return { state: 'ABSENT', featureId, reasons: ['从未形成可验证 feature-completion 投影。'] };
   }
   let expected: { expectedTrack: string; expectedChain: string[] };
@@ -189,5 +198,6 @@ export function observeChangeUnitCompletion(
     expectedTrack: expected.expectedTrack,
     expectedChain: expected.expectedChain,
     reasons: assessment.complete ? [] : assessmentReasons(assessment),
+    currentDisposition: assessment.currentDisposition,
   };
 }

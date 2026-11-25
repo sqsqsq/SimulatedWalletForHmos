@@ -1,7 +1,25 @@
+import { DEVICE_SETUP_GUIDANCE, type DeviceSetupObservation } from '../../../harness/scripts/utils/device-unlock-helper';
 import {
   buildUtInstallBlockingCheckDetails,
   mapInstallBlockingToUtCheckFields,
 } from './device-install-diag';
+import * as path from 'path';
+import * as fs from 'fs';
+import { listExecutionKeyRuns } from './execution-key';
+
+export function repeatedUtExecutionFailureNote(reportsBase: string, currentRunDir: string, executionKey: string, failures: readonly UtHvigorTestFailureModule[]): string | undefined {
+  const previous = listExecutionKeyRuns(reportsBase, 'ut').find(run => path.resolve(run.runDir) !== path.resolve(currentRunDir));
+  if (!previous || previous.record.execution_key !== executionKey || previous.record.outcome !== 'failed') return undefined;
+  const repeated = failures.filter(item => {
+    const kind = item.result.onDeviceFailureEvidence?.runDiagnosis?.kind;
+    if (!kind || !['aa_test_no_result', 'aa_test_timeout', 'ability_start_failed'].includes(kind) || !/^[\w.-]+$/.test(item.module)) return false;
+    try {
+      const prior = JSON.parse(fs.readFileSync(path.join(previous.runDir, `frozen.ut-result.${item.module}.json`), 'utf8')) as HvigorRunResult;
+      return prior.onDeviceFailureEvidence?.runDiagnosis?.kind === kind;
+    } catch { return false; }
+  });
+  return repeated.length ? `同键同因执行链失败再次出现（${previous.dirStamp} → 当前；${repeated.map(item => item.module).join(', ')}）。相同输入下继续真跑没有新信息，请停止并上报本次诊断；修复环境/输入或取得新依据后再执行。` : undefined;
+}
 import type { HvigorRunResult } from './hvigor-runner';
 
 export type UtHvigorTestFailureKind =
@@ -15,9 +33,57 @@ export type UtHvigorTestFailureKind =
 export interface UtHvigorTestFailureModule {
   module: string;
   result: HvigorRunResult;
+  /** 模块源码路径（contracts.modules[].package_path，工程根相对）；缺席时 affected_files 保留占位写法 */
+  packagePath?: string;
+}
+
+/** plan 31063a73 §3.1：模块 ohosTest 源码目录（工程根相对 POSIX）；拿不到模块路径返回 null。 */
+export function ohosTestDirOf(packagePath: string | undefined): string | null {
+  const raw = (packagePath ?? '').trim().replace(/\\/g, '/');
+  if (!raw || path.posix.isAbsolute(raw) || /^[A-Za-z]:/.test(raw)) return null;
+  const dir = path.posix.join(raw, 'src/ohosTest');
+  return dir.startsWith('../') ? null : dir;
+}
+
+/**
+ * plan 31063a73 §3.1：UT blocker 的 affected_files = 解析出的源文件 + 各模块 ohosTest 源码目录（均工程根相对）。
+ * 拿不到模块源码路径的模块保留占位写法 `<module>@ohosTest`（与改前相同），模块名进 unresolved 供 details 写明。
+ */
+export function utAffectedFiles(
+  entries: ReadonlyArray<{ module: string; packagePath?: string; files?: readonly string[] }>,
+): { files: string[]; unresolved: string[] } {
+  const files = new Set<string>();
+  const unresolved: string[] = [];
+  for (const entry of entries) {
+    for (const file of entry.files ?? []) files.add(file);
+    const dir = ohosTestDirOf(entry.packagePath);
+    if (dir) files.add(dir);
+    else {
+      files.add(`${entry.module}@ohosTest`);
+      unresolved.push(entry.module);
+    }
+  }
+  return { files: [...files], unresolved: [...new Set(unresolved)] };
+}
+
+/** 未能解析模块源码路径时写进 details 的一行（两个 UT blocker 共用） */
+export function unresolvedModulePathNote(modules: readonly string[]): string[] {
+  return modules.length > 0
+    ? [`未能解析模块源码路径：${modules.join(', ')}（affected_files 保留占位写法 <module>@ohosTest）`]
+    : [];
+}
+
+/** 失败用例堆栈里点名的 ohosTest 源文件（宿主堆栈形如 `entry_test|entry|1.0.0|src/ohosTest/ets/test/X.test.ets:12:5`），按模块路径拼成工程根相对路径 */
+function failureStackFiles(item: UtHvigorTestFailureModule): string[] {
+  const dir = ohosTestDirOf(item.packagePath);
+  if (!dir) return [];
+  return (item.result.testResult?.failures ?? []).flatMap(failure =>
+    (failure.message.replace(/\\/g, '/').match(/src\/ohosTest\/[^\s:()'"|]+\.(?:ets|ts)/g) ?? [])
+      .map(rel => path.posix.join(dir, rel.slice('src/ohosTest/'.length))));
 }
 
 export interface UtHvigorTestFailDetails {
+  systemSetup?: DeviceSetupObservation;
   lines: string[];
   blockingClass?: string;
   failureKind?: string;
@@ -54,6 +120,8 @@ function classifyFailure(entry: UtHvigorTestFailureModule): ClassifiedFailure {
   if (entry.result.toolMissing === true) {
     return { ...entry, toolchain: true, phase: 'tool_missing', failureKind: 'device_tool_missing' };
   }
+  const setup = evidence?.runDiagnosis?.systemSetup ?? evidence?.installDiagnosis?.systemSetup;
+  if (setup && !(entry.result.testResult?.failed)) return { ...entry, toolchain: false, phase: evidence?.failedAt ?? 'run', deviceBlocked: true, deviceSubkind: 'system_setup' };
   const installBlocking = entry.result.installBlocking;
   if (installBlocking?.kind && installBlocking.kind !== 'clear') {
     return {
@@ -96,12 +164,16 @@ function classifyFailure(entry: UtHvigorTestFailureModule): ClassifiedFailure {
   if (runKind && DEVICE_BLOCKING_RUN_DIAGNOSIS_KINDS.has(runKind)) {
     return { ...entry, toolchain: false, phase, deviceBlocked: true, deviceSubkind: runKind };
   }
+  if (runKind && ['aa_test_no_result', 'aa_test_timeout', 'ability_start_failed'].includes(runKind)) {
+    return { ...entry, toolchain: true, phase };
+  }
   return { ...entry, toolchain: false, phase };
 }
 
 
 function buildHapHeader(result: HvigorRunResult): string {
   const evidence = result.onDeviceFailureEvidence;
+  if (evidence?.artifactValidation?.status !== undefined && evidence.artifactValidation.status !== 'valid') return evidence.artifactValidation.note ?? 'ohosTest 产物配对验证依据不足';
   if (
     !evidence ||
     (evidence.unsignedPresent !== true &&
@@ -155,7 +227,8 @@ function singleToolchainHeader(item: ClassifiedFailure): string {
       ? `安装阶段失败：${diagnosis.summary}`
       : `安装阶段失败：exit code ${item.result.exitCode ?? 'unknown'}`;
   }
-  return buildHapHeader(item.result);
+  if (item.phase === 'hap_not_found') return buildHapHeader(item.result);
+  return item.result.onDeviceFailureEvidence?.runDiagnosis?.summary ?? '测试执行未取得有效结果，原因尚未确认；不能据 unsigned 包存在推断签名缺失。';
 }
 
 function stageHintOf(result: HvigorRunResult): string | undefined {
@@ -235,6 +308,7 @@ function appendModuleDetails(
 }
 
 function actionFor(item: ClassifiedFailure): string {
+  if (item.deviceSubkind === 'system_setup') return DEVICE_SETUP_GUIDANCE;
   const installBlocking = item.result.installBlocking;
   if (installBlocking?.kind && installBlocking.kind !== 'clear') {
     return mapInstallBlockingToUtCheckFields(installBlocking).suggestion;
@@ -243,7 +317,7 @@ function actionFor(item: ClassifiedFailure): string {
     return '配置 framework.local.json 中的 DevEco/hvigor 路径，并确认 SDK toolchains 中的 hdc 可用。';
   }
   if (item.failureKind === 'ohos_test_sign_gap') {
-    return `${singleToolchainHeader(item)}；签名配置属宿主资产，请宿主按该诊断处理后重跑。`;
+    return `${singleToolchainHeader(item)}；核对原日志、所选 product 和配对产物，由当前作者在实际授权写域内调查/修复；确认缺凭据、权限、外部服务或越出写域时才沿既有等待/范围修订处理。`;
   }
   if (item.failureKind === 'ohos_test_hap_missing') {
     return '核对 ohosTest 构建产物路径与 genOnDeviceTestHap 完整日志，不推断签名原因。';
@@ -263,13 +337,16 @@ function actionFor(item: ClassifiedFailure): string {
     );
   }
   const stageHint = stageHintOf(item.result);
+  if (['aa_test_no_result', 'aa_test_timeout', 'ability_start_failed'].includes(item.result.onDeviceFailureEvidence?.runDiagnosis?.kind ?? '')) {
+    return '执行链尚无有效结果，先依据本次 faultlog/hilog 诊断定位；仅在修复输入/环境或取得新诊断依据后再执行，原因不明时上报，不猜测为业务代码回归。';
+  }
   // t1：改用结构化 deviceBlocked 判定（此前为 stageHint 散文子串匹配——同类子串误判已有前科）。
   return item.deviceBlocked
     ? '设备已连接但锁屏：请人解锁真机并保持在桌面/前台后重跑；这是环境问题，不要改动代码或 UT。'
     : stageHint
       ? '按上方“失败阶段/修复建议”处理后重跑；完整输出见 hdc-test.<module>.log。'
       : '按失败用例堆栈定位问题：可能是 UT 逻辑错误、被测业务实现与 UT 预期不一致、或 Spy/Stub 预设值不对。' +
-        '修改 UT 后重跑；若需要动业务源码，先按 SKILL.md > 约束 #12 的 HARD STOP 流程征得用户同意。';
+        '按现有责任和实际写域修复后重跑；越出授权时走既有范围修订，不按交互/无人值守模式自动扩大或收缩权限。';
 }
 
 export function buildUtHvigorTestFailDetails(
@@ -279,20 +356,25 @@ export function buildUtHvigorTestFailDetails(
   const onlyInstallBlocking = bad.length === 1 ? bad[0].result.installBlocking : undefined;
   if (onlyInstallBlocking?.kind && onlyInstallBlocking.kind !== 'clear') {
     const meta = mapInstallBlockingToUtCheckFields(onlyInstallBlocking);
+    const affected = utAffectedFiles([bad[0]]);
     return {
-      lines: buildUtInstallBlockingCheckDetails(onlyInstallBlocking).split(/\r?\n/),
+      lines: [
+        ...buildUtInstallBlockingCheckDetails(onlyInstallBlocking).split(/\r?\n/),
+        ...unresolvedModulePathNote(affected.unresolved),
+      ],
       blockingClass: meta.blocking_class,
       failureKind: meta.failure_kind,
       suggestion: meta.suggestion,
-      affectedFiles: [bad[0].module + '@ohosTest'],
+      affectedFiles: affected.files,
     };
   }
   const items = bad.map(classifyFailure);
   const allToolchain = items.every(item => item.toolchain);
   const firstKind = items[0].failureKind;
-  // 纯 externalBlocked 仍保留其可 defer 元数据；一旦与 sign-gap 等非代码工具链阻塞共存，
-  // 组合结果必须归 device_toolchain，不能继承 externalBlocked 而把真实签名缺口一并 defer。
-  let blockingClass: string | undefined = allToolchain ? 'device_toolchain' : undefined;
+  // 混合失败不能继承某一模块的 externalBlocked，把其余可调查缺口一并等待。
+  // 缺包/签名验证缺口本身不证明外部条件，交共同处置继续调查。
+  const hasArtifactGap = items.some(item => item.phase === 'hap_not_found');
+  let blockingClass: string | undefined = allToolchain && !hasArtifactGap ? 'device_toolchain' : undefined;
   let failureKind: string | undefined =
     allToolchain && firstKind && items.every(item => item.failureKind === firstKind)
       ? firstKind
@@ -305,6 +387,7 @@ export function buildUtHvigorTestFailDetails(
     blockingClass = 'externalBlocked';
     failureKind = 'device_blocked';
   }
+  if (items.some(item => !item.result.testResult && item.result.onDeviceFailureEvidence?.runDiagnosis?.kind === 'test_failed')) failureKind = 'code_regression';
   // plan 423e5d0f P0-4：runtime 降级（全员）→ needsConfirmation 契约，decideNextAction
   // 才会落 confirm 分支而不是 device_toolchain 的"修工具链"误导。
   if (failureKind === 'install_needs_confirmation') {
@@ -323,7 +406,8 @@ export function buildUtHvigorTestFailDetails(
     blockingClass = meta.blocking_class;
     failureKind = meta.failure_kind;
   }
-  const lines: string[] = [];
+  const systemSetup = allDeviceBlocked ? items.map(item => item.result.onDeviceFailureEvidence?.runDiagnosis?.systemSetup ?? item.result.onDeviceFailureEvidence?.installDiagnosis?.systemSetup).find(Boolean) : undefined;
+  const lines: string[] = systemSetup ? [DEVICE_SETUP_GUIDANCE] : [];
   if (items.length === 1 && items[0].toolchain) {
     lines.push(buildCompactDiagnosticHeader(singleToolchainHeader(items[0])));
   } else if (items.length > 1) {
@@ -341,11 +425,14 @@ export function buildUtHvigorTestFailDetails(
       : items.length > 1
         ? items.map(item => `${item.module}：${actionFor(item)}`).join('；')
         : actionFor(items[0]);
+  const affected = utAffectedFiles(bad.map(item => ({ ...item, files: failureStackFiles(item) })));
+  lines.push(...unresolvedModulePathNote(affected.unresolved));
   return {
     lines,
     blockingClass,
     failureKind,
     suggestion,
-    affectedFiles: [...new Set(bad.map(item => `${item.module}@ohosTest`))],
+    affectedFiles: affected.files,
+    ...(systemSetup ? { systemSetup } : {}),
   };
 }

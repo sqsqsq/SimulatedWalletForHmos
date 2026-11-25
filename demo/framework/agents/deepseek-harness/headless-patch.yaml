@@ -1,0 +1,16 @@
+# 仅覆盖本次调用；已保存的 permission.defaultPreset 会优先于环境变量推断值。
+- id: permission
+  config:
+    defaultPreset: danger-full-access
+# 由 DSH 自身解析保存凭据，Maison 不读取或复制秘密。
+- id: credentials
+  disabled: false
+- id: authorization
+  disabled: false
+- id: deepseek-account
+  disabled: false
+- id: agent-default-model
+  config:
+    provider: !!js JSON.parse(process.env.MAISON_GOAL_MODEL_PIN).provider
+    model: !!js JSON.parse(process.env.MAISON_GOAL_MODEL_PIN).value
+    reasoningEffort: !!js JSON.parse(process.env.MAISON_GOAL_MODEL_PIN).reasoning_effort

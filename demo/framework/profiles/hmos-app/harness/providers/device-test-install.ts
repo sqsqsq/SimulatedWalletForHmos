@@ -22,7 +22,7 @@ import { detectInstallDowngrade } from '../device-install-diag';
  * S9：testing 链路的运行期锁屏恢复——统一走 device-recovery-bridge，
  * 四个设备边界（UT aa test / UT install / testing install / testing run / warmup）同一语义。
  */
-function recoverDeviceLockForTesting(projectRoot: string): { recovered: boolean; note: string } {
+function recoverDeviceLockForTesting(projectRoot: string): ReturnType<typeof import('../device-recovery-bridge').recoverAfterLockFailure> {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const bridge = require('../device-recovery-bridge') as typeof import('../device-recovery-bridge');
   return bridge.recoverAfterLockFailure(projectRoot);
@@ -154,6 +154,24 @@ function writeInstallArtifacts(
   } catch {
     return undefined;
   }
+}
+
+/** A byte-identical rebuilt HAP changes local stat fields, not the recorded physical installation. */
+export function adoptInstallMetadataForExecutionReuse(opts: DeviceTestInstallOptions, expectedHapSha256Full: string): boolean {
+  const metaPath = path.join(featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot), 'device-test-install.meta.json');
+  const temporary = `${metaPath}.${process.pid}.tmp`;
+  try {
+    if (!/^[a-f0-9]{64}$/i.test(expectedHapSha256Full)) return false;
+    const prior = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as Record<string, unknown>;
+    const stat = fs.statSync(opts.hapPath);
+    if (prior.ok !== true || typeof prior.hapSha256 !== 'string' || !prior.hapSha256
+      || !expectedHapSha256Full.startsWith(prior.hapSha256.toLowerCase())
+      || computeHapSha256Full(opts.hapPath) !== expectedHapSha256Full) return false;
+    fs.writeFileSync(temporary, JSON.stringify({ ...prior, reused: true, hapPath: opts.hapPath,
+      hapMtimeMs: stat.mtimeMs, hapSizeBytes: stat.size }, null, 2) + '\n', 'utf8');
+    fs.renameSync(temporary, metaPath);
+    return true;
+  } catch { try { fs.unlinkSync(temporary); } catch { /* Preserve the prior physical record. */ } return false; }
 }
 
 /** plan b3d7e5a1 T3（codex P1）：设备 versionCode 的唯一展示口径——null 永远写成未解析，不写成确定值。 */
@@ -386,9 +404,10 @@ export function installDeviceTestApp(opts: DeviceTestInstallOptions): DeviceTest
         durationMs: 0,
         output: `[device-ready] 装机前置检查判定设备不可用，已阻断：${preReady.note}`,
         diagnosis: {
-          kind: 'device_locked',
-          summary: `设备锁屏且未能自动解锁——已在装机前阻断（未执行卸载或安装）。${preReady.note}`,
-          suggestion: '按前述具体原因稍后重试或重新登记，也可人工解锁设备后重跑。',
+          kind: preReady.systemSetup ? 'ability_start_failed' : 'device_locked',
+          ...(preReady.systemSetup ? { systemSetup: preReady.systemSetup } : {}),
+          summary: `设备未就绪——已在装机前阻断（未执行卸载或安装）。${preReady.note}`,
+          suggestion: preReady.note,
         },
       };
       ok = false;
@@ -412,13 +431,14 @@ export function installDeviceTestApp(opts: DeviceTestInstallOptions): DeviceTest
         const rec = recoverDeviceLockForTesting(opts.projectRoot);
         logLines.push(`[device-recovery/testing-install] ${rec.note}`);
         if (rec.recovered) install = installHap(opts.hapPath);
+        else if (rec.systemSetup) install.diagnosis = { kind: 'ability_start_failed', systemSetup: rec.systemSetup, summary: rec.note, suggestion: rec.note };
       }
       logLines.push(install.output);
 
       // 公共重试：仅在设备可用的前提下才允许卸载重装。
       // **恢复失败后仍是 device_locked 时也不得进来**——那说明设备还锁着。
       if (!install.ok && uninstallBefore && !uninstallAttempted
-          && install.diagnosis?.kind !== 'device_locked') {
+          && install.diagnosis?.kind !== 'device_locked' && !install.diagnosis?.systemSetup) {
         runUninstallOnce();
         install = installHap(opts.hapPath);
         logLines.push(install.output);

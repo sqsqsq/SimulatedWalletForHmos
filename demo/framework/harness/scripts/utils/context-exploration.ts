@@ -17,7 +17,6 @@ import {
 import { LEGACY_EXPLORATION_PHASES } from './runtime-policy';
 import { validateProjectRelativePath } from './project-relative-path';
 
-/** `change` = lite track 的建立阶段（C4 facts.md 契约，与 `spec` 同源角色）。 */
 export type ContextExplorationPhase = string;
 
 /** legacy exploration-snippets.yaml phase keys（≥2 minor 窗口 fallback） */
@@ -36,8 +35,6 @@ export const CONTEXT_EXPLORATION_PHASE_INPUT_SNIPPETS: Record<ContextExploration
   coding: ['plan', 'contract', 'acceptance'],
   review: ['contract', 'acceptance', 'coding-rule', 'plan'],
   ut: ['acceptance', 'contract', 'spec', 'plan'],
-  /** lite track 建立阶段，与 spec 同源角色（C4 facts.md 契约）。 */
-  change: ['glossary', 'module-catalog', 'architecture'],
 };
 
 /** schema 1.1.0 且 phase-rules 未声明时的 per-phase 默认阈值 */
@@ -82,18 +79,6 @@ export const DEFAULT_EXPLORATION_THRESHOLDS: Record<ContextExplorationPhase, Exp
     require_subagent_when_use_cases_gt: 2,
     exploration_mode_allowed: ['subagent', 'sequential'],
   },
-  /**
-   * lite track 建立阶段（C4 facts.md 契约）：单模块假设下比 spec 略轻，
-   * 且未在 legacyRequiresSubagent 的 phase 分支中特判 → 恒不强制 subagent
-   * （lite 轻量化本意；有需要时可在 change-rules.yaml > exploration_strategy 显式覆写）。
-   */
-  change: {
-    min_files_inspected: 3,
-    min_source_code_paths: 1,
-    min_searches: 2,
-    min_code_facts: 1,
-    exploration_mode_allowed: ['subagent', 'sequential', 'minimal'],
-  },
 };
 
 export interface ContextExplorationFrontmatter {
@@ -118,6 +103,11 @@ export interface ContextExplorationFrontmatter {
 }
 
 export interface ContextExplorationCheckOptions {
+  /** context-facts supplies its already parsed current-phase additions; no reverse import. */
+  deltaSourcePaths?: readonly string[];
+  /** Only the facts establishing call checks the recorded exploration mode. */
+  checkExplorationMode?: boolean;
+  goalAttemptId?: string;
   request?: import('./capability-resolution-entry-input').PreparedRequest;
   factsContext?: import('./context-facts').FactsInvocationContext;
   resolvedInputs?: import('./capability-resolution').ResolvedPhaseInputs;
@@ -372,10 +362,13 @@ export function runQuantitativeChecks(
     thresholds = applySequentialMultiplier(thresholds, strategy);
   }
 
-  if (options?.factsContext?.baseline) thresholds = { ...thresholds, min_source_code_paths: 0, min_files_inspected: 0, min_searches: 0, min_code_facts: 1 };
+  if (options?.factsContext && (options.factsContext.baseline || options.factsContext.first_phase !== phase)) {
+    thresholds = { ...thresholds, min_source_code_paths: 0, min_files_inspected: 0, min_searches: 0, min_code_facts: 1 };
+  }
   const requestSubject = options?.factsContext && 'request_sha256' in options.factsContext.subject;
-  if (requestSubject) {
-    const count = options!.factsContext!.source_paths.length;
+  // Every admitted subject has a production-derived source set; small runs need the same bound as requests.
+  if (options?.factsContext) {
+    const count = options.factsContext.source_paths.length;
     thresholds = { ...thresholds, min_source_code_paths: Math.min(thresholds.min_source_code_paths ?? 0, count), min_files_inspected: Math.min(thresholds.min_files_inspected ?? 0, count), min_searches: Math.min(thresholds.min_searches ?? 0, Math.max(1, count)), min_code_facts: Math.min(thresholds.min_code_facts ?? 0, Math.max(1, count)) };
   }
 
@@ -484,7 +477,7 @@ export function runQuantitativeChecks(
   const allowedModes = (thresholds.exploration_mode_allowed ?? ['subagent', 'sequential', 'minimal']).map(
     m => m.toLowerCase(),
   );
-  if (mode && !allowedModes.includes(mode)) {
+  if (options?.checkExplorationMode !== false && mode && !allowedModes.includes(mode)) {
     results.push({
       id: 'context_exploration_mode_allowed',
       category: 'structure',
@@ -496,7 +489,7 @@ export function runQuantitativeChecks(
     });
   }
 
-  if (decision.requiresSubagent) {
+  if (options?.checkExplorationMode !== false && decision.requiresSubagent) {
     if (mode === 'minimal') {
       results.push({
         id: 'context_exploration_subagent_required',
@@ -545,6 +538,7 @@ export function runQuantitativeChecks(
   const haystack = [
     flattenKeyInputs(fm.key_inputs_read),
     ...sourcePaths.map(p => p.toLowerCase()),
+    ...(options?.deltaSourcePaths ?? []).map(p => p.toLowerCase()),
   ].join('\n');
   const missingSnippets = requiredSnippets.filter(sub => !haystack.includes(sub.toLowerCase()));
   if (missingSnippets.length > 0) {
@@ -552,7 +546,7 @@ export function runQuantitativeChecks(
       id: 'context_exploration_inputs_coverage',
       category: 'structure',
       description:
-        'context-exploration key_inputs_read / source_code_paths 须覆盖本阶段最低输入（含 profile overlay）',
+        'context-exploration key_inputs_read / source_code_paths 或本阶段 phase_delta 路径表须覆盖本阶段最低输入（含 profile overlay）',
       severity: 'BLOCKER',
       status: 'FAIL',
       details: `缺少可匹配项：${missingSnippets.join('、')}`,

@@ -1,3 +1,38 @@
+export interface AdapterModelRouteFields {
+  provider?: string;
+  reasoning_effort?: string;
+  config_source?: string;
+  route_identity?: string;
+}
+export function normalizeModelRouteFields(r: Record<string, unknown>, where = 'adapter_model_pin'): AdapterModelRouteFields {
+  const extra: AdapterModelRouteFields = {};
+  for (const key of ['provider', 'reasoning_effort', 'config_source', 'route_identity'] as const) {
+    if (r[key] === undefined) continue;
+    if (typeof r[key] !== 'string' || !(r[key] as string).trim() || /[\u0000-\u001F\u007F]/.test(r[key] as string)) {
+      throw new Error(`[model-binding] ${where}.${key} 必须为非空、无控制字符的字符串`);
+    }
+    extra[key] = (r[key] as string).trim();
+    if (key === 'route_identity' && !/^[a-f0-9]{64}$/.test(extra[key]!)) throw new Error('[model-binding] route_identity 必须为 SHA-256 非秘密路由摘要');
+    if (key === 'provider' && /^https?:\/\//.test(extra[key]!)) {
+      const url = new URL(extra[key]!);
+      if (url.username || url.password || [...url.searchParams.keys()].some(name => /^(?:api_?key|token|access_token|secret|sig|signature)$/i.test(name))) {
+        throw new Error('[model-binding] provider 必须为非秘密路由身份；凭据应保留在原生认证设置中');
+      }
+    }
+  }
+  return extra;
+}
+
+export function adapterModelBinding(pin?: { adapter?: string; value: string; source?: string } & AdapterModelRouteFields): string | undefined {
+  // A historical automatic alternative is readable, but does not authorize another invocation.
+  if (!pin || pin.source === 'approved_alternative') return undefined;
+  if (!pin.provider && !pin.reasoning_effort && !pin.config_source && !pin.route_identity) return pin.value;
+  return JSON.stringify({ value: pin.value, ...(pin.provider ? { provider: pin.provider } : {}),
+    ...(pin.reasoning_effort ? { reasoning_effort: pin.reasoning_effort } : {}),
+    ...(pin.config_source ? { config_source: pin.config_source } : {}),
+    ...(pin.route_identity ? { route_identity: pin.route_identity } : {}) });
+}
+
 // ============================================================================
 // Harness 公共类型定义
 // ============================================================================
@@ -26,7 +61,7 @@ export function isClaudeKernelAdapter(name: string | null | undefined): boolean 
  * 落在 types.ts 而非 goal-manifest.ts——个人级 config、CLI、manifest、invoke 执行器四面
  * 共用，不让 config 层反向依赖 manifest 层。
  */
-export interface ProviderRef {
+export interface ProviderRef extends AdapterModelRouteFields {
   adapter: string;
   model: string;
 }
@@ -273,6 +308,8 @@ export interface ContractsSpec {
       type: string;
       required: boolean;
       default?: string;
+      description?: string;
+      source_ref?: string;
     }>;
     computed_properties?: Array<{
       name: string;
@@ -407,7 +444,7 @@ export interface ContractFileReferenceIssue {
 
 /** Ephemeral parser projection. It is never serialized beside contracts.yaml. */
 export interface ContractReferenceClosure {
-  authorized_files: string[];
+  planned_files: string[];
   references: ContractFileReference[];
   invalid_paths: ContractFileReferenceIssue[];
 }
@@ -478,7 +515,7 @@ export interface AcceptanceSpec {
 
 export interface UseCaseUserAction {
   trigger: string;       // 用户动作的自然语言描述
-  calls: string;         // UT 要调用的命名函数符号（如 "flow.chooseCard"）
+  calls: string[];       // 有序命名入口引用；保留重复，UI 声明可定位不等于 UT 可直接调用
 }
 
 export interface UseCaseUiBinding {
@@ -542,7 +579,7 @@ export interface FeatureSpec {
   acceptance?: AcceptanceSpec;
   /** v2 新增：use-cases.yaml（若存在），供 UT 端到端分支覆盖使用 */
   useCases?: UseCasesSpec;
-  /** In-memory contracts.files authorization projection; never persisted as a graph/sidecar. */
+  /** In-memory planning references; never a file authorization set or a persisted sidecar. */
   referenceClosure?: ContractReferenceClosure;
   /**
    * P0-2（plan d9b4f7e2 复审）：spec-loader 加载期发现并归一化的形状偏差留痕
@@ -570,6 +607,7 @@ export interface VisualHandoffResolutionRow {
 
 /** 单项检查结果 */
 export interface CheckResult {
+  device_setup?: import('./device-unlock-helper').DeviceSetupObservation;
   /** Owning checker may propose new sourced facts; only runtime may freeze a successor. */
   scope_revision_input?: import('./execution-scope').ExecutionScopeInput;
   id: string;
@@ -585,7 +623,7 @@ export interface CheckResult {
   /** Hylyre native failure taxonomy second-level code; consumed only with failure_kind. */
   failure_code?: string;
   /** Existing repair-route projection; not a failure taxonomy or case state. */
-  repair_owner?: 'coding' | 'spec' | 'plan' | 'testing' | 'capability' | 'external';
+  repair_owner?: 'coding' | 'spec' | 'plan' | 'ut' | 'testing' | 'capability' | 'external';
   coding_candidate?: boolean;
   /** 机器可读阻塞类别；用于区分外部阻塞、契约缺失、工具链等。 */
   blocking_class?: string;
@@ -724,7 +762,8 @@ export interface HarnessRunSummary {
     message: string;
     source_check?: string;
   }>;
-  blocking_warnings: Array<{
+  /** 已停写（plan 3abca824 t3）：没有决策读取方；只为读取带该字段的旧 summary 保留。 */
+  blocking_warnings?: Array<{
     id: string;
     blocking_class?: string;
     details_excerpt: string;
@@ -739,6 +778,7 @@ export interface HarnessRunSummary {
     source?: string;
   }>;
   blockers: Array<{
+    device_setup?: import('./device-unlock-helper').DeviceSetupObservation;
     id: string;
     severity: string;
     status: string;
@@ -746,10 +786,16 @@ export interface HarnessRunSummary {
     /** check 层 blocking_class（如 device_toolchain）——须保真传到 goal-runner 的失败分类（T6/review#3） */
     blocking_class?: string;
     details_excerpt: string;
+    repair_owner?: string;
     affected_files?: string[];
     suggestion?: string;
     source?: string;
   }>;
+  /**
+   * plan f7045213 §4.3：去向表判为"披露、不阻断"的失败（账本与形状类）。条数计入完成缺口；
+   * 当代 writer 恒写（去向表为空时为 []），旧 summary 可缺省。
+   */
+  disclosed_failures?: import('./check-disposition').DisclosedFailure[];
   next_action: string;
   receipt_status?: string;
   closure_status?: 'open' | 'closed';
@@ -761,11 +807,12 @@ export interface HarnessRunSummary {
    */
   repair_candidates?: Array<{
     id: string;
-    category: 'spec' | 'plan' | 'coding';
+    category: 'spec' | 'plan' | 'coding' | 'verification';
     files: string[];
     summary: string;
     item_fingerprint: string;
     source_phase: string;
+    evidence_refs?: import('./repair-candidates').RepairEvidenceRef[];
     /** adjudicated-repair-loop（plan e2b7c4a9）：信号级候选标记；缺省=legacy check-domain。 */
     identity_schema?: 'signal@1';
   }>;
@@ -995,14 +1042,23 @@ export interface PhaseChecker {
 export type CheckContext<S extends 'feature' | 'request' = 'feature'> = S extends 'request' ? RequestCheckContext : FeatureCheckContext;
 
 export interface RequestCheckContext extends Pick<FeatureCheckContext, 'phase' | 'projectRoot' | 'frameworkRoot' | 'frameworkRel' | 'harnessRoot' | 'phaseRule' | 'resolvedProfile'> {
+  /** Original signed goal producer, resolved before request isolation clears inherited environment. */
+  goalInvocation?: Pick<import('./managed-goal-invocation').ManagedGoalInvocation, 'run_id' | 'phase' | 'attempt_id'>;
   subject: 'request';
   request: import('./capability-resolution-entry-input').PreparedRequest;
   reportDir: string;
+  forceDevice?: boolean;
   resolvedInputs: import('./capability-resolution').ResolvedPhaseInputs;
   factsContext: import('./context-facts').FactsInvocationContext;
 }
 
 export interface FeatureCheckContext {
+  /** Deferred until keyed reuse has been decided; the existing device gate still owns real execution. */
+  prepareDeviceExecution?: () => Promise<CheckResult | void>;
+  /** 当前 gate 已授予的绝对截止；只传剩余时间，不授予写入/收口职责。 */
+  gateDeadlineMs?: number;
+  /** 同一 pipeline 的未提交 device evidence；仅预览引用，正式件由 runtime 提交。 */
+  deviceTestEvidence?: { trace_path: string };
   /** Native global-phase selection; no Feature birth or persisted request state. */
   module?: string;
   term?: string;

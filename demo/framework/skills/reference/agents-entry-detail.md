@@ -1,6 +1,6 @@
 # AGENTS.md 入口模板详细规则（条件加载：需要展开某条红线细则时读）
 
-> **输入协议边界**：以下 full=spec / lite=change 的 facts 建立与固定上游阅读口径仅适用于 1.0。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。默认入口尚未切换，不能自行补造调用上下文。
+> **输入协议边界（仅正式阶段与机器 request）**：只审查、解释或设计用例仍先阅读真实代码和依据，但不建立身份/facts、不创建正式产物、不进入阶段确认/闭环。以下落盘与量化要求只用于正式或机器请求；以下 旧出生协议为 spec 的 facts 建立与固定上游阅读口径仅适用于 1.0。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。调用上下文由实际入口解析，不自行补造。
 
 > SSOT 索引见实例根 `AGENTS.md`（由 `framework/templates/AGENTS.md.template` 渲染）。本文承载该模板 §三 红线清单每条的完整判据文本、§4.1 主 agent/verifier 职责切分反误读全文、§4.2 实例扩展生命周期钩子细则、§5 交付凭证与闭环判定/会话边界/跨会话恢复完整机制、§六 交互硬规则完整表述。实例路径（架构文档/模块画像/术语表等）以渲染后 AGENTS.md §二 SSOT 表为准，本文不重复模板占位符。
 
@@ -57,14 +57,16 @@
 
 ## Context Facts Gate（BLOCKER，C4 exploration-scale）
 
-该 track 首个 feature phase（full=spec / lite=change）在写入该阶段主产物前，须在 `<features_dir>/<feature>/context/facts.md` 建立全量事实（frontmatter + `## Code Facts` 表，`source_code_paths`/`decisions_unlocked`/量化阈值由 harness BLOCKER 校验，`ready_to_produce: true` 须真实探索后手动设定）。后续所有 active feature phase（full 含 plan/coding/review/ut/testing；lite 含 coding/exit）只追加 `## phase_delta: <phase>` 增量节（无新增事实须显式写 "none"），不重做全量探索。契约实现见 `framework/harness/scripts/utils/context-facts.ts`；旧版 per-phase `<phase>/context-exploration.md` 仍可读（WARN 提示 backfill），阶段步骤与宿主侧补充路径以各 SKILL 及 profile-addendum（若有）为准。
+该 track 首个 feature phase（旧出生协议为 spec）在写入该阶段主产物前，须在 `<features_dir>/<feature>/context/facts.md` 建立全量事实（frontmatter + `## Code Facts` 表，`source_code_paths` 与可核实的量化阈值由 harness BLOCKER 校验；`decisions_unlocked`、自报的文件数与搜索次数仍须如实填写，缺了会被披露并计入完成缺口、不单独阻断，`ready_to_produce: true` 须真实探索后手动设定）。后续所有 active feature phase（plan/coding/review/ut/testing）只追加 `## phase_delta: <phase>` 增量节（无新增事实须显式写 "none"），不重做全量探索。work-unit 独立复审除外：只读 facts，不追加增量节，新事实写入指定审查报告。契约实现见 `framework/harness/scripts/utils/context-facts.ts`；旧版 per-phase `<phase>/context-exploration.md` 仍可读（WARN 提示 backfill），阶段步骤与宿主侧补充路径以各 SKILL 及 profile-addendum（若有）为准。
 
 `enforced_by`：context-facts。
+
+后续阶段的必读输入登记以已核基线加本阶段 `phase_delta` 路径表共同核对；探索模式只在建立事实时检查。输入登记/探索模式的四项过程差异按统一去向表披露，普通 Feature 与 request 一致，不靠改头部、换 run 或填豁免绕过。真实来源、目标覆盖、身份、基线新鲜度和产品检查仍须满足；已有 verifier 的真实否决仍有效。
 
 ## Agent 行为规约（BLOCKER）
 
 1. 进入任一 feature 阶段（spec/plan/coding/review/UT）的 Research Sub-Phase 前，须完整阅读 `framework/skills/reference/agent-behavioral-principles.md`。
-2. Research First：不确定时停下来问；代码与文档冲突时以代码为准并显式标注；达到阈值时必须使用 explore subagents。
+2. Research First：能由当前目标裁决的不确定，按目标裁决并留痕；目标本身冲突或缺失且无法裁决时才停下来问（见行为规约「权威判定」）；代码与文档冲突时以代码为准并显式标注；达到阈值时必须使用 explore subagents。
 3. Minimum Viable：产出不得超出用户诉求/上游契约（spec→plan→contracts→code）范围；禁止投机性抽象或"顺便加上"。
 4. Surgical：coding/review 仅触碰 scope 内变更；禁止顺手改相邻格式、注释或无关文件。
 5. Verify Before Proceed：Context Exploration 完成后自检路径存在性与 Code Facts 充分性；逐文件 lint/局部 harness，禁止批量产出后统一验证。
@@ -72,19 +74,35 @@
 
 ## 阶段边界推进（BLOCKER）
 
-阶段闭环（closed）≠ 授权下一 Skill。默认 `transition_policy=manual`：闭环后须 `phase.next_step` 或用户/batch 明示授权，禁止同一执行流自动开下一阶段。细则与 batch 白名单见 `framework/skills/reference/user-confirmation-ux.md §8`。
+检查PASS/closed不扩大原请求授权；完整交付按已有授权由同一协调器持续到原终点，不在phase边界重复确认或派冷作者。专项请求仍止于本次职责。确认与实际授权规则见 user-confirmation-ux §8。
 
 ## §4.1 主 agent 与 verifier 子 agent 的职责切分（明示授权，反误读全文）
+
+本节作者指该工作单元的专用作者；主会话只接入、观察和呈现。独立核验按实际request/material另启独立上下文，不继承作者SID，不写产品。正式报告由原writer接收，当前材料未变复用原结论；新拒修补入真实材料后再核，不重跑无影响工具。
 
 > 弱模型经常把"verifier 子 agent 执行 verify-*.md"误读为"任何 harness 类的事都不该主 agent 干"。本节是反误读的明示授权，BLOCKER 级，必须遵守：
 
 1. **结构级 harness**（`framework/harness/harness-runner.ts`）：必须由主 agent 自己执行。它会自动调用 `hvigor` 编译、各阶段 `check-*.ts` 等，不得借口"等 verifier"或"等用户"跳过。主 agent 在阶段产物完成后，第一时间通过 Shell 工具运行该命令，读取退出码与报告文件。
-2. **语义级 verify**（`framework/harness/prompts/verify-*.md`）：在结构级 harness PASS 之后，由独立 verifier 子 agent 执行；主 agent 必须主动通过 Task 工具触发 verifier（`subagent_type: verifier`），不得仅"提示用户去跑"或"等用户启动"。**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）——`summary.verifier_request` 指向的 `verifier.request.<subject>.json` 就是唯一调用侧凭证，verifier 按其中的 `prompt_path` 自行 Read 磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）；手抄、改写字段或在 JSON 前后附加说明 → subject 重算失配 → 阶段不闭环。**报告由你写，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，把它的回复**原样全文**写入 `summary.verifier_report` 指向的路径（不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入），然后跑 check-receipt。**verifier 是按能力启用的**：harness 没有为该阶段输出 request 就是不适用（policy/workflow/profile 判定），既不要去找也不要补造，闭环不要求它。
+2. **语义级 verify**（`framework/harness/prompts/verify-*.md`）：在结构级 harness PASS 之后，由独立 verifier 子 agent 执行；该阶段执行者必须主动调用当前宿主登记的专用 verifier 角色——宿主以 Task 承载角色时显式选 `subagent_type: verifier`，宿主原生登记了 verifier 工具时直接调用它；不得换成通用研究/开发子 agent，也不得仅"提示用户去跑"或"等用户启动"。**调用的 prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）——`summary.verifier_request` 指向的 `verifier.request.<subject>.json` 就是唯一调用侧凭证，verifier 按其中的 `prompt_path` 自行 Read 磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）；手抄、改写字段或在 JSON 前后附加说明 → subject 重算失配 → 阶段不闭环。**报告由你写，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，把它的回复**原样全文**写入 `summary.verifier_report` 指向的路径（不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入），然后跑 check-receipt。**verifier 是按能力启用的**：harness 没有为该阶段输出 request 就是不适用（policy/workflow/profile 判定），既不要去找也不要补造，闭环不要求它。
 3. AGENTS.md 全文未禁止主 agent 调用 shell/执行命令；空白处一律按"允许"理解。若你以为某条规则限制了你执行命令，请先核对反假设条款。
 4. **生产型（会写/改文件的）子 agent 派发纪律**：framework 不禁止派发写码子 agent，但**不信任其报告**。派发 prompt 最低纪律——前置「先 Read 目标文件验证改造对象存在；不存在立即 STOP 报告，禁止善意改造」；后置「完成后运行自验命令」；报告要求「实际修改文件清单 + 自验命令输出，禁用"应该/可能"模糊词」。**子 agent 报告不构成任何闭环凭证**：主 agent 必须以 `git diff` 对账实际改动后才可声明完成；门禁/凭证责任不可下放（verifier 除外，见上文 2）。
-5. **环境能力判定纪律**：凡断言"环境缺少某工具链"（hvigor/SDK/设备等），必须先运行 framework 探测命令（`detect-deveco.ts --json` / `check-personal-setup.ts --ensure`）并在结论中引用其输出；禁止凭 `command -v`/PATH 检查自报「沙箱无 X」——**未探测 = 未知，不是没有**。遇 `HARNESS_PREFLIGHT` 能力缺口时按其双出口处置：修环境（默认）或经用户确认后诚实停止——停止不放行不绕过，环境修好后用原命令 resume 即可继续（goal 模式 `--resume` 会重检放行）。
-6. **唯一执行 owner 与上下文减负（plan 07a41ec6 T9）**：Claude 原生 `/goal` 路径下主会话是薄 driver——每个阶段最多派发**一个** `subagent_type: phase-executor` 子代理，由它负责该阶段产出与自检（跑 harness、投 verifier、跑 check-receipt），主会话只投递最小输入（需求/acceptance/ui-spec/参考图路径、当前改动文件、当前 blocker、已接受 gaps、上一阶段 summary 路径、Skill 路径），收回 summary 路径与终态块；不传历史对话，子代理按需读取。同一会话上下文不连续执行两个阶段。Maison `/goal-mode`（GoalPhaseRuntime）是另一入口，两者不得同时推进同一任务；`--revalidate` 只是检查命令，不推进阶段。
-7. **子代理等待纪律**：对 verifier / phase-executor 的结果只能**同步等待**，或先做与其结果无关的工作；禁止 sleep、轮询、后台等待器；verifier 未返回前不得修改它正在审的材料。harness 输出末尾的 `NEXT:` 行就是下一步动作，照做即可，不要读 framework TS 源码反推门禁判词。
+5. **环境能力判定纪律**：凡断言"环境缺少某工具链"（hvigor/SDK/设备等），必须先运行 framework 探测命令（`detect-deveco.ts --json` / `check-personal-setup.ts --ensure`）并在结论中引用其输出；禁止凭 `command -v`/PATH 检查自报「沙箱无 X」——**未探测 = 未知，不是没有**。遇 `HARNESS_PREFLIGHT` 能力缺口时按其双出口处置：修环境（默认）或经用户确认后诚实停止——停止不放行不绕过，环境修好后用原命令 resume 即可继续（goal 模式重新发起同一请求即重新接入原 run 并重检放行）。
+6. **唯一owner与专用上下文**：完整交付由同一GoalPhaseRuntime推进，会话用next/report，读取并执行原execute_command。每个root/CU/request保专用作者，缺SID时按当前原件重建并披露，不回主上下文施工。只传原件路径/sha和完整当前反馈，不手拼phase队列、不并行两入口推同一任务。--revalidate仅机械检查，不签完成。
+7. **子代理等待纪律**：verifier/phase-executor 同步等待，或先做无关工作；正式 gate 使用返回的时限与清理预留设置工具 timeout，允许等待同一宿主原生后台任务句柄终态。禁止 sleep、自造轮询/等待器和重复 report 催进度；verifier 未返回前不改其材料。按真实 NEXT 和请求原件执行，不读 framework 源码反推门禁。
+
+### 当前工作与验收证据
+
+正式阶段在产出前与收口前读取当前 request 的完整 instruction、harness `NEXT`/`next_action` 及所列原报告和证据。原始检查与 verifier 的 PASS/FAIL、当前工作是否完成、Feature 普通完成和发布资格分别保留；下一步只消费框架共同处置，不再以“只修 BLOCKER”或“已有 receipt/closed”另判一次。
+
+- 当前本职责确有必修任务：读取问题、责任对象、权限、依据路径和复验条件，实际修复本职产物；同阶段发现也必须处理，不以原总 PASS 退出。MAJOR 只是严重度，明确建议仍作披露，不能全部升级为必修。
+- 当前仅待核：交原 verifier 阅读签发 request/material 中的完整当前材料。先核旧担忧现在是否仍妨碍本次验收：冻结执行结果、断言、实现调用关系及源码/测试绑定要共同核对，用例名、`ut_covered` 或孤立 PASS 不足以认定已满足。未覆盖的新反证先补核，不先派产品作者试修。
+- 有效当前实证已解决旧担忧：由原验证方有据关闭必修判断，差异保留报告/notes；可确定的记录同步交合法 owner。真实新接口、验收、输入或执行条件变化仍须受影响复验，不把“文档差异”当普遍免验。
+- 他职责工作交既有回退/下游义务/设计 owner；真实负面结论在合法修改与原验证方复验前保留。只审查的请求不扩成开发，核实任务不交产品作者猜测。尚有本职具体任务时先做任务，不只填回执。
+- 闭环前再次消费当前工作；旧有效回执仍有效，但不能遮住真实新增义务。Goal 自检完成按原 request 交 runtime 正式 gate/finalizer；没有新模型需要时只做必要机器收口。
+
+核实期间和关闭后仍沿该次 request/material 的相关证据锚读取原件；不因发现关闭或下游 latest 报告变动回摆 subject。真实相关材料或绑定失效才刷新。引用使用可唯一定位的项目相对或当前 Feature 相对路径，框架归一后与 material 的项目相对 POSIX label 对齐；歧义、越界或缺证具体报告，不能猜路径或自动 confirmed。格式告警和未分类旧 SKIP 保持原边界。
+
+纯补 gate、核实、报告转录不算内容返修；真实模型调用与耗时保留为事后统计。新运行不设调用次数、内容返修次数或默认总墙钟配额，不以旧 budget 字段停止或提额恢复。用户明示截止、取消及真实授权仍有效；实际额度、认证或服务故障保全成果，条件恢复后接回原请求，只补缺失或受影响的工作。
 
 ## §4.2 实例扩展与生命周期钩子
 
@@ -104,7 +122,7 @@
 
 ## §5 交付凭证：闭环判定完整机制
 
-每次完成某个阶段任务，必须在 `<features_dir>/<feature>/<phase>/reports/<timestamp>/<model>-<phase>/trace.json` 产出凭证（配置了 `paths.reports_dir_pattern` 时归入该模式；遗留实例为 `framework/harness/reports/<feature>/<phase>/`）。字段见 `framework/harness/trace/trace.schema.json`；痛点回填见 `framework/harness/trace/gap-notes.template.md`——这是弱模型回传问题的唯一渠道，不要省略。
+每次完成正式 Feature 的某个阶段任务，必须在 `<features_dir>/<feature>/<phase>/reports/<timestamp>/<model>-<phase>/trace.json` 产出凭证（配置了 `paths.reports_dir_pattern` 时归入该模式；遗留实例为 `framework/harness/reports/<feature>/<phase>/`）。字段见 `framework/harness/trace/trace.schema.json`；痛点回填见 `framework/harness/trace/gap-notes.template.md`——这是弱模型回传问题的唯一渠道，不要省略。
 
 **阶段闭环判定（trace.json 缺失 = 阶段未完成）**：本节是 Layer 2（完成回执）+ Layer 3（Stop hook）的 SSOT。物理拦截层若存在，由具备 hooks 能力的 adapter 在实例根下发的脚本读取本节定义的判据决定能否放行 stop（细节见 `framework/agents/README.md`）。
 
@@ -112,7 +130,7 @@
 
 1. `trace.json` 真实存在（缺失即视为阶段未完成）；
 2. 主 agent 已自跑 `harness-runner.ts`，verdict=PASS（或脚本退出码 0）；
-3. verifier 报告 verdict=PASS（仅当 harness 为本阶段输出了 verifier request；只跑一次——材料未变复用既有报告，材料变了但历史有 PASS 时 check-receipt 沿用并在 `summary.verifier_closure` 标 `completed_with_prior_review` 与未重审差异；WARN/UNKNOWN 记 `<phase>/notes.md` 不修）；
+3. verifier 报告 verdict=PASS（仅当 harness 为本阶段输出了 verifier request；只跑一次——材料未变复用既有报告，历史 PASS 的适用性与必要补核按上文共同处置；建议记 `<phase>/notes.md`）；
 4. `framework/harness/scripts/check-receipt.ts` exit 0（回执 `phase-completion-receipt.md` 由 harness 从 summary/verifier 报告/真机产物**只读投影**生成，receipt_schema 2.1，agent 不手填任何字段）。
 
 严禁仅靠口头"完成"宣告而不留下上述四份物理凭证。若物理拦截层（Stop hook）检测到任一项缺失，将以 exit code 2 阻止当前消息结束，并把缺失项原文注入下一轮 prompt。被拦截后必须立即补齐缺失项，而不是再次声称完成。
@@ -139,11 +157,13 @@
 **跨会话恢复（Resume·BLOCKER）**：新会话、framework 升级后、或用户说「继续 `<feature>`/做下一阶段」时，在进入 Skill 工作前须先对齐闭环态：
 
 1. 若完成回执可能存在 → 必须先执行其一（agent 自跑，不得让用户手动跑）：`check-receipt.ts --feature <feature> --phase <phase>` 或 `harness-runner.ts --sync-closure --feature <feature> --phase <phase>`。
-2. `check-receipt` exit 0 → 直接认定该 phase 已闭环；汇报交付摘要后 `phase.next_step` 停等，禁止重跑该阶段 harness/verifier。
+2. `check-receipt` exit 0只说明相应机器原件可用；回同一当前完成视图，复用仍有效结果，不按phase停等。完整交付继续到原终点，专项请求按原职责结束。
 3. `check-receipt` exit 1/2 → 按 BLOCKER 列表补齐缺失项；禁止仅凭 `.current-phase.json` 的 `receipt.status=missing` 或 `summary.json` 的 `next_action=run_verifier_then_receipt` 宣告「未闭环」——二者可能滞后于 receipt 磁盘真相。
 4. `summary.json.closure_status=closed` 与 `state.receipt.status=passed` 可作为辅助信号；SSOT 仍是 `check-receipt.ts` exit 码。
 
-**已闭环 feature 的修正（plan 07a41ec6 T8）**：修正 = 直接改根因层 SSOT/代码/测试输入 → 一次 `harness-runner.ts --revalidate --feature <feature> [--from <phase>]`（检查执行器：按链找 stale 阶段逐个重跑脚本门禁并按既有闭环路径收口；FAIL 即停并打印 blocker 与改法；语义 verifier 不重审，结果标 `script_revalidated` / `semantic_not_reverified`，账本落 `<feature>/revalidation.json`）→ 按漂移分级补一次复核（文档不复审；测试代码只跑相关测试；导航/状态/交互做 scoped diff review；布局/字号/颜色/资源做真机截图或 `--measure`；多类同时变化做一次最终合并 diff review）→ 完。不重新进入六阶段流程，不重写 spec/plan/review 全文（只追加"修正记录"小节），不为修正另建 feature 或状态。
+**在途 feature 的已闭环阶段修正（plan 07a41ec6 T8）**：修正 = 直接改根因层 SSOT/代码/测试输入 → 一次 `harness-runner.ts --revalidate --feature <feature> [--from <phase>]`（检查执行器：按链找 stale 阶段逐个重跑脚本门禁并按既有闭环路径收口；FAIL 即停并打印 blocker 与改法；语义 verifier 不重审，结果标 `script_revalidated` / `semantic_not_reverified`，账本落 `<feature>/revalidation.json`）→ 按漂移分级补一次复核（文档不复审；测试代码只跑相关测试；导航/状态/交互做 scoped diff review；布局/字号/颜色/资源做真机截图或 `--measure`；多类同时变化做一次最终合并 diff review）→ 完。不重新进入六阶段流程，不重写 spec/plan/review 全文（只追加"修正记录"小节），不为修正另建 feature 或状态。
+
+普通维护不进入修正登记；恢复明确既有预期、未改变验收/契约且不需新设计决定的普通 bug 修复也属于维护；已完成 Feature 的此类维护不自动创建后继 run。未点名 Feature 时，只排除 `inspectCompletionRecord` 判为 VALID 的旧指针，drift 不改变此判定；receipt-only 历史 Feature 保持现有归属。独立 compile/request 不写 Feature completion，不能据此推进正式交付。
 
 ## §六 交互硬规则完整表述
 
@@ -159,3 +179,5 @@
    - 典型反例（已发生过）：声称"AGENTS.md 说我不能执行脚本"——但 AGENTS.md 从未写过此规则；这种"假设性自我设限"是软幻觉，违反一次即视为本次任务失败，必须立即承认并执行被跳过的动作。
    - 与之相对：AGENTS.md §4.1 已明示授权主 agent 执行结构级 harness、调用 verifier 子 agent；被允许的事项不允许借口"我以为不能"绕过。
    - **作用域澄清（v2.8 起）**：本条仅约束同一 cli 会话内的"假完成"行为。如果当前会话起始就不在某阶段流程中，只是看到了会话边界表描述的"跨会话遗留 state"提示，不属于本条的约束对象——此时 agent 应继续执行用户当前真实诉求，而不是接管旧任务。换言之：本条防的是"自己漏做了步骤还声称完成"，不是"上一会话留下的尾巴"。
+
+P0 device/both 验收若存在，spec 完整性检查需要可解析的 UI 相关性定义：在 spec.md 的 YAML 中声明 ui_change（非 UI 为 none，既有界面复用为 reuse_only），或在尚无 spec 时提供有效需求输入；ui-spec 文件是否存在不决定适用性。已有 checkpoint 即使界面只复用也继续核验。蓝图投影仅检查已声明内容，不前移 spec 才能补的定义义务。

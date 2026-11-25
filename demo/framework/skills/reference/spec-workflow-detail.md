@@ -1,5 +1,7 @@
 # spec 阶段详细流程（条件加载：执行对应 Step 时读）
 
+正式交付按已有 ut_layer、device_focus、use-cases 和 plan 说明两层各证明什么；both 不是要求 UT 模拟 ArkUI 或重复全条设备流程。定义与可测性不一致先回原责任方裁定，不由 UT 修改 acceptance、减少 required 义务或新建业务抽象。 设计阶段同时明确真实业务入口与最小必要隔离边界，不能先把全部 UI 行为标 both，再让下游为单测改造整套 UI。
+
 > SSOT 索引见 [`skills/feature/spec/SKILL.md`](../feature/spec/SKILL.md)。本文承载 Step 1.5（术语消歧）、Step 2/2.1（截图分析 + 视觉资产验真，pixel_1to1 相关）、Step 6（acceptance 提取字段表）的完整机制；触发/门禁清单/闭环判定仍以主文档为准。
 
 ## Step 1.5：术语消歧完整机制
@@ -39,7 +41,7 @@
 术语确认（`spec.terminology`）与模块范围已在 [`/component-design`](../project/component-design/SKILL.md) 蓝图一次裁决，上面 1–6 步与 Scope 扩展不在 spec 重做：
 
 - **投影来源**：术语映射表的行集合 = 蓝图 `discovery.facts` 中 `subject: term:<原始术语>` 的事实；每行「权威模块 / 置信度 / 易混项」逐字段取自 `value.canonical_module` / `value.confidence` / `value.easily_confused_with`（易混项列须出现蓝图的每个易混模块，可附说明），「用户确认」列由投影直接写 `[x]`，不问人、不回写 glossary。确认状态以蓝图 `provenance.extraction_method` 为准（`user_confirmed`；headless 为 `headless_assumed` 并入 must-review），由 `check-component-blueprint terminology_facts_confirmed` 判定；远期切片的未确认术语沿蓝图受控 gap（`open_decision`、`needed_by` 为远期切片、`verification_refs` 含该 `term:` subject）停放，spec 不补确认。
-- **Scope**：`in_scope_modules` 必须集合等于蓝图可修改模块集合——只由 CU `touches[].design_ref` 解析到的 development 节点 `module` 去重派生（`design_refs` 只是设计依赖，不带入）；`expansions_with_user_approval` 必须为空。
+- **Scope**：`in_scope_modules` 必须集合等于蓝图可修改模块集合——只由 CU `touches[].design_ref` 解析到的 development 节点 `module` 去重派生（`design_refs` 声明交付选择，不单独扩大可修改模块）；`expansions_with_user_approval` 必须为空。
 - **检查 id 沿用**：`terminology_mapping_table`（缺行 / 多行 / 重复术语行 / 字段不一致 / 未 `[x]` 均 FAIL）、`scope_declaration`（集合相等 + 无 expansions）、`scope_matches_catalog`（Scope 模块须为获准模块 = catalog ∪ 本蓝图 `architecture_impact` 的 add_module / move_module / retire_module 声明）、`terminology_modules_within_scope`（判据不变）；details 均注明「来源=蓝图」。非 CU-bound 平铺 Feature 原判据不变。
 - **失败出口**：投影解析失败（含蓝图 revision 变化致 CU 引用 stale）或任何不一致，一律回 `/component-design` 调和蓝图后重新投影，不在 spec 内改范围、改映射或问人。
 
@@ -60,7 +62,7 @@ advisory」块，声明本次 agent 是否具备视觉能力（`Vision: YES/NO`�
 Step **必须用强 VL 模型**（Composer 2.5 等）；内网弱模型勿跑提取（garbage in）。**无视觉能力
 （NO，盲档）**：不得假装看图/凭空描述截图内容（幻觉）——改走
 [../feature/spec/reference/ui-spec.md「盲档工作法」](../feature/spec/reference/ui-spec.md)：
-OCR JSON 为文案/位置 ground truth，结构由需求文字推断，图标走 placeholder，无法判定项登记待
+OCR JSON 为文案/位置 ground truth，结构由需求文字推断，图标优先复用用途由代码/资源引用明确的 repo_ref，缺失或用途不明才 placeholder；复用仍写 verified: unverified，无法判定项登记待
 复核清单；`fidelity_target` 会被能力自动钳制，无需手动改声明。交互式（非 headless）会话若模型
 本身具备视觉能力，仍按原「必须用强 VL」执行——本分档只影响**确认没有视觉能力**的场景，不是
 "可以偷懒降级"的许可。**交互式能力实测（I1，无 goal-runner 自动注入能力块时）**：不再靠"自己
@@ -87,6 +89,9 @@ OCR JSON 为文案/位置 ground truth，结构由需求文字推断，图标走
 ## Step 6：提取 acceptance.yaml 字段表
 
 `criteria` 章节（从「验收标准」提取）：`id`（AC-N）/`prd_function`（功能清单编号）/`priority`/`description`/`testable`（固定 true）/`verification_steps`/`expected_result`/`data_constraints`（可选）/`ut_layer`（**必填**，见下）/`ut_focus`（ut_layer∈{unit,both} 必填）/`device_focus`（ut_layer∈{device,both} 必填，both 禁止把 UI 要点只写 ut_focus）/`linked_flow`/`linked_branch`（建议填，指向 use-cases.yaml）。
+
+P0 设备义务由 `priority=P0` 与 `ut_layer=device/both` 决定，不因没有 `linked_flow` 消失。有效 UI 需求须补真实 checkpoint；ui-spec 缺失是定义缺口，不能登记为能力缺口。`linked_flow` 只指业务用例，`flows` 屏链可选；声明时按 checkpoint 前后屏核验边覆盖与相邻关系，无需把用例名改成屏链名。
+
 
 `boundaries` 章节（从「异常/边界场景处理」提取）：`id`（BD-N）/`prd_exception`/`scenario`/`description`/`handling`/`expected_behavior`/`ut_layer`+`ut_focus`/`device_focus`（同上）。
 

@@ -7,7 +7,7 @@
 ## 能做什么
 
 - **架构可配置**：外层/内层模块依赖、路径根目录等由实例根的 `framework.config.json` 声明，harness 从配置读取，不绑死某一种层数或层名。
-- **按义务执行**：新请求默认 [obligation-driven](workflows/obligation-driven.workflow.yaml)，按请求终点、真实输入与未满足义务冻结阶段范围。项目维护和专项 review/UT/testing 独立结束；完整交付有两个载体——交互路径由机器把范围冻结进 `doc/features/<feature>/execution-scope.json` 逐阶段跑，需要无人值守或 run 级预算/恢复时用真实 Goal 身份（权威优先级：本次关联的 run > feature 冻结记录）。已有设计可复用，不强制补齐物理文档。旧运行见 [迁移说明](MIGRATION.md)。
+- **按义务执行**：新请求默认 [obligation-driven](workflows/obligation-driven.workflow.yaml)，按请求终点、真实输入与未满足义务冻结阶段范围。项目维护和专项 review/UT/testing 独立结束；完整交付统一由 `GoalPhaseRuntime` 驱动：会话使用 `goal-mode-entry --next / --report-result` 一步一交接，无人值守使用 detached 运输。隔离能力只决定阶段上下文安排，必需独立核验仍须真实独立。旧无 run 范围正式转交后续作，旧完成原件只读。已有设计可复用，不强制补齐物理文档。旧运行见 [迁移说明](MIGRATION.md)。
 - **框架升级兼容（compat）**：存量 feature 遇新版本 BLOCKER 时，可在 `doc/features/<feature>/compat.yaml` 做**可过期**临时降级；推荐用 `cd framework/harness && npm run backfill:context` 正规化。详见 [docs/evolution/compat-protocol-v1.md](docs/evolution/compat-protocol-v1.md) 与 [MIGRATION.md §v2.6](MIGRATION.md)。
 - **多 agent 入口**：通过 `framework/agents/<adapter>/` 插件，把同一套 Skill 按所选客户端约定暴露出来（slash、跳板、全局说明文件等）；**产品与路径对照仅限** [agents/README.md](agents/README.md)。
 - **工程类型 profile（project_profile）**：与 adapter 正交，声明在实例根 `framework.config.json` 的 `project_profile`（默认 `hmos-app`）。每套模板位于 [profiles/](profiles/README.md)，可禁用整阶段 harness 或声明能力档位。
@@ -123,6 +123,9 @@
 
 协议结构见 [framework/agents/adapter-schema.yaml](agents/adapter-schema.yaml)。
 
+DeepSeek Harness 的物化入口与 Goal/headless 使用前提见
+[Goal runbook](docs/operations/goal-mode-runbook.md#deepseek-harnessdsh)。
+
 ---
 
 ## Harness 常用命令
@@ -137,7 +140,9 @@ npx ts-node harness-runner.ts --phase <phase> [--feature <feature-name>]
 
 初始化时由 framework-init S3（`harness-install` 任务）自动完成 `npm install`，此处仅作手动说明。
 
-**Framework 自身回归**（**仅源仓**；发布件 `npm test` 已重定义为 `check:global`）：在同一目录执行 `npm test`，会跑 **单元 + fixture**。含 `INPUT/`/`CMD.json` 的契约基线分列在 [`profiles/hmos-app/harness/tests/fixtures/`](profiles/hmos-app/harness/tests/fixtures) 与 [`profiles/generic/harness/tests/fixtures/`](profiles/generic/harness/tests/fixtures)；入口脚本 [harness/tests/run-tests.ts](harness/tests/run-tests.ts)。
+**Framework 自身回归**（**仅源仓**；发布件 `npm test` 为 `check:global`）：每轮开发执行 `npm run test:changed` 日常域按需计划；普通 plan 收口执行 `npm run test:daily` 日常全集及 typecheck；正式发布执行 `npm test`，包含 **日常与扩展域全部 unit/profile + 全部有效 fixture + typecheck**。日常失败仍须修复，不能靠移到正式域豁免。含 `INPUT/`/`CMD.json` 的契约基线分列在 [`profiles/hmos-app/harness/tests/fixtures/`](profiles/hmos-app/harness/tests/fixtures) 与 [`profiles/generic/harness/tests/fixtures/`](profiles/generic/harness/tests/fixtures)；入口脚本 [harness/tests/run-tests.ts](harness/tests/run-tests.ts)。
+
+`npm run candidate:build` 用日常全集构建中间候选，并校验同一 zip、执行消费者 lifecycle smoke。`npm run release:all` 保留正式完整测试；`candidate:promote` 仅在相同发布内容的稳定来源完整全量通过、consumer golden 与发布 plan 门禁成立后移动同一 zip。候选构建后请保留受测来源；主干已有后续改动时，可传 `--source-root <保留副本>`，不能仅凭相同 HEAD 复用脏树结果。详见[发布清单](docs/operations/release-checklist.md)。
 
 catalog-bootstrap 的全局 phase（无 `--feature`）示例：
 

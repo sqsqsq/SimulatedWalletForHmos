@@ -1,5 +1,7 @@
 # Plan 阶段语义验证 — {feature_name}
 
+核对本次承诺的测试层级与生产入口一致：UT 驱动可隔离的真实业务状态/异常；UI、焦点和导航栈交设备。both 的两层互补，不要求 UT 实例化 UI，也不能只测 helper 冒充流程通过。L3 候选回原责任方；option_a 不批准降低当前验收。仅核当前材料，不新增一轮设计或额外门禁。
+
 **P3 显式 1.1 调用**：以已解析验收与施工内容为准，不要求未列入 required_outputs 的 spec.md/plan.md。仍审查精确文件写集、类型/接口、外部 DTO 映射、runtime 生命周期、CU sidecar 与用例；不得用缺叙述为由跳过这些责任。共同决策冲突回蓝图/外部 owner，职责修订沿既有 P2 successor，不在原 run 改写范围。
 
 **CU-bound（Feature 名以 `cu-` 开头）**：术语、Scope 模块范围与架构影响已由部件演进蓝图裁决（可修改模块 = CU touches 派生；架构影响 = 蓝图 `architecture_impact` 决策 id 投影）。检查 3、4、7 及检查 R 中涉及这三项的判断只核对与蓝图投影一致，不重新裁决模块归属、范围扩展或架构影响等级；检查 7 在 CU-bound 下按"架构影响段 `decisions` 与蓝图决策一致"判定，不要求 plan 更新 architecture.md。不一致指回 `/component-design` 做蓝图 revision。
@@ -165,7 +167,8 @@
      - 接口方法（是否有方法来获取/操作 AC 描述的数据）
      - 组件定义（是否有 UI 组件来展示 AC 描述的内容）
   3. 对每条 P0 AC 给出追溯结果
-  4. 若 P0 AC 在设计中找不到任何支撑，判为 FAIL
+  4. 若 P0 AC 在设计中找不到任何支撑，先核本次材料中的现行验收与实现证据，再判断是否仍妨碍验收。恢复旧发现时不能只因预测接口或文字未同步而重开必修。
+  5. 有冻结 UT/执行证据时，按 AC 核对真实断言、业务入口调用关系、执行键与源码/测试绑定；用例名、`ut_covered` 或孤立 PASS 不足以证明已满足。有效证据已解决原担忧时有据 refuted 原必修判断，文档差异保留报告；真实公共契约、新验收或执行条件变化仍须受影响复验，未覆盖/失效材料给具体待核缺口。
 
 ### 检查 R: 跨产物引用核对 (reference_crosscheck)
 
@@ -240,6 +243,25 @@ verification_result:
 ```
 
 ---
+
+### 7.3 必需验收的实质问题与责任核实
+
+`acceptance_ids` 与 `affected_files` 是本批在原 checks 项新增的可选字段；id/status/severity/details/suggestion 和 issue-verification 的逐条结论、evidence/repair_owner 继续复用。旧合法报告缺新增字段时保留原发现，回原独立 verifier 同次批量补核，不改历史报告、不静默丢弃；仅建议显式写 `acceptance_ids: []`，不进入派修。
+
+只有确实妨碍本次必需验收的具体 FAIL，才在原 `verification_result.checks` 项补 `acceptance_ids: [AC-ID]` 与 `affected_files: [真正待修的项目相对路径]`。`details` 用反引号标明当前可读的 `项目相对路径:行号`（范围可用 `:起-止`），指出具体字段和验收义务；`suggestion` 说明由谁改、改什么。路径是修复对象，源码或日志只作证据时不能误填成责任产物。只有优化建议、文字漂移或未核实风险不补此义务声明，MAJOR 标签本身不自动升级。
+
+同一次独立检视逐条核实上述发现及已有拒修理由，复用原块；不为每条发现另派 verifier、不新建 plan 问题文件。原报告总 PASS 不抹掉已确认的必需验收问题：
+
+已有发现须同时核本次 request/material 的当前验收反证；核实和关闭后沿该材料锚保留相关证据，不因开放项减少移除证据或以可变 latest 报告替换冻结原件。引用可用唯一定位的项目相对/当前 Feature 相对路径，建议输出项目相对 POSIX 路径；歧义、越界或缺失逐条说明，其余有效引用继续核对。UNKNOWN/unclear 不当作产品已修，也不以原总 PASS 免掉必要补核。
+
+```issue-verification
+- issue: <原 check id>
+  verdict: confirmed|refuted|unclear
+  repair_owner: external
+  evidence: <修复目标文件名 | 对应 details 全文；suggestion 全文 | 当前事实、义务及拒修理由核实结果，保持一行>
+```
+
+`repair_owner` 按真实对象填写：蓝图/CU 用 external（既有设计 owner 链），普通验收/施工产物用原 spec/plan。与产物作者保持独立；作者不能自写 confirmed。拒修须对照当前真实入口、执行依据或需求原文核实；无依据拒修不能取消原 unit/both 义务，历史 subject 未读新理由不能重派。倒计时/重发规则须有无需 UI runtime 可驱动的真实业务入口；真实 NavPathStack/UI/手势仍归 device。Page 具名声明可定位不等于 UT 可直接执行，不为测试强制大型架构，也不只测辅助函数冒充业务义务。
 
 ## 八、注意事项
 

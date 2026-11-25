@@ -11,6 +11,7 @@ import type {
 } from './scripts/utils/types';
 import { normalizeCapabilityKey } from './scripts/utils/capability-alias';
 import * as path from 'path';
+import { CheckExecutionError } from './scripts/utils/check-execution';
 
 export function getCapability(
   resolved: HarnessResolvedProfile,
@@ -154,7 +155,7 @@ function requireProviderFunction<T extends (...args: any[]) => any>(
 }
 
 export function dispatchCodingCompile(
-  ctx: CheckContext,
+  ctx: Pick<CheckContext, 'resolvedProfile'>,
   options: Record<string, unknown>,
 ): any {
   const fn = requireProviderFunction(ctx.resolvedProfile, 'coding.compile', 'runHvigorAssembleApp');
@@ -162,7 +163,7 @@ export function dispatchCodingCompile(
 }
 
 export function dispatchDepsInstall(
-  ctx: CheckContext,
+  ctx: Pick<CheckContext, 'resolvedProfile'>,
   options: Record<string, unknown>,
 ): any {
   const fn = requireProviderFunction(ctx.resolvedProfile, 'coding.deps_install', 'installProjectDeps');
@@ -220,8 +221,18 @@ export function dispatchRequestTargetProbe(
 /** Request transport on the same installed test capability; no caller-supplied commands. */
 export function dispatchRequestTests(ctx: CheckContext<'request'>): unknown | Promise<unknown> {
   const key = ctx.phase === 'ut' ? 'ut.run' : 'device_test.run';
-  if (isCapabilitySkipped(ctx.resolvedProfile, key)) throw new Error(`request requires unavailable capability ${key}`);
-  const fn = requireProviderFunction(ctx.resolvedProfile, key, 'runRequestTests');
+  const unavailable = (details: string): never => { throw new CheckExecutionError({
+    id: 'request_provider_unavailable', category: 'structure', severity: 'BLOCKER', status: 'SKIP',
+    description: '专项请求执行能力缺失', details,
+    failure_kind: 'capability_missing', blocking_class: 'externalBlocked',
+    suggestion: '请 profile 维护者补齐本次专项执行能力后重新发起请求；保留已有有效产物。',
+  }); };
+  const capability = getCapability(ctx.resolvedProfile, key);
+  if (!capability?.provider?.trim() || capability.provider === 'none' || isCapabilitySkipped(ctx.resolvedProfile, key)) return unavailable(`request requires unavailable capability ${key}`);
+  const mod = requireCapabilityProvider(ctx.resolvedProfile, key);
+  const meta = (mod as ProviderModule & { provider?: ProviderMetadata }).provider;
+  if (meta && !meta.exports.includes('runRequestTests') || typeof mod.runRequestTests !== 'function') return unavailable(`provider for ${key} does not support runRequestTests`);
+  const fn = mod.runRequestTests as (ctx: CheckContext<'request'>) => unknown;
   return fn(ctx);
 }
 
@@ -243,7 +254,7 @@ export function analyzeProjectDependencyIssueViaProfile(
 }
 
 export function analyzeCodingDependencyIssueViaProfile(
-  ctx: CheckContext,
+  ctx: Pick<CheckContext, 'projectRoot' | 'frameworkRoot' | 'resolvedProfile'>,
   result: unknown,
 ): any {
   const fn = requireProviderFunction(

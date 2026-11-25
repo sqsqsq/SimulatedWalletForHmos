@@ -201,7 +201,7 @@ export function renderReceiptProjection(f: ReceiptProjectionFacts): string {
     `claimed_completion_commit_sha: ${q(f.claimed_completion_commit_sha)}`,
     `claimed_attempt_id: ${q(f.claimed_attempt_id)}`,
     'verifier_subagent:',
-    '  invoked_via: "Task(subagent_type=verifier)"',
+    '  invoked_via: "host_verifier_role"',
     `  prompt_template: ${q(f.verifier.prompt_template)}`,
     `  report_path: ${q(f.verifier.report_path)}`,
     `  verdict: ${q(f.verifier.verdict)}`,

@@ -32,6 +32,8 @@ import {
   RequestCheckContext,
 } from './types';
 import { applyCompatDowngrade } from '../../compat-loader';
+import { collectDisclosedFailures, dropRedundantAggregates, isBlockingCheck, isRequiredCheckGap, resolveCurrentDisposition } from './check-disposition';
+import { readCurrentDispositionInput } from './verify-feature-completion';
 import { fillCompatMessage, SUGGESTION_COMPAT_APPLIED, SUGGESTION_COMPAT_EXPIRED } from '../../compat-messages';
 import { collectBlockedCapabilityFacts } from './capability-resolution';
 import type { CapabilityResolutionReport } from './capability-resolution';
@@ -58,7 +60,7 @@ function ensureReportDir(projectRoot: string, feature: string, phase: Phase, fra
  */
 export function resolveEffectiveSuggestion(check: CheckResult, phase: Phase): string | undefined {
   if (check.suggestion && check.suggestion.trim().length > 0) return check.suggestion;
-  if (check.severity !== 'BLOCKER' || check.status !== 'FAIL') return check.suggestion;
+  if (!isBlockingCheck(check)) return check.suggestion;
   // P1-7（plan 7c4f2e9b）：agent 通道只给产物级动作——旧文案「检索 id=… 查看判定实现」
   // 把弱模型引进 framework 源码逆向（事故 i5：135 次工具调用 62 Bash+33 Grep 全在读门禁
   // 实现、写 debug 脚本进 framework/harness/，0 次产物修复）。源码定位指引移 operator_note
@@ -71,7 +73,8 @@ export function resolveEffectiveSuggestion(check: CheckResult, phase: Phase): st
   }
   return (
     `（自动指引）按 details 与 affected_files 修产物；` +
-    `修复路径不明时如实 halt 上报，不要为绕过门禁读改 framework 实现。`
+    `本阶段负责的产物在本阶段修复并复验；属于其它责任方或涉及验收/范围/授权裁定时，若报告已有 repair_owner/repair_candidates，按其走原责任入口。` +
+    `没有合法恢复条件时如实报告缺口，不用 notes 代替路由，不读改 framework 实现绕过检查。`
   );
 }
 
@@ -113,17 +116,13 @@ export function finalizeChecksForScriptReport(
   return { checks: results, compat_applied, compat_expired };
 }
 
-export function generateScriptReport(
-  _harnessRoot: string,
+export function buildScriptReport(
   phase: Phase,
   feature: string,
   projectRoot: string,
   checks: CheckResult[],
-  frameworkRoot?: string,
   capabilityReport?: CapabilityResolutionReport,
 ): ScriptReport {
-  void _harnessRoot;
-  void frameworkRoot;
   const finalized = finalizeChecksForScriptReport(checks, phase, feature, projectRoot);
   const summary = computeSummary(finalized.checks);
   const report: ScriptReport = {
@@ -144,7 +143,19 @@ export function generateScriptReport(
   if (finalized.compat_expired) {
     report.compat_expired = finalized.compat_expired;
   }
+  return report;
+}
 
+export function generateScriptReport(
+  _harnessRoot: string,
+  phase: Phase,
+  feature: string,
+  projectRoot: string,
+  checks: CheckResult[],
+  frameworkRoot?: string,
+  capabilityReport?: CapabilityResolutionReport,
+): ScriptReport {
+  const report = buildScriptReport(phase, feature, projectRoot, checks, capabilityReport);
   const dir = ensureReportDir(projectRoot, feature, phase, frameworkRoot);
   const reportPath = path.join(dir, 'script-report.json');
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2), 'utf-8');
@@ -155,9 +166,13 @@ export function generateScriptReport(
 /** Request reports reuse checks/summary serializers without Feature compatibility or closure writes. */
 export function generateRequestScriptReport(ctx: RequestCheckContext, checks: CheckResult[]): { verdict: Verdict; reportPath: string } {
   const finalized = checks.map(check => ({ ...check, suggestion: resolveEffectiveSuggestion(check, ctx.phase) }));
-  const summary = computeSummary(finalized);
-  if (finalized.some(check => check.status === 'FAIL' || (check.status === 'SKIP' && check.severity === 'BLOCKER' && (check.structured as { applicability?: unknown } | undefined)?.applicability !== 'not_applicable'))) summary.verdict = summary.verdict === 'INCOMPLETE' ? 'INCOMPLETE' : 'FAIL';
+  const summary = { ...computeSummary(finalized), disclosed_failures: collectDisclosedFailures(finalized) };
+  const disposition = resolveCurrentDisposition(readCurrentDispositionInput({ endpoint: 'request', projectRoot: ctx.projectRoot,
+    request: ctx.request, checks: finalized, summary }));
+  if (!disposition.completionEligible) summary.verdict = summary.verdict === 'INCOMPLETE' ? 'INCOMPLETE' : 'FAIL';
   const common = { subject: 'request', completion_target: 'request', request_sha256: ctx.request.request_sha256, phase: ctx.phase,
+    ...(ctx.request.intake_context ? { request_origin: `${ctx.request.intake_context.session_id}#${ctx.request.intake_context.user.id}` } : {}),
+    ...(ctx.request.origin_gap ? { origin_gap: ctx.request.origin_gap } : {}),
     requested_result: ctx.request.requested_result, baseline: ctx.request.baseline, targets: ctx.request.bindings,
     timestamp: new Date().toISOString(), project_root: ctx.projectRoot };
   const inputBindings = Object.fromEntries(Object.entries(ctx.resolvedInputs.values).filter(([, value]) => value.state === 'resolved').map(([id, value]) => [id, value.state === 'resolved' ? value.binding : null]));
@@ -291,9 +306,7 @@ export function projectScriptReportForPrompt(report: ScriptReport): Record<strin
 /**
  * D1/D2（plan 3a7f9c12）：产品失败诊断的 prompt 正文段。
  *
- * 只说三件事，且每件都必须说：①本轮脚本是 FAIL 而不是 PASS，你被叫来是**因为**它 FAIL；
- * ②哪几条失败是被放行的（其余 BLOCKER FAIL 一条都不存在、BLOCKER SKIP 只剩已标注为已确认不适用的，
- *   否则本轮根本不会有 request）；
+ * 只披露实际资格理由和本轮诊断对象，不把 request 资格冒充其它检查通过。
  * ③报告终态 = 本轮**语义检查**的结论，与产品是否合格是两件事——不得为了"和产品一致"
  * 就把终态改成 FAIL 并跳过检查项（D3 的终态口径：blocker_count 只数本轮语义 BLOCKER FAIL）。
  */
@@ -302,19 +315,17 @@ function formatRepairDiagnosisNotice(
 ): string {
   const ids = diagnosis.failedCheckIds.length > 0 ? diagnosis.failedCheckIds.join('、') : '(未列出)';
   return [
-    '## 本轮为产品失败诊断（脚本 verdict=FAIL）',
+    '## 本轮为独立问题诊断',
     '',
-    '本轮脚本门禁**未通过**，request 仍被签发——这是框架对已复现的两类可诊断产品失败开的窄例外：',
+    '本轮 request 用于核验下列具体问题，签发本身不代表脚本门禁或产品已通过：',
     `**${diagnosis.reason}**`,
     '',
-    `- 已被放行的失败检查项：\`${ids}\`。除它们之外本轮没有其它 BLOCKER 级 FAIL，也没有未标注为已确认不适用的 BLOCKER SKIP` +
-      '（报告里带 `structured.applicability=not_applicable` 的 SKIP 是判据不适用，不是没跑完），也没有未解析的 capability——',
-    '  否则不会有这份 request（材料/环境问题的出路是先修材料/环境，不是叫审查员来看半份材料）。',
-    '- 上方内嵌的脚本报告是**原始 FAIL 报告**，没有被投影成 PASS。产品的 FAIL 与 open 闭环状态本轮不变，',
-    '  你的结论也**不会**改变它们：修好产品才能 PASS。',
+    `- 本轮独立诊断检查项：\`${ids}\`。其它 FAIL、SKIP、未解析输入以及设备/编译/工具缺口以原报告为准，仍须分别处理。`,
+    '- 上方内嵌的脚本报告保留原始比较事实与执行结果，不投影成 PASS。当前材料下核实的反证可以关闭对应待办，',
+    '  但不能覆盖其它未解决的问题或缺失执行；缺可信原件时明确未知并完整核验。',
     '',
     '**你要做的**：照常按「语义检查项」逐项评估并给出汇总表——尤其是与这些失败直接相关的项',
-    '（review：问题清单逐条是否属实、论证是否成立；ut：测试是否真在驱动业务、断言是否有价值）。',
+    '（问题清单逐条是否属实、论证是否成立；测试是否驱动适用业务、断言与失败路径是否充分）。',
     '',
     '**终态块的口径不变**：`blocker_count` = **本轮你自己的语义检查**中 severity=BLOCKER 且 status=FAIL 的项数，',
     '`verdict=PASS` 当且仅当它为 0。**不要**因为产品失败就把终态写成 FAIL——那是把产品裁决塞进报告裁决，',
@@ -353,6 +364,8 @@ export function assembleAIPrompt(
      * 语义检查结论，产品执行 FAIL 原样保留"。缺省 = 常规验证请求，正文一字不变。
      */
     repairDiagnosis?: { failedCheckIds: readonly string[]; reason: string };
+    /** plan 33784ed1 §3.3：目标简报渲染文本（renderGoalBrief 输出），追加在正文尾部；同一文本进材料摘要。 */
+    goalBrief?: string;
   },
 ): string {
   const template = loadVerifierPromptTemplate(harnessRoot, phase, resolvedProfile, options?.verifierPromptRel);
@@ -424,6 +437,9 @@ export function assembleAIPrompt(
   if (options?.extensionInstructions) {
     tail += `\n\n---\n\n${options.extensionInstructions}\n`;
   }
+  if (options?.goalBrief) {
+    tail += `\n\n---\n\n${options.goalBrief}\n`;
+  }
 
   // 占位符填充抽成纯函数：写盘文本与规范化摘要**同一次装配、同一套输入**产出，
   // 只有两处 runner telemetry 取不同值。这样"规范化"不再是事后对自由文本猜正则，
@@ -489,6 +505,8 @@ export function generateMergedReport(
   scriptReport: ScriptReport,
   aiReportContent?: string,
   frameworkRoot?: string,
+  /** plan f7045213 §5：阶段共享结论（与 summary.verdict 同源）；缺省回退脚本报告自身结论（旧调用方）。 */
+  verdict: Verdict = scriptReport.summary.verdict,
 ): string {
   const lines: string[] = [];
 
@@ -510,7 +528,7 @@ export function generateMergedReport(
   lines.push(`| WARN | ${scriptReport.summary.warn} |`);
   lines.push(`| SKIP | ${scriptReport.summary.skip} |`);
   lines.push(`| BLOCKER 数 | ${scriptReport.summary.blockers} |`);
-  lines.push(`| **裁定** | **${scriptReport.summary.verdict}** |`);
+  lines.push(`| **裁定** | **${verdict}** |`);
   lines.push('');
 
   // 失败项明细
@@ -628,14 +646,24 @@ export function generateMergedReport(
   // 最终裁定
   lines.push('## 三、最终裁定');
   lines.push('');
-  if (scriptReport.summary.verdict === 'FAIL') {
-    lines.push(`**FAIL** — 存在 ${scriptReport.summary.blockers} 个 BLOCKER 级别失败，必须修复后重新验证。`);
+  // plan f7045213 返修 R3：按传入结论分支；blockedFacts 只选 INCOMPLETE 的原因文案（旧调用方不传结论时，
+  // legacy PASS 遇 blocked capability 仍按 INCOMPLETE 写——只会更严，不会把非 PASS 写成 PASS）。
+  if (verdict === 'FAIL') {
+    lines.push(
+      scriptReport.summary.blockers > 0
+        ? `**FAIL** — 存在 ${scriptReport.summary.blockers} 个 BLOCKER 级别失败，必须修复后重新验证。`
+        : '**FAIL** — 报告合法性或质量轴判定未通过（见 summary.json 的 report_validity / quality_axes），必须修复后重新验证。',
+    );
   } else if (blockedFacts.length > 0) {
     // review P2：已列出 blocked capability（脚本 checks 或无 BLOCKER，但 capability unresolved）——
     // 不得宣告 PASS，明确阶段 INCOMPLETE、先补输入重跑（不改 ScriptReport 领域模型）。
     lines.push(
       `**INCOMPLETE** — 脚本 Harness 未发现 BLOCKER 失败，但存在 ${blockedFacts.length} 个 blocked capability（见上「blocked capability 明细」）；` +
       '阶段因 capability 输入未解析为 INCOMPLETE，请补齐输入后重跑当前 phase。',
+    );
+  } else if (verdict === 'INCOMPLETE') {
+    lines.push(
+      '**INCOMPLETE** — 本阶段未就绪（如外部设备或环境阻塞），不得视为通过；按 summary.json 的 next_action 处理后重跑当前 phase。',
     );
   } else {
     lines.push('**PASS** — 脚本 Harness 未发现 BLOCKER 失败。注意：脚本 PASS 不代表阶段闭环完成，仍必须继续执行 verifier 语义验证并填写 completion receipt。');
@@ -656,6 +684,8 @@ export function generateMergedReport(
 export interface PrintReportOptions {
   failuresOnly?: boolean;
   maxDetailsChars?: number;
+  /** plan f7045213 §5：阶段共享结论；缺省回退脚本报告自身结论。 */
+  verdict?: Verdict;
 }
 
 export function printReportToConsole(report: ScriptReport, options: PrintReportOptions = {}): void {
@@ -707,10 +737,11 @@ export function printReportToConsole(report: ScriptReport, options: PrintReportO
   console.log(`${'─'.repeat(60)}`);
   console.log(`  Total: ${report.summary.total}  |  PASS: ${report.summary.pass}  |  FAIL: ${report.summary.fail}  |  WARN: ${report.summary.warn}  |  SKIP: ${report.summary.skip}`);
   console.log(`  Blockers: ${report.summary.blockers}`);
+  const verdict = options.verdict ?? report.summary.verdict;
   const verdictLabel =
-    report.summary.verdict === 'PASS'
+    verdict === 'PASS'
       ? (chalk ? chalk.green('PASS') : 'PASS')
-      : report.summary.verdict === 'INCOMPLETE'
+      : verdict === 'INCOMPLETE'
         ? (chalk ? chalk.yellow('INCOMPLETE') : 'INCOMPLETE')
         : (chalk ? chalk.red('FAIL') : 'FAIL');
   console.log(`  Verdict: ${verdictLabel}`);
@@ -736,7 +767,7 @@ function isUtDeviceExternalBlocked(checks: CheckResult[]): boolean {
 }
 
 function areBlockersOnlyUtDeviceExternal(checks: CheckResult[]): boolean {
-  const blockerFails = checks.filter(c => c.severity === 'BLOCKER' && c.status === 'FAIL');
+  const blockerFails = checks.filter(c => isBlockingCheck(c));
   if (blockerFails.length === 0) return false;
   return blockerFails.every(
     c =>
@@ -753,7 +784,7 @@ function isTestingDeviceExternalBlocked(checks: CheckResult[]): boolean {
 }
 
 function areBlockersOnlyTestingDeviceExternal(checks: CheckResult[]): boolean {
-  const blockerFails = checks.filter(c => c.severity === 'BLOCKER' && c.status === 'FAIL');
+  const blockerFails = checks.filter(c => isBlockingCheck(c));
   if (blockerFails.length === 0) return false;
   return blockerFails.every(
     c =>
@@ -769,7 +800,7 @@ function areBlockersOnlyTestingDeviceExternal(checks: CheckResult[]): boolean {
  * 后续由 dependency policy 走 defer_external 分支，而不是回去让 agent 改代码。
  */
 function areBlockersOnlyCodingBuildExternal(checks: CheckResult[]): boolean {
-  const blockerFails = checks.filter(c => c.severity === 'BLOCKER' && c.status === 'FAIL');
+  const blockerFails = checks.filter(c => isBlockingCheck(c));
   if (blockerFails.length === 0) return false;
   return blockerFails.every(
     c =>
@@ -784,7 +815,7 @@ function areBlockersOnlyCodingBuildExternal(checks: CheckResult[]): boolean {
  * evidence, which deliberately has no externalBlocked classification.
  */
 function areBlockersOnlyCapabilityMissing(checks: CheckResult[]): boolean {
-  const blockerFails = checks.filter(c => c.severity === 'BLOCKER' && c.status === 'FAIL');
+  const blockerFails = checks.filter(c => isBlockingCheck(c));
   if (blockerFails.length === 0) return false;
   return blockerFails.every(
     c => c.blocking_class === 'externalBlocked' && c.failure_kind === 'capability_missing',
@@ -795,11 +826,11 @@ function areBlockersOnlyCapabilityMissing(checks: CheckResult[]): boolean {
 export function resolveVerdictFromChecks(checks: CheckResult[]): Verdict {
   let blockers = 0;
   for (const check of checks) {
-    if (check.status === 'FAIL' && check.severity === 'BLOCKER') {
+    if (isBlockingCheck(check)) {
       blockers++;
     }
   }
-  if (blockers === 0) return 'PASS';
+  if (blockers === 0) return checks.some(check => isRequiredCheckGap(check)) ? 'INCOMPLETE' : 'PASS';
   if (areBlockersOnlyUtDeviceExternal(checks) && isUtDeviceExternalBlocked(checks)) {
     return 'INCOMPLETE';
   }
@@ -833,10 +864,10 @@ function computeSummary(checks: CheckResult[]): ReportSummary {
       case 'WARN': summary.warn++; break;
       case 'SKIP': summary.skip++; break;
     }
-    if (check.status === 'FAIL' && check.severity === 'BLOCKER') {
-      summary.blockers++;
-    }
   }
+  // plan f7045213 §4.4 返修 R4：公开的阻断计数取有效阻断集合（谓词 + 聚合去重），与 summary 的阻断清单同源；
+  // 结论仍按全部阻断检查求值（聚合项照常参与），总数与 FAIL 数保持原始 checks。
+  summary.blockers = dropRedundantAggregates(checks.filter(c => isBlockingCheck(c))).length;
 
   summary.verdict = resolveVerdictFromChecks(checks);
 

@@ -1,7 +1,7 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as YAML from 'yaml';
+import { parseYamlCached } from './yaml-read-cache';
 import { featuresDirPath } from '../../config';
 import {
   BLUEPRINT_ARTIFACT,
@@ -14,7 +14,7 @@ import {
   nonEmptyString,
 } from './component-blueprint-model';
 import { resolveBlueprintTarget } from './blueprint-addressing';
-import { blockerIssues, validateComponentBlueprint } from './component-blueprint-validator';
+import { blockerIssues, validateComponentBlueprint, type ComponentBlueprintValidationContext } from './component-blueprint-validator';
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
@@ -103,7 +103,7 @@ export function loadCanonicalBlueprint(projectRoot: string, blueprintId: string)
   const bytes = fs.readFileSync(canonicalPath);
   let parsed: unknown;
   try {
-    parsed = YAML.parse(bytes.toString('utf8'));
+    parsed = parseYamlCached(canonicalPath, bytes.toString('utf8'));
   } catch (error) {
     throw new ComponentBlueprintResolutionError(
       'component_blueprint_yaml_invalid',
@@ -123,12 +123,11 @@ export function loadCanonicalBlueprint(projectRoot: string, blueprintId: string)
   return { canonicalPath, bytes, artifactSha256: sha256Bytes(bytes), blueprint };
 }
 
-export function resolveComponentBlueprintRef(projectRoot: string, value: unknown): ResolvedBlueprintTarget {
+function assertLoadedBlueprintRefIdentity(loaded: ReturnType<typeof loadCanonicalBlueprint>, value: unknown): ComponentBlueprintRef {
   const ref = validateComponentBlueprintRefShape(value);
   // M5A §4.1：定位键换成 blueprint_id；随后要求路径段 blueprint_id、YAML 根
   // blueprint_id、ref blueprint_id 三方一致，且 YAML 根 component_id 与 ref
   // component_id 一致（component_id 只做所有权/一致性核验，不再充当路径键）。
-  const loaded = loadCanonicalBlueprint(projectRoot, ref.blueprint_id);
   const pathBlueprintId = path.basename(path.dirname(path.dirname(loaded.canonicalPath)));
   const identityMismatches: string[] = [];
   if (pathBlueprintId !== ref.blueprint_id) {
@@ -154,9 +153,31 @@ export function resolveComponentBlueprintRef(projectRoot: string, value: unknown
   if (identityMismatches.length > 0) {
     throw new ComponentBlueprintResolutionError('component_blueprint_identity_mismatch', identityMismatches.join('；'));
   }
+  return ref;
+}
+
+/** 已加载 canonical 的精确身份/目标核心；纯展示复用它，施工入口继续下方完整校验。 */
+export function resolveComponentBlueprintRefFromLoaded(loaded: ReturnType<typeof loadCanonicalBlueprint>, value: unknown): ResolvedBlueprintTarget {
+  const ref = assertLoadedBlueprintRefIdentity(loaded, value);
+  return { canonicalPath: loaded.canonicalPath, blueprint: loaded.blueprint, target: resolveBlueprintTarget(loaded.blueprint, ref.target), ref };
+}
+
+/** Unpublished targets use candidate content while retaining the locked canonical source identity. */
+export function resolveBlueprintCandidateRefFromLoaded(loaded: ReturnType<typeof loadCanonicalBlueprint>, blueprint: BlueprintRecord,
+  value: unknown): ResolvedBlueprintTarget {
+  const ref = assertLoadedBlueprintRefIdentity(loaded, value);
+  return { canonicalPath: loaded.canonicalPath, blueprint, target: resolveBlueprintTarget(blueprint, ref.target), ref };
+}
+
+export function resolveComponentBlueprintRef(projectRoot: string, value: unknown, snapshot?: ReturnType<typeof loadCanonicalBlueprint>,
+  context: ComponentBlueprintValidationContext = {}): ResolvedBlueprintTarget {
+  const ref = validateComponentBlueprintRefShape(value);
+  const loaded = snapshot ?? loadCanonicalBlueprint(projectRoot, ref.blueprint_id);
+  assertLoadedBlueprintRefIdentity(loaded, ref);
   const validationIssues = blockerIssues(validateComponentBlueprint(loaded.blueprint, {
-    projectRoot,
+    ...context, projectRoot,
     canonicalPath: loaded.canonicalPath,
+    sourceCache: new Map([[path.resolve(loaded.canonicalPath), loaded.blueprint]]),
   }));
   if (validationIssues.length > 0) {
     throw new ComponentBlueprintResolutionError(
@@ -164,6 +185,5 @@ export function resolveComponentBlueprintRef(projectRoot: string, value: unknown
       `canonical blueprint 未通过 schema/完整性门：${validationIssues.map(item => `${item.id}@${item.path}`).join(', ')}。`,
     );
   }
-  const target = resolveBlueprintTarget(loaded.blueprint, ref.target);
-  return { canonicalPath: loaded.canonicalPath, blueprint: loaded.blueprint, target, ref };
+  return { canonicalPath: loaded.canonicalPath, blueprint: loaded.blueprint, target: resolveBlueprintTarget(loaded.blueprint, ref.target), ref };
 }

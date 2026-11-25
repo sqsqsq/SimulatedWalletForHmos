@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFile, spawn, type ChildProcess } from 'child_process';
 import crossSpawn from 'cross-spawn';
+import { loadFrameworkConfig } from '../../config';
 import type { UnattendedContract } from './goal-manifest';
 import type { GoalCapabilitySpec } from './goal-adapter-capability';
 import {
@@ -17,13 +18,19 @@ import {
 } from './headless-binary-resolve';
 import { MAISON_GOAL_HEADLESS_ENV, MAISON_GOAL_MODEL_PIN_ENV, applyGoalModelPinEnv } from './phase-state';
 import { deleteEnvKeyCaseInsensitive, sanitizeSpawnEnv, stripTrustAnchorEnv } from './process-integrity';
-import { deriveInvokeUsage, type AgentInvokeUsage, type UsageCaptureMethod } from './usage-capture';
+import { createDshUsageCapture, deriveInvokeUsage, type AgentInvokeUsage, type UsageCaptureMethod } from './usage-capture';
+import { parseEnvelopeLine } from './claude-envelope';
+import { parseAdapterModelBinding, assertModelReplay, dshModelSource, dshModelHome, openCodeModelHome, verifyOpenCodeModelConfig, verifyNativeModelCatalogue, nativeOpenCodeModelMismatch, assertClaudeModelRoute, modelMismatch, observedMainModel, verifyDshModelConfig, nativeDshModelMismatch, nativeCodexSessionFile, nativeCodexModelMismatch } from './adapter-model';
 import {
   createCodexTerminalScanner,
+  extractProviderSessionId,
+  extractProviderFinalText,
+  isProviderToolResult,
   resolveTerminalEventParser,
   type CodexTerminalScanner,
   type TerminalEventParser,
 } from './codex-terminal-events';
+export { readProviderSessionId, extractProviderSessionId, extractProviderFinalText } from './codex-terminal-events';
 
 export interface InvokeTemplateVars {
   PROMPT_FILE: string;
@@ -44,7 +51,7 @@ export interface InvokeTemplateVars {
  */
 export const PROMPT_ARGV_SENTINEL = '__MAISON_GOAL_PROMPT_ARGV__';
 
-const KNOWN_STRUCTURED_ADAPTERS = new Set(['claude', 'codeagent', 'codex', 'cursor', 'chrys', 'opencode']);
+const KNOWN_STRUCTURED_ADAPTERS = new Set(['claude', 'codeagent', 'codex', 'cursor', 'chrys', 'opencode', 'deepseek-harness']);
 
 /** Cursor headless CLI candidates (official name first). */
 export const CURSOR_HEADLESS_BINARY_CANDIDATES = ['cursor-agent', 'agent'] as const;
@@ -54,6 +61,7 @@ export const CODEAGENT_HEADLESS_BINARY_CANDIDATES = ['codeagentcli'] as const;
 export const CODEX_HEADLESS_BINARY_CANDIDATES = ['codex'] as const;
 export const CHRYS_HEADLESS_BINARY_CANDIDATES = ['chrys'] as const;
 export const OPENCODE_HEADLESS_BINARY_CANDIDATES = ['opencode'] as const;
+export const DEEPSEEK_HARNESS_BINARY_CANDIDATES = ['dsh'] as const;
 
 export const STRUCTURED_BINARY_CANDIDATES: Record<string, readonly string[]> = {
   cursor: CURSOR_HEADLESS_BINARY_CANDIDATES,
@@ -62,17 +70,28 @@ export const STRUCTURED_BINARY_CANDIDATES: Record<string, readonly string[]> = {
   codex: CODEX_HEADLESS_BINARY_CANDIDATES,
   chrys: CHRYS_HEADLESS_BINARY_CANDIDATES,
   opencode: OPENCODE_HEADLESS_BINARY_CANDIDATES,
+  'deepseek-harness': DEEPSEEK_HARNESS_BINARY_CANDIDATES,
 };
 
-// 【静默看门狗生产链已删除 · plan e6b3f8d2 t1】
-// 旧常量恒 0（禁用）且 goal-runner 从未 opt-in——一个从未生效的「第二判死权威」。
-// 静默本就不是判据（cursor-agent「streams little until phase end」），FAIL 收口改由
-// adapter terminal 契约承接（见 codex-terminal-events.ts）。
-// 读侧兼容保留：AgentInvokeResult 的 `silent_killed?` 字段与历史事件仍可读，
-// 但**写侧不再产生**该事实（源码锚定回归见 goal-runner-hardening.unit.test.ts）。
+/**
+ * No native stdout/stderr growth for this window interrupts an uncompleted invocation.
+ * The default remains twice the 45min coding build limit. Public tool overrides extend
+ * the window below; active output still refreshes it rather than spending an author budget.
+ */
+export const DEFAULT_AGENT_OUTPUT_IDLE_MS = 90 * 60 * 1000;
 
-/** t4 完成观测：探针轮询间隔。2s 足够快（相对 90min 预算），又不至于打爆磁盘 IO。 */
-export const DEFAULT_COMPLETION_POLL_MS = 2_000;
+export function resolveAgentOutputIdleMs(projectRoot: string): number {
+  try {
+    const toolchain = loadFrameworkConfig(projectRoot).toolchain;
+    const toolTimeoutMs = Math.max(toolchain?.hvigor?.timeoutMs ?? 0, toolchain?.hmosDevice?.aaTestTimeoutMs ?? 0);
+    // Retain 45min for the other checks/reporting: above the known 43.1min regression wall time,
+    // not a claim that it bounds every tool's silence. Defaults 45min/15min still fit the 90min floor.
+    return Math.max(DEFAULT_AGENT_OUTPUT_IDLE_MS, toolTimeoutMs + DEFAULT_AGENT_OUTPUT_IDLE_MS / 2);
+  } catch {
+    return DEFAULT_AGENT_OUTPUT_IDLE_MS;
+  }
+}
+
 /**
  * t4 完成观测：命中后等待自然退出的宽限。
  * 给足一个正常收尾的窗口（agent 可能正在写最后一行日志），又不至于把"已完成"拖长——
@@ -268,7 +287,19 @@ export function agentStderrLogPath(outputLogPath: string): string {
   return path.join(path.dirname(outputLogPath), 'agent-stderr.log');
 }
 
+/** Prefer pure stdout originals; the mixed log is needed only when the memory tail may be truncated. */
+export function readInvokeFinalText(stdout: string, outputLogPath: string, adapterName?: string): string | null {
+  const events = agentEventsLogPath(outputLogPath);
+  const raw = fs.existsSync(events) ? fs.readFileSync(events, 'utf8')
+    : stdout.length >= INVOKE_OUTPUT_MEMORY_CAP && fs.existsSync(outputLogPath) ? fs.readFileSync(outputLogPath, 'utf8') : stdout;
+  return extractProviderFinalText(raw, adapterName);
+}
+
 export interface HeadlessInvokePlan {
+  /** Native readonly intent set by the visual plan builder, not a generic verifier request. */
+  readonlyInvocation?: true;
+  /** Projection of the responsibility's frozen pin, never an independent selection. */
+  modelBinding?: string;
   argv: string[];
   /** Pass prompt via stdin (generic pipe adapters only). */
   useStdin?: boolean;
@@ -285,6 +316,146 @@ export interface HeadlessInvokePlan {
    * codeagentcli 不含任何旧子串，纯猜测会误报成 cursor。
    */
   adapterName?: string;
+}
+
+/** Native continuation changes transport only; it never declares business completion. */
+export function withProviderSession(plan: HeadlessInvokePlan, providerSessionId?: string): HeadlessInvokePlan {
+  if (!providerSessionId) return plan;
+  if (providerSessionId.trim() !== providerSessionId || !/^[a-zA-Z0-9][a-zA-Z0-9_.:-]*$/.test(providerSessionId)) {
+    throw new Error('provider_session_id_invalid');
+  }
+  const argv = [...plan.argv];
+  if (plan.adapterName === 'codex') {
+    const execIndex = argv.indexOf('exec');
+    if (execIndex < 0) throw new Error('provider_session_resume_unsupported: codex exec missing');
+    // resume has no --sandbox flag; pass the current sandbox through this invocation's config.
+    const sandboxIndex = argv.findIndex(argument => argument === '--sandbox' || argument === '-s');
+    if (sandboxIndex >= 0) {
+      const mode = argv[sandboxIndex + 1];
+      argv.splice(sandboxIndex, 2);
+      argv.splice(argv.indexOf('exec'), 0, '-c', `sandbox_mode="${mode}"`);
+    }
+    argv.splice(argv.indexOf('exec') + 1, 0, 'resume');
+    argv.push(providerSessionId, '-');
+  } else if (plan.adapterName === 'claude') {
+    argv.push('--resume', providerSessionId);
+  } else if (plan.adapterName === 'deepseek-harness') {
+    argv.push('--session-id', providerSessionId);
+  } else if (plan.adapterName === 'opencode') {
+    argv.push('--session', providerSessionId);
+  } else {
+    throw new Error(`provider_session_resume_unsupported: ${plan.adapterName ?? 'custom'}`);
+  }
+  return { ...plan, argv, label: `${plan.label} [resume ${providerSessionId}]` };
+}
+
+/** Shared by main work and independent roles, after permission and native-session composition. */
+export function withFrozenModelArguments(plan: HeadlessInvokePlan): HeadlessInvokePlan {
+  const pin = parseAdapterModelBinding(plan.adapterName ?? 'generic', plan.modelBinding);
+  if (!pin || pin.adapter === 'deepseek-harness') return plan;
+  const argv = [...plan.argv], modelFlag = pin.adapter === 'opencode' ? '-m' : '--model';
+  const modelAt = argv.findIndex(arg => arg === modelFlag);
+  const native = modelAt >= 0 || pin.adapter === 'codex' && argv.includes('exec') || pin.adapter === 'opencode' && argv.includes('run');
+  if (!native) return plan;
+  const option = (key: string, value: string): void => {
+    const at = argv.indexOf(key); if (at >= 0) argv[at + 1] = value; else argv.push(key, value);
+  };
+  const config = (key: string, value: string): void => {
+    const at = argv.findIndex((arg, index) => arg === '-c' && argv[index + 1]?.startsWith(`${key}=`));
+    const setting = `${key}=${JSON.stringify(value)}`;
+    if (at >= 0) argv[at + 1] = setting; else argv.push('-c', setting);
+  };
+  option(modelFlag, pin.value);
+  if (pin.adapter === 'codex') {
+    if (pin.provider) config('model_provider', pin.provider);
+    if (pin.reasoning_effort) config('model_reasoning_effort', pin.reasoning_effort);
+  } else if (pin.reasoning_effort) option(pin.adapter === 'opencode' ? '--variant' : '--effort', pin.reasoning_effort);
+  return { ...plan, argv };
+}
+
+export function providerSessionRebuildReason(adapterName: string, options: {
+  previousAuthorization?: UnattendedContract;
+  authorization?: UnattendedContract;
+  instructionsChanged?: boolean;
+}): string | undefined {
+  if (!['codex', 'claude', 'deepseek-harness', 'opencode'].includes(adapterName)) return 'provider_session_resume_unsupported';
+  const key = (value: UnattendedContract | undefined): string => JSON.stringify(value && {
+    write_mode: value.write_mode, approval_mode: value.approval_mode,
+    ...(value.allowed_tools === undefined ? {} : { allowed_tools: [...value.allowed_tools].sort() }),
+  });
+  if (key(options.previousAuthorization) !== key(options.authorization)) return 'provider_session_authorization_changed';
+  if (adapterName === 'claude' && options.instructionsChanged) return 'provider_session_system_prompt_snapshot';
+  return undefined;
+}
+
+/** Exact provider failures sampled by P1; authentication and service failures never match. */
+export function providerSessionUnavailableReason(
+  adapterName: string | undefined, id: string, stdout: string, stderr: string,
+): string | undefined {
+  if (adapterName === 'codex' && stderr.split(/\r?\n/).some(line => line.trim()
+    === `Error: thread/resume: thread/resume failed: no rollout found for thread id ${id} (code -32600)`)) {
+    return 'provider_session_not_found';
+  }
+  for (const line of stdout.split(/\r?\n/)) {
+    const record = parseEnvelopeLine(line);
+    if (adapterName === 'claude' && record?.type === 'result' && record.is_error === true
+      && Array.isArray(record.errors) && record.errors.includes(`No conversation found with session ID: ${id}`)) {
+      return 'provider_session_not_found';
+    }
+    if (adapterName === 'deepseek-harness' && record?.type === 'error'
+      && record.message === `session "${id}" does not exist; omit --session-id to start a new Session`) {
+      return 'provider_session_not_found';
+    }
+  }
+  return undefined;
+}
+
+export function withInvocationAuthorization(plan: HeadlessInvokePlan, options: AgentInvokeOptions): HeadlessInvokePlan {
+  const readonly = options.readonlyInvocation === true && ['codex', 'claude'].includes(plan.adapterName ?? '')
+    || plan.adapterName === 'deepseek-harness' && plan.readonlyInvocation === true;
+  if (!options.authorization && !readonly) return plan;
+  const argv = [...plan.argv];
+  const authority = options.authorization;
+  const fullAccess = !readonly && authority?.write_mode === 'full-access';
+  if (!readonly && authority?.approval_mode !== 'never') {
+    throw new Error('provider_authorization_unsupported: headless requires explicit non-interactive authorization');
+  }
+  if (plan.adapterName === 'codex') {
+    const execIndex = argv.indexOf('exec');
+    if (execIndex < 0) throw new Error('provider_authorization_unsupported: codex exec missing');
+    const sandbox = readonly ? 'read-only' : fullAccess ? 'danger-full-access' : 'workspace-write';
+    const sandboxIndex = argv.findIndex(argument => argument === '--sandbox' || argument === '-s');
+    if (sandboxIndex < 0) argv.splice(execIndex + 1, 0, '--sandbox', sandbox);
+    else argv[sandboxIndex + 1] = sandbox;
+    const approvalIndex = argv.findIndex(argument => argument === '--ask-for-approval' || argument === '-a');
+    if (approvalIndex >= 0) argv[approvalIndex + 1] = 'never';
+    else argv.splice(argv.indexOf('exec'), 0, '--ask-for-approval', 'never');
+    if (authority?.allowed_tools !== undefined) throw new Error('provider_authorization_unsupported: codex tool allowlist');
+  } else if (plan.adapterName === 'claude') {
+    if (!readonly && !fullAccess && (!authority?.allowed_tools
+      || authority.allowed_tools.some(tool => !['Read', 'Glob', 'Grep'].includes(tool)))) {
+      throw new Error('provider_authorization_unsupported: Claude has no verified workspace filesystem sandbox');
+    }
+    const bypass = argv.indexOf('--dangerously-skip-permissions');
+    if (bypass >= 0) argv.splice(bypass, 1);
+    if (fullAccess) argv.push('--dangerously-skip-permissions');
+    else argv.push('--permission-mode', 'dontAsk');
+    if (readonly) argv.push('--tools', 'Read,Glob,Grep', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}');
+    else if (authority?.allowed_tools) argv.push('--tools', authority.allowed_tools.join(','),
+      '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}');
+  } else if (plan.adapterName === 'deepseek-harness') {
+    const patch = path.resolve(__dirname, '../../../agents/deepseek-harness/visual-readonly-patch.yaml');
+    const lastPatch = argv.lastIndexOf('--patch');
+    if (readonly && (lastPatch < 0 || path.resolve(argv[lastPatch + 1] ?? '') !== patch)) {
+      throw new Error('provider_authorization_unsupported: deepseek-harness visual readonly patch must be last');
+    }
+    if (!readonly && !fullAccess || authority?.allowed_tools !== undefined) {
+      throw new Error('provider_authorization_unsupported: deepseek-harness requires a verified permission patch');
+    }
+  } else if (readonly || !fullAccess || authority?.allowed_tools !== undefined) {
+    throw new Error(`provider_authorization_unsupported: ${plan.adapterName ?? 'custom'}`);
+  }
+  return { ...plan, argv };
 }
 
 function attachResolvedBinary(
@@ -327,13 +498,11 @@ function claudeArgv(
   modelPin?: string,
 ): string[] {
   const argv = [binary, '-p', '--dangerously-skip-permissions'];
-  // t3a/f7a3d9c2：adapter 声明 structured_events → stdout 输出 NDJSON 事件流（含
+  // Claude 内核恒输出 NDJSON 终态流；已有 structured_events 工具审计继续消费其中的
   // tool_use/Read 验读记录，t3b runner attestation 的证据源）。2026-07-11 宿主实采样本
   // 确认事件形状；agent-output.log 仍为混合人读投影（三文件分流见 spawnHeadlessAsync），
   // 断流哨兵已适配结构化信封（goal-headless-sentinel parseClaudeStreamJsonApiError）。
-  if (toolEventProvenance === 'structured_events') {
-    argv.push('--output-format', 'stream-json', '--verbose');
-  }
+  argv.push('--output-format', 'stream-json', '--verbose');
   // plan d7f3a9c4 t1：显式模型钉回放（claude 与 codeagent 共用本函数，仅 binary 不同）。
   if (modelPin !== undefined) {
     argv.push('--model', modelPin);
@@ -378,7 +547,7 @@ export function cursorHeadlessPlan(
   modelPin?: string,
 ): HeadlessInvokePlan {
   const binary = resolved?.path ?? 'cursor-agent';
-  const argv = [binary, '-p', '--force', '--trust'];
+  const argv = [binary, '-p', '--force', '--trust', '--output-format', 'stream-json'];
   // plan d7f3a9c4 t1：显式模型钉回放——`--model <v>`。
   if (modelPin !== undefined) {
     argv.push('--model', modelPin);
@@ -467,13 +636,15 @@ export function opencodeHeadlessPlan(
   modelPin?: string,
   resolvedBinary?: ResolvedHeadlessBinary | null,
 ): HeadlessInvokePlan {
+  const pin = parseAdapterModelBinding('opencode', modelPin);
   const resolved = resolvedBinary ?? resolveHeadlessBinary([...OPENCODE_HEADLESS_BINARY_CANDIDATES]);
   const binary = resolved?.path ?? 'opencode';
-  const argv = [binary, 'run', '--dangerously-skip-permissions', '--dir', vars.PROJECT_ROOT];
+  const argv = [binary, 'run', '--auto', '--format', 'json', '--dir', vars.PROJECT_ROOT];
   // plan d7f3a9c4 t1：显式模型钉回放——opencode 用 `-m <v>`（非 --model）。
   if (modelPin !== undefined) {
-    argv.push('-m', modelPin);
+    argv.push('-m', pin!.value);
   }
+  if (pin?.reasoning_effort) argv.push('--variant', pin.reasoning_effort);
   const base = path.basename(binary);
   return {
     argv,
@@ -481,7 +652,7 @@ export function opencodeHeadlessPlan(
     stdin: promptContent,
     resolvedBinary: resolved,
     useCrossSpawn: shouldUseCrossSpawn(resolved),
-    label: `${base} run --dangerously-skip-permissions --dir … (stdin)`,
+    label: `${base} run --auto --format json --dir … (stdin)`,
   };
 }
 
@@ -554,26 +725,42 @@ export function defaultHeadlessInvokePlan(
   // plan c4e8a1f7 T1a：session 级 resolved binary 注入（probe/canary/formal invoke 同身份）
   resolvedBinary?: ResolvedHeadlessBinary | null,
 ): HeadlessInvokePlan {
+  const modelBinding = modelPin;
+  const pin = parseAdapterModelBinding(adapterName, modelBinding);
+  modelPin = pin?.value;
+  if (adapterName === 'deepseek-harness') {
+    const plan = attachResolvedBinary(
+      ['dsh', '--profile', 'headless', ...(pin ? ['--patch', dshModelSource(pin)] : []), '--patch',
+        path.resolve(__dirname, '../../../agents/deepseek-harness/headless-patch.yaml'), '--json'],
+      DEEPSEEK_HARNESS_BINARY_CANDIDATES,
+      'dsh --profile headless --patch … (stdin)', resolvedBinary,
+    );
+    return { ...plan, adapterName, modelBinding, useStdin: true, stdin: promptContent };
+  }
   if (adapterName === 'claude') {
     const argv = claudeArgv(toolEventProvenance, 'claude', modelPin);
+    if (pin?.reasoning_effort) argv.push('--effort', pin.reasoning_effort);
     const plan = attachResolvedBinary(argv, CLAUDE_HEADLESS_BINARY_CANDIDATES, 'claude -p …', resolvedBinary);
-    return { ...plan, adapterName, useStdin: true, stdin: promptContent };
+    return { ...plan, adapterName, modelBinding, useStdin: true, stdin: promptContent };
   }
   // codeagent（plan c7a9e2f4）：Claude Code 内核 fork，argv 全套复用（仅二进制名不同）；
   // prompt 走 stdin 同款铁律（codeagentcli 亦为 Windows cmd shim，实证 stdin 喂 prompt 可用）。
   if (adapterName === 'codeagent') {
     const argv = claudeArgv(toolEventProvenance, 'codeagentcli', modelPin);
+    if (pin?.reasoning_effort) argv.push('--effort', pin.reasoning_effort);
     const plan = attachResolvedBinary(argv, CODEAGENT_HEADLESS_BINARY_CANDIDATES, 'codeagentcli -p …', resolvedBinary);
-    return { ...plan, adapterName, useStdin: true, stdin: promptContent };
+    return { ...plan, adapterName, modelBinding, useStdin: true, stdin: promptContent };
   }
   if (adapterName === 'codex') {
     const argv = codexArgv(modelPin);
+    if (pin?.provider) argv.push('-c', `model_provider=${JSON.stringify(pin.provider)}`);
+    if (pin?.reasoning_effort) argv.push('-c', `model_reasoning_effort=${JSON.stringify(pin.reasoning_effort)}`);
     const plan = attachResolvedBinary(argv, CODEX_HEADLESS_BINARY_CANDIDATES, 'codex exec …', resolvedBinary);
-    return { ...plan, adapterName, useStdin: true, stdin: promptContent };
+    return { ...plan, adapterName, modelBinding, useStdin: true, stdin: promptContent };
   }
   if (adapterName === 'cursor') {
     const resolved = resolvedBinary ?? resolveHeadlessBinary([...CURSOR_HEADLESS_BINARY_CANDIDATES]);
-    return { ...cursorHeadlessPlan(promptContent, resolved, modelPin), adapterName };
+    return { ...cursorHeadlessPlan(promptContent, resolved, modelPin), adapterName, modelBinding };
   }
   if (adapterName === 'chrys') {
     const plan = chrysHeadlessPlan(
@@ -589,7 +776,7 @@ export function defaultHeadlessInvokePlan(
       promptContent,
       resolvedBinary,
     );
-    return { ...plan, adapterName };
+    return { ...plan, adapterName, modelBinding };
   }
   if (adapterName === 'opencode') {
     const plan = opencodeHeadlessPlan(
@@ -603,12 +790,12 @@ export function defaultHeadlessInvokePlan(
         PHASE: '',
       },
       promptContent,
-      modelPin,
+      modelBinding,
       resolvedBinary,
     );
-    return { ...plan, adapterName };
+    return { ...plan, adapterName, modelBinding };
   }
-  return genericStdinPlan(promptContent);
+  return { ...genericStdinPlan(promptContent), adapterName, modelBinding };
 }
 
 /** @deprecated Use defaultHeadlessInvokePlan; kept for unit tests comparing flags. */
@@ -628,10 +815,10 @@ export function resolveHeadlessInvokePlan(
   resolvedBinary?: ResolvedHeadlessBinary | null,
 ): HeadlessInvokePlan {
   if (adapterName === 'chrys') {
-    return chrysHeadlessPlan(vars, promptContent, resolvedBinary);
+    return { ...chrysHeadlessPlan(vars, promptContent, resolvedBinary), adapterName, modelBinding: modelPin };
   }
   if (adapterName === 'opencode') {
-    return opencodeHeadlessPlan(vars, promptContent, modelPin, resolvedBinary);
+    return { ...opencodeHeadlessPlan(vars, promptContent, modelPin, resolvedBinary), adapterName, modelBinding: modelPin };
   }
   if (KNOWN_STRUCTURED_ADAPTERS.has(adapterName)) {
     // t3a：structured_events 声明传导进内建 plan（claude 加 stream-json flags）；
@@ -643,7 +830,7 @@ export function resolveHeadlessInvokePlan(
   const custom = capability.external_runner?.headless_invoke?.trim();
   if (custom) {
     const { PROMPT: _drop, ...rest } = vars;
-    return planFromTemplate(custom, promptContent, rest);
+    return { ...planFromTemplate(custom, promptContent, rest), adapterName, modelBinding: modelPin };
   }
   return defaultHeadlessInvokePlan(adapterName, unattended, promptContent);
 }
@@ -902,6 +1089,7 @@ export async function killProcessTree(
 }
 
 export interface AgentInvokeResult {
+  model_binding_mismatch?: string;
   exitCode: number;
   stdout: string;
   stderr: string;
@@ -926,7 +1114,8 @@ export interface AgentInvokeResult {
   /**
    * plan e6b3f8d2 t1：terminal 事件里的**纯诊断**摘要——`turn.failed` 的错误正文与
    * 顶层 `error` 事件（后者非契约终态：error→重试成功→turn.completed 合法）。
-   * 只进 `agent_invoke_end` 供排障，**不参与**任何 settle / classifier / retry 判据。
+   * 进 `agent_invoke_end` 供排障，不参与 settle 判据；`turn.failed` 段的状态码另供 CLI 硬失败
+   * 与 codex 瞬时识别（plan 4e6fb3b6 §4），顶层 `error` 段不参与任何判定。
    */
   terminal_error_excerpt?: string;
   signal?: string | null;
@@ -941,11 +1130,31 @@ export interface AgentInvokeResult {
    * 同一种 shape）——金丝雀硬失败分类据此判定，不靠 stderr 猜。
    */
   spawn_error?: { code?: string; message: string };
+  provider_session_id?: string;
+  interrupted?: boolean;
+  nativeSessionRebuildReason?: string;
+  readonly_enforced?: boolean;
+  readonly_diagnostic?: string;
+}
+
+export interface InvokeObservation {
+  type: 'provider_session' | 'tool_result' | 'stdout' | 'stderr' | 'terminal';
+  provider_session_id?: string;
+  chunk?: string;
+  completion_observed?: boolean;
+  terminal_failure_observed?: boolean;
 }
 
 export interface AgentInvokeOptions {
   dryRun?: boolean;
   timeoutMs?: number;
+  providerSessionId?: string;
+  userDeadlineAt?: string;
+  authorization?: UnattendedContract;
+  executionRole?: 'author' | 'verifier';
+  readonlyInvocation?: boolean;
+  signal?: AbortSignal;
+  onObservation?: (observation: InvokeObservation) => void;
   /**
    * plan e6b3f8d2 t1：terminal 事件解析器。缺省按 plan.adapterName 解析
    *（codex → codex_turn_jsonl，其余 none）；显式传入仅供单测注入。
@@ -976,23 +1185,6 @@ export interface AgentInvokeOptions {
    * 身份 token（t3）由 guardian argv 显式携带：`<runId>/<invokeId>`。
    */
   containment?: { runId: string; invokeId: string } | null;
-  /**
-   * openspec device-readiness-and-completion t4：**完成观测探针**。
-   *
-   * 背景（07-28 事故）：agent 的 turn 已 `turn_ended status=success`、receipt 四条件齐全
-   * 在盘，但进程被自己拉起的后台模拟器钉住不退出——框架空等 84 分钟到 hard timeout，
-   * 而超时后 gate harness 只用 13 秒就判了 PASS。判据一直可用，只是没人问。
-   *
-   * **分层**：本模块是通用进程层，只负责 timer/race/kill，**不得依赖 receipt schema**。
-   * 判据由 goal-runner 以回调注入：返回 true = 本 attempt 的完成证据已确定性成立。
-   * 探针须为纯只读（不得启动会写盘的 CLI），异常/半写入一律返回 false 由下轮重试。
-   *
-   * 命中后：等 `completionGraceMs` 让进程自然退出，仍存活则 tree-kill 本次 invocation，
-   * 结果记 `completion_observed`（**不是** timed_out / silent_killed / agent_failed）。
-   */
-  completionProbe?: () => boolean;
-  /** 探针轮询间隔（默认 2s） */
-  completionPollMs?: number;
   /** 命中后等待自然退出的宽限（默认 5s；实际取 min(该值, deadlineMs-now)） */
   completionGraceMs?: number;
   /**
@@ -1013,6 +1205,8 @@ export interface AgentInvokeOptions {
 export function buildAgentSpawnEnv(
   baseEnv: NodeJS.ProcessEnv,
   extraEnv?: Record<string, string>,
+  adapterName?: string,
+  readonlyInvocation = false,
 ): NodeJS.ProcessEnv {
   const merged: NodeJS.ProcessEnv = { ...baseEnv };
   // d9e4b7c1 T1（v12 P2 泛化）：extraEnv 每个键先清大小写变体再写唯一键——父环境存在
@@ -1021,6 +1215,15 @@ export function buildAgentSpawnEnv(
   for (const [k, v] of Object.entries(extraEnv ?? {})) {
     deleteEnvKeyCaseInsensitive(merged, k);
     merged[k] = v;
+  }
+  if (adapterName === 'opencode') {
+    deleteEnvKeyCaseInsensitive(merged, 'OPENCODE_PERMISSION');
+    merged.OPENCODE_PERMISSION = extraEnv?.OPENCODE_PERMISSION ?? '{"*":"allow"}';
+  }
+  if (adapterName === 'deepseek-harness') {
+    // 本次用途决定权限；父 shell 和 extraEnv 的残留不能改变档位。
+    deleteEnvKeyCaseInsensitive(merged, 'DSH_PERMISSION_MODE');
+    merged.DSH_PERMISSION_MODE = readonlyInvocation ? 'read-only' : 'danger-full-access';
   }
   // plan d7f3a9c4 t3：model pin 只随 extraEnv 显式带入——无 pin（extraEnv 缺键/空值）时显式
   // 清理父环境残留（含大小写变体），不得让陈旧 pin 漏入 agent 子进程冒充"已钉"。走共享
@@ -1092,7 +1295,8 @@ export function spawnHeadlessChild(
     }
     return spawn(invocation.file, invocation.args, {
       cwd,
-      env: buildAgentSpawnEnv(process.env, opts.extraEnv),
+      // shim 字面设置同样经过清洗；runner 显式上下文优先，不能在清洗后回带信任锚。
+      env: buildAgentSpawnEnv(process.env, { ...resolved.env, ...opts.extraEnv }, plan.adapterName, plan.readonlyInvocation === true),
       stdio,
       shell: false as const,
       windowsHide: true,
@@ -1104,7 +1308,7 @@ export function spawnHeadlessChild(
     // P0-7①：agent 子进程剥离 NODE_OPTIONS 预加载注入（防经 agent 环境二次传导进工具链）。
     // t10（codex 六轮 P0-2）：信任锚材料不进 agent env。
     // b7e4d2a9 Todo3：合并后统一 strip + HEADLESS 最后定档（见 buildAgentSpawnEnv）。
-    env: buildAgentSpawnEnv(process.env, opts.extraEnv),
+    env: buildAgentSpawnEnv(process.env, opts.extraEnv, plan.adapterName, plan.readonlyInvocation === true),
     stdio,
     detached: !isWin,
     shell: false as const,
@@ -1176,6 +1380,19 @@ async function spawnHeadlessAsync(
   opts: AgentInvokeOptions,
 ): Promise<AgentInvokeResult> {
   const started = Date.now();
+  const nativeModelEnv = buildAgentSpawnEnv(process.env, opts.extraEnv, plan.adapterName, plan.readonlyInvocation === true);
+  let codexAfterBytes = 0;
+  try {
+    const previous = plan.adapterName === 'codex' && opts.providerSessionId ? nativeCodexSessionFile(opts.providerSessionId, nativeModelEnv) : undefined;
+    if (previous) codexAfterBytes = fs.statSync(previous).size;
+  } catch { /* An unavailable native original supplies no observation, never a new execution gate. */ }
+  const nativeModelFiles = new Map<string, string>();
+  await new Promise<void>(resolve => setImmediate(resolve));
+  if (opts.signal?.aborted || opts.userDeadlineAt && Date.parse(opts.userDeadlineAt) <= Date.now() || opts.deadlineMs !== undefined && opts.deadlineMs <= Date.now()) {
+    return { exitCode: 1, stdout: '', stderr: '', command: plan.label, skipped: true,
+      ...(opts.signal?.aborted ? { interrupted: true } : { timed_out: true }) };
+  }
+  const outputIdleMs = resolveAgentOutputIdleMs(cwd);
   const child = spawnHeadlessChild(plan, cwd, opts);
   const pid = child.pid ?? 0;
 
@@ -1198,6 +1415,10 @@ async function spawnHeadlessAsync(
     else stderr += chunk;
   };
   let timedOut = false;
+  let interrupted = false;
+  let lastOutputAt = started;
+  let providerSessionId: string | undefined;
+  let sessionConflict = false;
   let exitCode = 1;
   let signal: string | null = null;
   let killResult: KillTreeResult = {
@@ -1210,13 +1431,15 @@ async function spawnHeadlessAsync(
     ? fs.createWriteStream(opts.outputLogPath, { flags: 'w', encoding: 'utf-8' })
     : null;
 
-  // t3a（f7a3d9c2）：structured_events 三文件分流——events 文件只收 stdout（NDJSON 纯净，
-  // attestation 绑定对象）、stderr 单独分流；agent-output.log 保持混合人读投影（哨兵/
-  // 心跳/no-output 等既有消费者行为不变）。
+  const terminalParser: TerminalEventParser = opts.terminalEventParser ?? resolveTerminalEventParser(plan.adapterName);
+  const protocolAdapter = plan.adapterName ?? (terminalParser === 'codex_turn_jsonl' ? 'codex'
+    : terminalParser === 'claude_result_jsonl' ? 'claude' : terminalParser === 'deepseek_run_jsonl' ? 'deepseek-harness' : undefined);
+  // Known structured protocols share the existing stdout event log; this does not grant tool audit capability.
   const splitStreams =
-    opts.toolEventCapture === 'structured_events' && opts.outputLogPath
+    (opts.toolEventCapture === 'structured_events'
+      || terminalParser !== 'none' || !!plan.modelBinding || ['codex', 'claude', 'deepseek-harness'].includes(plan.adapterName ?? '')) && opts.outputLogPath
       ? {
-          events: fs.createWriteStream(agentEventsLogPath(opts.outputLogPath), { flags: 'w', encoding: 'utf-8' }),
+          eventsFd: fs.openSync(agentEventsLogPath(opts.outputLogPath), 'w'),
           stderr: fs.createWriteStream(agentStderrLogPath(opts.outputLogPath), { flags: 'w', encoding: 'utf-8' }),
         }
       : null;
@@ -1225,32 +1448,61 @@ async function spawnHeadlessAsync(
     if (outputStream) outputStream.write(chunk);
   };
 
-  // plan e6b3f8d2 t1：terminal 事件解析器——**直接消费 stdout chunk**（跨 chunk 行缓冲），
-  // 不要求产出 agent-events.jsonl（那是 critic 工具证据的三文件分流契约，与本条无关）。
-  // 只有声明了 terminal JSONL 契约的 adapter（现仅 codex）启用；其余 adapter 恒 null，
-  // 其 FAIL 诚实接受 hard timeout 兜底，不造假信号。
+  // One structured scanner publishes native identity and terminal facts without interpreting model prose.
+  let modelBindingMismatch: string | undefined;
+  let nativeTurn: unknown;
+  const dshUsage = plan.adapterName === 'deepseek-harness' ? createDshUsageCapture() : undefined;
+  let nativeWatcher: fs.FSWatcher | undefined, nativeWatchingClosed = false;
+  const expectedModel = parseAdapterModelBinding(plan.adapterName ?? 'generic', plan.modelBinding);
   const terminalHooks: { onCompleted?: () => void; onFailed?: () => void } = {};
-  const terminalParser: TerminalEventParser =
-    opts.terminalEventParser ?? resolveTerminalEventParser(plan.adapterName);
   const terminalScanner: CodexTerminalScanner | null =
-    terminalParser === 'codex_turn_jsonl'
+    terminalParser !== 'none' || !!plan.modelBinding || ['codex', 'claude', 'deepseek-harness'].includes(plan.adapterName ?? '')
       ? createCodexTerminalScanner({
           onCompleted: () => terminalHooks.onCompleted?.(),
           onFailed: () => terminalHooks.onFailed?.(),
-        })
+          onRecord: (record) => {
+            dshUsage?.observe(record);
+            if (plan.adapterName === 'deepseek-harness' && record.type === 'status' && record.phase === 'turn_start') nativeTurn = record.turn;
+            checkNativeModel();
+            if (expectedModel && !modelBindingMismatch) {
+              modelBindingMismatch = modelMismatch(expectedModel, observedMainModel(plan.adapterName!, record));
+              if (modelBindingMismatch) {
+                appendCaptured('stderr', `\n${modelBindingMismatch}\n`);
+                if (!settleWaiter.isSettled()) { terminalHooks.onFailed?.(); void killTree('terminal_failure'); }
+              }
+            }
+            if (isProviderToolResult(record, plan.adapterName, terminalParser)) opts.onObservation?.({ type: 'tool_result' });
+            const id = extractProviderSessionId(record, protocolAdapter);
+            if (!id) return;
+            if (providerSessionId && providerSessionId !== id || opts.providerSessionId && opts.providerSessionId !== id) {
+              sessionConflict = true;
+              void killTree('signal');
+              return;
+            }
+            if (!providerSessionId) {
+              providerSessionId = id;
+              opts.onObservation?.({ type: 'provider_session', provider_session_id: id });
+            }
+          },
+        }, terminalParser)
       : null;
 
-  child.stdout?.on('data', (buf: Buffer) => {
-    const s = buf.toString();
+  child.stdout?.setEncoding('utf8');
+  child.stdout?.on('data', (s: string) => {
+    if (s.length) lastOutputAt = Date.now();
     appendCaptured('stdout', s);
-    if (splitStreams) splitStreams.events.write(s);
+    // Persist the initial identity envelope before publishing its projection to the coordinator.
+    if (splitStreams) fs.writeSync(splitStreams.eventsFd, s);
     terminalScanner?.push(s);
+    opts.onObservation?.({ type: 'stdout', chunk: s });
     writeHumanLog(s);
   });
-  child.stderr?.on('data', (buf: Buffer) => {
-    const s = buf.toString();
+  child.stderr?.setEncoding('utf8');
+  child.stderr?.on('data', (s: string) => {
+    if (s.length) lastOutputAt = Date.now();
     appendCaptured('stderr', s);
     if (splitStreams) splitStreams.stderr.write(s);
+    opts.onObservation?.({ type: 'stderr', chunk: s });
     writeHumanLog(s);
   });
 
@@ -1261,24 +1513,30 @@ async function spawnHeadlessAsync(
 
   let killInFlight: Promise<void> | null = null;
   let killTriggered = false;
+  let completionCleanupTriggered = false;
+  let outputIdleTimer: NodeJS.Timeout | null = null;
 
   const settleWaiter = createChildSettleWaiter(child, { outputStream });
-  if (splitStreams) {
-    child.on('close', () => {
-      splitStreams.events.end();
-      splitStreams.stderr.end();
-    });
-  }
+  type InvokeClosureObservation = 'none' | 'completion' | 'terminal_failure';
+  let closureObservation: InvokeClosureObservation = 'none';
 
   const killTree = (reason: 'timeout' | 'signal' | 'completion' | 'terminal_failure'): Promise<void> => {
+    if (reason === 'signal' && closureObservation === 'completion') return Promise.resolve();
     if (killTriggered && killInFlight) return killInFlight;
     killTriggered = true;
+    if (outputIdleTimer) { clearTimeout(outputIdleTimer); outputIdleTimer = null; }
+    completionCleanupTriggered = reason === 'completion';
     if (reason === 'timeout') timedOut = true;
+    if (reason === 'signal') interrupted = true;
     // reason='completion' 刻意不置任何失败标记：证据已确定性完成，这不是超时也不是
     // agent 失败——归错类会让上层按失败路径重试一个已经完成的阶段。
     // reason='terminal_failure'（plan e6b3f8d2 t1）同理不置 timedOut：失败语义由
     // terminalFailureObserved + exitCode 规范化承载，**不得**冒充超时。
     settleWaiter.armForceSettleAfterKill();
+    if (modelBindingMismatch && opts.containment && process.platform === 'win32') {
+      // Closing our guardian's handle terminates its Job atomically before slower tree diagnostics.
+      try { child.kill('SIGKILL'); } catch { /* Existing bounded tree cleanup remains the fallback. */ }
+    }
     killInFlight = (async () => {
       if (pid > 0) {
         killResult = await awaitPromiseWithTimeout(
@@ -1304,32 +1562,70 @@ async function spawnHeadlessAsync(
       },
     });
   }
+  const abort = (): void => { void killTree('signal'); };
+  opts.signal?.addEventListener('abort', abort, { once: true });
+  if (opts.signal?.aborted) abort();
+  function checkNativeModel(): void {
+    if (!expectedModel || !['deepseek-harness', 'codex', 'opencode'].includes(expectedModel.adapter) || !providerSessionId || modelBindingMismatch) return;
+    try {
+      modelBindingMismatch = expectedModel.adapter === 'deepseek-harness'
+        ? nativeDshModelMismatch(expectedModel, providerSessionId, cwd, nativeModelEnv, nativeTurn, nativeModelFiles)
+        : expectedModel.adapter === 'codex' ? nativeCodexModelMismatch(expectedModel, providerSessionId, cwd, nativeModelEnv, codexAfterBytes, nativeModelFiles)
+          : nativeOpenCodeModelMismatch(expectedModel, providerSessionId, cwd, started, nativeModelFiles);
+      const file = nativeModelFiles.get('file');
+      if (file && !nativeWatcher && !nativeWatchingClosed) {
+        nativeWatcher = fs.watch(file, checkNativeModel);
+        nativeWatcher.on('error', () => { nativeWatcher?.close(); nativeWatcher = undefined; });
+      }
+    }
+    catch { return; /* A frame still being written supplies no comparable record yet. */ }
+    if (modelBindingMismatch) {
+      appendCaptured('stderr', `\n${modelBindingMismatch}\n`);
+      if (!settleWaiter.isSettled()) { terminalHooks.onFailed?.(); void killTree('terminal_failure'); }
+    }
+  }
+  const nativeModelTimer = expectedModel && ['deepseek-harness', 'codex', 'opencode'].includes(expectedModel.adapter) ? setInterval(checkNativeModel, 100) : null;
 
-  // t4：完成观测——与 settle / hard timeout 竞争。
-  // 判据是**确定性**的（证据在盘 / adapter terminal 事件），不是概率性的（静默/无输出）：
-  // cursor-agent 本就 "streams little until phase end"，拿静默做判据会误杀正常长任务
-  //（这正是 silent watchdog 从未启用、并已于 plan e6b3f8d2 t1 删除生产链的原因）。
-  type InvokeClosureObservation = 'none' | 'completion' | 'terminal_failure';
-  let closureObservation: InvokeClosureObservation = 'none';
+  // Only the child streams update lastOutputAt; framework leases/heartbeats never extend it.
+  // Opaque adapters have the same finite backstop and return unknown, never a product FAIL.
+  const armOutputIdle = (): void => {
+    if (settleWaiter.isSettled() || killTriggered || closureObservation !== 'none') return;
+    const remainingMs = Math.max(0, outputIdleMs - (Date.now() - lastOutputAt));
+    outputIdleTimer = setTimeout(() => {
+      outputIdleTimer = null;
+      if (settleWaiter.isSettled() || killTriggered || closureObservation !== 'none') return;
+      if (Date.now() - lastOutputAt < outputIdleMs) { armOutputIdle(); return; }
+      const diagnostic = '\n[maison] Native CLI produced no stdout/stderr growth for the hang-protection window; interrupted with results unknown and partial work preserved.\n';
+      appendCaptured('stderr', diagnostic);
+      writeHumanLog(diagnostic);
+      void killTree('signal');
+    }, Math.min(remainingMs, 2_147_483_647));
+  };
+  armOutputIdle();
+
+  // Terminal completion/failure still owns its existing short settlement grace.
   /** R8：completion 命中时取消了 hard timeout —— 用于断言二者互斥 */
   let timeoutCancelledByCompletion = false;
 
-  // hard timeout 的**原到期时刻**。completion probe 可以暂时取消 timer；若随后收到
+  // hard timeout 的**原到期时刻**。terminal completion 可以暂时取消 timer；若随后收到
   // terminal failure，失败优先并按这个原时刻恢复 wall-clock backstop，不能从失败时刻
   // 重新起算一个完整 timeout（那会悄悄放大预算）。
   const timeoutMs = opts.timeoutMs;
-  const hardTimeoutAtMs = timeoutMs && timeoutMs > 0 ? started + timeoutMs : null;
+  const userDeadline = opts.userDeadlineAt ? Date.parse(opts.userDeadlineAt) : Infinity;
+  const effectiveDeadline = Math.min(timeoutMs && timeoutMs > 0 ? started + timeoutMs : Infinity, userDeadline, opts.deadlineMs ?? Infinity);
+  const hardTimeoutAtMs = Number.isFinite(effectiveDeadline) ? effectiveDeadline : null;
   let timeoutTimer: NodeJS.Timeout | null = null;
   const armHardTimeout = (): void => {
     if (hardTimeoutAtMs === null || timeoutTimer || timedOut) return;
     const remainingMs = Math.max(0, hardTimeoutAtMs - Date.now());
     timeoutTimer = setTimeout(() => {
       timeoutTimer = null;
+      if (Date.now() < hardTimeoutAtMs) { armHardTimeout(); return; }
       // R8：只有仍由 completion 占有仲裁位时才豁免 hard timeout。terminal failure
       // 会先夺回仲裁位并恢复本 timer，因此不得被旧 completion 洗白。
       if (closureObservation === 'completion') return;
       void killTree('timeout');
-    }, remainingMs);
+    }, Math.min(remainingMs, 2_147_483_647));
   };
   armHardTimeout();
 
@@ -1339,7 +1635,8 @@ async function spawnHeadlessAsync(
    */
   const armSettleGrace = (reason: 'completion' | 'terminal_failure'): void => {
     const graceBudget = opts.completionGraceMs ?? DEFAULT_COMPLETION_GRACE_MS;
-    const untilDeadline = opts.deadlineMs ? opts.deadlineMs - Date.now() : graceBudget;
+    const deadline = Math.min(opts.deadlineMs ?? Infinity, hardTimeoutAtMs ?? Infinity);
+    const untilDeadline = Number.isFinite(deadline) ? deadline - Date.now() : graceBudget;
     const grace = Math.max(0, Math.min(graceBudget, untilDeadline));
     setTimeout(() => {
       if (!settleWaiter.isSettled()) void killTree(reason);
@@ -1347,16 +1644,17 @@ async function spawnHeadlessAsync(
   };
 
   /**
-   * plan e6b3f8d2 t1 review 收口：completion probe 与 adapter terminal 终态的**唯一仲裁入口**。
+   * plan e6b3f8d2 t1 review 收口：adapter terminal 终态的**唯一仲裁入口**。
    * `terminal_failure` 优先于任何 completion：
    *   · completion 命中即取消 hard timeout，避免 deadline/grace 竞争制造双真；
-   *   · failure 已成立后，probe / turn.completed 都不能再置 completion；
-   *   · probe 先成立、随后收到 failure 时，撤销 completion 并按原到期时刻恢复 hard timeout；
+   *   · failure 已成立后，completed terminal 都不能再置 completion；
+   *   · completion 先成立、随后收到 failure 时，撤销 completion 并按原到期时刻恢复 hard timeout；
     *   · 两路仍复用同一 settle/grace 原语，最终结果强制互斥。
    */
   const observeClosure = (observation: Exclude<InvokeClosureObservation, 'none'>): void => {
+    if (outputIdleTimer) { clearTimeout(outputIdleTimer); outputIdleTimer = null; }
     if (observation === 'completion') {
-      if (closureObservation !== 'none' || timedOut) return;
+      if (closureObservation !== 'none' || timedOut || interrupted) return;
       closureObservation = 'completion';
       if (timeoutTimer) {
         clearTimeout(timeoutTimer);
@@ -1364,12 +1662,14 @@ async function spawnHeadlessAsync(
         timeoutCancelledByCompletion = true;
       }
       armSettleGrace('completion');
+      opts.onObservation?.({ type: 'terminal', completion_observed: true });
       return;
     }
 
     if (closureObservation === 'terminal_failure') return;
     const supersededCompletion = closureObservation === 'completion';
     closureObservation = 'terminal_failure';
+    opts.onObservation?.({ type: 'terminal', terminal_failure_observed: true });
     if (supersededCompletion && timeoutCancelledByCompletion) {
       timeoutCancelledByCompletion = false;
       armHardTimeout();
@@ -1391,23 +1691,16 @@ async function spawnHeadlessAsync(
     if (early?.terminalFailureObserved) observeTerminalFailure();
   }
 
-  const completionTimer = opts.completionProbe
-    ? setInterval(() => {
-        if (closureObservation !== 'none' || killTriggered) return;
-        let hit = false;
-        try {
-          hit = opts.completionProbe!() === true;
-        } catch {
-          // 半写入 / 解析错误 → 本轮视为未完成，下轮重试；**绝不**转判 completion，
-          // 也不终止 agent（探针出错是探针的问题，不是 agent 的）
-          hit = false;
-        }
-        if (!hit) return;
-        observeCompletion();
-      }, opts.completionPollMs ?? DEFAULT_COMPLETION_POLL_MS)
-    : null;
-
   const settled = await settleWaiter.promise;
+  if (nativeModelTimer) clearInterval(nativeModelTimer);
+  nativeWatchingClosed = true; nativeWatcher?.close();
+  checkNativeModel();
+  if (outputIdleTimer) { clearTimeout(outputIdleTimer); outputIdleTimer = null; }
+  opts.signal?.removeEventListener('abort', abort);
+  if (splitStreams) {
+    fs.closeSync(splitStreams.eventsFd);
+    await new Promise<void>((resolve) => splitStreams.stderr.end(resolve));
+  }
 
   // 终局补齐：先摘钩子再 flush——进程已 settle，残片里的终态只补事实，不得再 arm
   // 任何 grace/kill（那会白白吊住 event loop）。timedOut 已成立时不追认 terminal 事实：
@@ -1416,7 +1709,7 @@ async function spawnHeadlessAsync(
   terminalHooks.onFailed = undefined;
   terminalScanner?.flush();
   const terminalState = terminalScanner?.state() ?? null;
-  if (!timedOut) {
+  if (!timedOut && !interrupted) {
     // flush 可能补出末行终态；此时 child 已 settle，不再 arm grace/timer，只做最终事实仲裁。
     // failure 优先，确保 parser 状态即使同时含两终态也绝不把双真带出 invoke 边界。
     if (terminalState?.terminalFailureObserved) closureObservation = 'terminal_failure';
@@ -1428,8 +1721,6 @@ async function spawnHeadlessAsync(
   }
 
   if (timeoutTimer) clearTimeout(timeoutTimer);
-  // t4：settle / timeout / abort 任一命中即取消 observer（不留悬挂 interval）
-  if (completionTimer) clearInterval(completionTimer);
 
   exitCode = settled.exitCode;
   signal = settled.signal;
@@ -1448,33 +1739,41 @@ async function spawnHeadlessAsync(
   }
 
   // plan e6b3f8d2 t1：terminal 摘要——`turn.failed` 正文 + 顶层 `error` 事件（解析后明文）。
-  // 不参与 settle / retry / api_disconnected / failure classifier；唯一例外：exit≠0 时作为
-  // resolveInvokeHardCliFailure 的输入，只按 400 信封 + 实采措辞表（CODEX_400_PERMANENT_KINDS）
-  // 判适配器硬失败（stdout 里同一信封是转义形态，命不中）。删掉它会让 400 退回门禁误归因。
+  // 不参与 settle / api_disconnected；例外只有两处，且都只读终态信封：exit≠0 时作为
+  // resolveInvokeHardCliFailure 的输入（400 信封 + 实采措辞表 CODEX_400_PERMANENT_KINDS；
+  // plan 4e6fb3b6 起 `turn.failed` 段的 401/403 也算），以及 goal-headless-sentinel 的 codex 分支
+  // （`turn.failed` 段的 429/5xx 归瞬时重试）。顶层 `error` 段不参与任何判定。
+  // stdout 里同一信封是转义形态，命不中；删掉它会让 400 退回门禁误归因。
   const terminalDiagnostics = [
-    ...(terminalState?.failureExcerpt ? [`turn.failed: ${terminalState.failureExcerpt}`] : []),
+    ...(terminalState?.failureExcerpt ? [`${terminalParser === 'codex_turn_jsonl' ? 'turn.failed' : 'result.failed'}: ${terminalState.failureExcerpt}`] : []),
     ...(terminalState?.errorExcerpts ?? []).map((e) => `error: ${e}`),
   ];
   const terminalErrorExcerpt =
     terminalDiagnostics.length > 0 ? terminalDiagnostics.join(' | ').slice(0, 2000) : undefined;
 
   // 唯一仲裁态投影为两个历史结果字段；结构上不可能双真。
-  const completionObserved = closureObservation === 'completion';
-  const terminalFailureObserved = closureObservation === 'terminal_failure';
+  const completionObserved = closureObservation === 'completion'
+    && !timedOut && !interrupted && !sessionConflict && !modelBindingMismatch
+    && (exitCode === 0 || completionCleanupTriggered);
+  const terminalFailureObserved = closureObservation === 'terminal_failure' || sessionConflict || !!modelBindingMismatch;
 
   return {
     // plan e6b3f8d2 t1：terminal 失败终态在 exit 0 时规范化为非零——复用 timedOut 同款，
     // 否则 `agentFailed = exitCode!==0 && completionObserved!==true` 会把失败洗白。
-    exitCode: timedOut || terminalFailureObserved ? (exitCode === 0 ? 1 : exitCode) : exitCode,
+    exitCode: timedOut || interrupted || terminalFailureObserved ? (exitCode === 0 ? 1 : exitCode) : exitCode,
     stdout,
     stderr,
     command: plan.label,
     pid: pid || undefined,
     duration_ms,
     timed_out: timedOut || undefined,
+    interrupted: interrupted || undefined,
+    ...(providerSessionId && !sessionConflict ? { provider_session_id: providerSessionId } : {}),
+    ...(sessionConflict ? { nativeSessionRebuildReason: 'provider_session_id_conflict' } : {}),
     // silent_killed 写侧已删除（plan e6b3f8d2 t1）——字段仍在 interface 上供读侧兼容历史事件。
     completion_observed: completionObserved || undefined,
     terminal_failure_observed: terminalFailureObserved || undefined,
+    ...(modelBindingMismatch ? { model_binding_mismatch: modelBindingMismatch } : {}),
     ...(terminalErrorExcerpt ? { terminal_error_excerpt: terminalErrorExcerpt } : {}),
     signal,
     lingering_pipe: settled.lingering_pipe || undefined,
@@ -1484,7 +1783,7 @@ async function spawnHeadlessAsync(
     kill_exit_code: killResult.kill_exit_code,
     kill_error: killResult.kill_error,
     // usage 是旁路事实：按声明采集，失败降 proxy，不影响主流程
-    usage: deriveInvokeUsage(opts.usageCapture, stdout, stderr),
+    usage: dshUsage ? dshUsage.result() : deriveInvokeUsage(opts.usageCapture, stdout, stderr),
   };
 }
 
@@ -1511,7 +1810,24 @@ export async function invokeAgentHeadless(
   cwd: string,
   opts?: AgentInvokeOptions,
 ): Promise<AgentInvokeResult> {
+  const startedAt = Date.now();
   const command = plan.label;
+  if (opts?.userDeadlineAt && !Number.isFinite(Date.parse(opts.userDeadlineAt))) {
+    return { exitCode: 1, stdout: '', stderr: 'user_deadline_at_invalid', command };
+  }
+  if (opts?.signal?.aborted || opts?.userDeadlineAt && Date.parse(opts.userDeadlineAt) <= Date.now()) {
+    return { exitCode: 1, stdout: '', stderr: '', command,
+      ...(opts.signal?.aborted ? { interrupted: true } : { timed_out: true }) };
+  }
+  const invokeDeadline = Math.min(opts?.userDeadlineAt ? Date.parse(opts.userDeadlineAt) : Infinity,
+    opts?.timeoutMs && opts.timeoutMs > 0 ? startedAt + opts.timeoutMs : Infinity, opts?.deadlineMs ?? Infinity);
+  try {
+    plan = withProviderSession(withInvocationAuthorization(plan, opts ?? {}), opts?.providerSessionId);
+  } catch (error) {
+    const reason = (error as Error).message;
+    return { exitCode: 1, stdout: '', stderr: reason, command,
+      nativeSessionRebuildReason: reason };
+  }
   if (opts?.dryRun) {
     return { exitCode: 0, stdout: '[dry-run] agent invoke skipped', stderr: '', command, skipped: true };
   }
@@ -1531,5 +1847,58 @@ export async function invokeAgentHeadless(
     };
   }
 
-  return spawnHeadlessAsync(plan, cwd, opts ?? {});
+  if (plan.adapterName) {
+    try {
+      const pin = parseAdapterModelBinding(plan.adapterName, plan.modelBinding);
+      assertModelReplay(pin, cwd, buildAgentSpawnEnv(process.env, opts?.extraEnv, plan.adapterName, plan.readonlyInvocation === true), invokeDeadline);
+      plan = withFrozenModelArguments(plan);
+      opts = { ...opts, extraEnv: { ...opts?.extraEnv, [MAISON_GOAL_MODEL_PIN_ENV]: plan.modelBinding! } };
+      if (['claude', 'codeagent'].includes(pin.adapter) && pin.provider) {
+        opts.extraEnv!.CLAUDE_CONFIG_DIR = path.dirname(pin.config_source!);
+        assertClaudeModelRoute(pin, cwd, buildAgentSpawnEnv(process.env, opts.extraEnv, pin.adapter, plan.readonlyInvocation === true));
+        opts.extraEnv!.ANTHROPIC_BASE_URL = pin.provider === 'anthropic' ? 'https://api.anthropic.com' : pin.provider;
+      }
+      if (pin.adapter === 'codex' && pin.config_source) opts.extraEnv!.CODEX_HOME = path.dirname(pin.config_source);
+      if (pin.adapter === 'opencode') {
+        const ambient = buildAgentSpawnEnv(process.env, opts.extraEnv, pin.adapter, plan.readonlyInvocation === true);
+        if (['OPENCODE_CONFIG', 'OPENCODE_CONFIG_CONTENT', 'OPENCODE_CONFIG_DIR'].some(key => ambient[key])) {
+          throw new Error('OpenCode 存在未绑定的额外配置层；保留任务，提供可准确回放的原生配置来源后继续。未启动模型请求。');
+        }
+        const home = openCodeModelHome(pin);
+        Object.assign(opts.extraEnv!, { HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: path.join(home, '.config'),
+          XDG_DATA_HOME: path.join(home, '.local/share'), XDG_STATE_HOME: path.join(home, '.local/state') });
+        const failure = verifyOpenCodeModelConfig(plan.argv[0], pin, buildAgentSpawnEnv(process.env, opts.extraEnv, pin.adapter, plan.readonlyInvocation === true), cwd, invokeDeadline);
+        if (failure) throw new Error(failure);
+      }
+      if (pin.adapter === 'deepseek-harness') {
+        opts.extraEnv!.DSH_HOME = dshModelHome(pin);
+        const failure = verifyDshModelConfig(plan.argv, pin, buildAgentSpawnEnv(process.env, opts.extraEnv, pin.adapter, plan.readonlyInvocation === true), cwd, invokeDeadline, plan.readonlyInvocation === true);
+        if (failure) throw new Error(failure);
+      } else if (plan.resolvedBinary && ['codex', 'claude', 'codeagent', 'cursor'].includes(pin.adapter)) {
+        const failure = await verifyNativeModelCatalogue(plan.argv[0], pin, buildAgentSpawnEnv(process.env, opts.extraEnv, pin.adapter, plan.readonlyInvocation === true), cwd, invokeDeadline, opts.signal);
+        if (failure) throw new Error(failure);
+      }
+    } catch (error) {
+      if (opts?.signal?.aborted || Date.now() >= invokeDeadline) return { exitCode: 1, stdout: '', stderr: '', command, skipped: true,
+        ...(opts?.signal?.aborted ? { interrupted: true } : { timed_out: true }) };
+      const spawnError = (error as { spawn_error?: AgentInvokeResult['spawn_error'] }).spawn_error;
+      if (spawnError) return { exitCode: 1, stdout: '', stderr: spawnError.message, command, spawn_error: spawnError };
+      return { exitCode: 1, stdout: '', stderr: (error as Error).message, command, skipped: true };
+    }
+  }
+
+
+  const result = await spawnHeadlessAsync(plan, cwd, { ...opts, ...(Number.isFinite(invokeDeadline)
+    ? { deadlineMs: invokeDeadline, timeoutMs: Math.max(1, invokeDeadline - Date.now()) } : {}) });
+  if (opts?.readonlyInvocation || plan.readonlyInvocation) {
+    result.readonly_enforced = ['codex', 'claude'].includes(plan.adapterName ?? '')
+      || plan.adapterName === 'deepseek-harness' && plan.readonlyInvocation === true;
+    if (!result.readonly_enforced) result.readonly_diagnostic =
+      '当前 adapter 未强制原生只读；调用方须以既有调用前后快照核对实际写入，不能据此签发通过。';
+  }
+  if (opts?.providerSessionId && result.exitCode !== 0 && !result.completion_observed && !result.model_binding_mismatch) {
+    const reason = providerSessionUnavailableReason(plan.adapterName, opts.providerSessionId, result.stdout, result.stderr);
+    if (reason) result.nativeSessionRebuildReason = reason;
+  }
+  return result;
 }

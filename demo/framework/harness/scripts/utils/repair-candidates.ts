@@ -8,12 +8,8 @@
 // 三模式消费同一事实，goal 的 deterministic_defects 从此只是其指纹投影。
 //
 // 设计红线（codex 三轮定稿）：
-// · 责任类别复用既有 CorrectionCategory（spec|plan|coding|verification），不新造枚举；
-//   verification 类不产回退候选。
-// · 归属优先级：①机器 check id 明确归属（scope_consistency_with_spec→spec、
-//   device_ac_delegation→spec、ui_scope_violation→plan——即使 affected_files 是产品
-//   源码也不误投 coding）；②无机器归属才按 affected_files 路径域兜底；③仍无法判断
-//   → 不产 candidate（宁缺毋滥，落回既有原地 retry/halt）。不新增 agent 自报字段。
+// · 复用 CorrectionCategory，真实修复对象与负责方由 repair-responsibility 解析；
+//   verification 保留具体产物/义务负责方，路径或剩余队列不再一律兜底 coding。
 // · 两层指纹：item_fingerprint=hash(编号+规范化文件+规范化摘要)——缺陷身份；
 //   round_fingerprint=排序后 item 集合 hash——整轮防震荡。不新增第三种指纹或账本。
 // · review 侧信任合取：报告结构可信 + verifier 对该条**逐条**验证 confirmed
@@ -22,13 +18,29 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import * as path from 'path';
+import * as YAML from 'yaml';
+import { inferLegacyProjectRoot, isInsideProjectRoot, resolveDependencyPath } from './project-relative-path';
 import { createHash } from 'crypto';
-import { extractTables, getSectionContent, extractDeclaredVerdict } from './markdown-parser';
-import { mapCategoryToChainPhase, type CorrectionCategory } from './correction-routing';
+import { extractTables, getSectionContent, extractDeclaredVerdict, extractReviewVerdict } from './markdown-parser';
+import type { CorrectionCategory } from './correction-routing';
 import type { ExecutionScopeInput } from './execution-scope';
+import type { GoalRunEvent } from './goal-runner-phase';
+import { isBlockingCheck, resultBasisOwner, type CurrentDisposition } from './check-disposition';
+import type { FidelityIntentSsot } from './fidelity-shared';
+import { currentRepairObject, resolveRepairResponsibility, repairResponsibilityContext, repairOwnerArtifactTargets, repairOwnerSourceTargets, workUnitMayWritePath, workUnitWriteDomains, factsRepairResponsibility, type RepairResponsibilityContext, type RepairResponsibility } from './repair-responsibility';
 
-/** 可产回退候选的责任类别（verification 无回退语义） */
-export type RepairOwnerCategory = Exclude<CorrectionCategory, 'verification'>;
+/** 与现有 correction 类别一致，具体负责方由真实对象解析。 */
+export type RepairOwnerCategory = CorrectionCategory;
+
+/** 只读交接定位，不参与归属、指纹或修复进展；原 StepResult 仍是结果真源。 */
+export interface RepairEvidenceRef {
+  trace_path: string;
+  case_id: string;
+  step_index: number;
+  derived_plan_path?: string;
+  artifact_paths?: string[];
+}
 
 export interface RepairCandidate {
   /** 缺陷编号（review 表 ID 列，如 CR-001）或机器 check id */
@@ -43,6 +55,7 @@ export interface RepairCandidate {
   item_fingerprint: string;
   /** 生产阶段（审计与注入定位；不参与归属判定） */
   source_phase: string;
+  evidence_refs?: RepairEvidenceRef[];
   /**
    * adjudicated-repair-loop（plan e2b7c4a9）：信号级候选标记。
    * 仅 testing 视觉信号候选携带 `'signal@1'`（identity = sha256(computeDefectFingerprint)）；
@@ -56,12 +69,18 @@ export interface RepairCandidate {
 // 指纹（两层）
 // ---------------------------------------------------------------------------
 
-function sha256Hex(text: string): string {
-  return createHash('sha256').update(text, 'utf-8').digest('hex');
+function sha256Hex(text: string | Buffer): string {
+  return createHash('sha256').update(text).digest('hex');
 }
 
 function normalizeFiles(files: readonly string[]): string[] {
   return [...new Set(files.map(f => f.trim().replace(/\\/g, '/')).filter(Boolean))].sort();
+}
+
+/** review 定位中的行号不属于文件身份；历史别名回放与当前问题表共用。 */
+function normalizeReviewFiles(files: readonly string[]): string[] {
+  return normalizeFiles(files.map(file => file.replace(/`/g, '').trim().replace(/:\d+(?:-\d+)?$/, ''))
+    .filter(file => file && file !== '-'));
 }
 
 function normalizeSummary(text: string): string {
@@ -84,100 +103,24 @@ export function roundFingerprintOfCandidates(
 // 归属推导（路径域兜底——机器 check id 归属在各生产点显式给定，优先于此）
 // ---------------------------------------------------------------------------
 
-const SPEC_ARTIFACT_RE = /(^|\/)(spec\.md|acceptance\.yaml)$|(^|\/)spec\//;
-const PLAN_ARTIFACT_RE = /(^|\/)(plan\.md|contracts\.yaml|use-cases\.yaml)$|(^|\/)plan\//;
-
 /**
  * 按涉及文件路径域推导责任类别（codex 优先级②）。
  * 全部文件同域才归类；混合域/空清单 → null（不产 candidate）。
- * 判定域：spec 件 → spec；plan 件 → plan；其余仓内路径（产品源码/测试）→ coding。
+ * 来源只有已有产物/源码契约；未知或混合目标不猜成 coding。
  */
-export function deriveCategoryFromFiles(files: readonly string[]): RepairOwnerCategory | null {
-  const normalized = normalizeFiles(files);
-  if (normalized.length === 0) return null;
-  const categories = new Set<RepairOwnerCategory>(
-    normalized.map((f): RepairOwnerCategory => {
-      if (SPEC_ARTIFACT_RE.test(f)) return 'spec';
-      if (PLAN_ARTIFACT_RE.test(f)) return 'plan';
-      return 'coding';
-    }),
-  );
-  return categories.size === 1 ? [...categories][0] : null;
+export function deriveCategoryFromFiles(files: readonly string[], context: RepairResponsibilityContext = {}): RepairOwnerCategory | null {
+  if (!files.length || files.some(isDesignAuthorityRepairFile)) return null;
+  let authority: RepairResponsibilityContext;
+  try { authority = repairResponsibilityContext({ frameworkRoot: path.resolve(__dirname, '../../..'), ...context }); }
+  catch { return null; }
+  const resolved = files.map(file => resolveRepairResponsibility({ ...authority, target: { files: [file] } }).category);
+  return resolved.every(category => category && category === resolved[0]) ? resolved[0] : null;
 }
 
 // ---------------------------------------------------------------------------
 // verifier 逐条验证块（issue-verification fenced block——与 read-image-evidence
 // 同款「prompt 产出端与解析端共用 SSOT」契约）
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// testing 侧 defect-review fenced 块（adjudicated-repair-loop M2 · plan e2b7c4a9 t2.2）
-// ---------------------------------------------------------------------------
-// 契约：testing 报告（test-report.md）可附带逐信号复核块——**裁决发生在候选物化之前**：
-// ```defect-review
-// - signal: 添加银行卡标题
-//   verdict: confirmed     # confirmed（同向）| disputed（反对，须理由）
-//   rationale: 截图/证据核对后确认为真缺陷
-// ```
-//  · 无块/块内无该信号条目 = unreviewed（fail-closed：actionable 未复核 → 停等）；
-//  · verdict=disputed → 停等（原样呈理由），无自动 refuted；
-//  · verdict=confirmed → 与 producer actionable 同向 → 物化为常规候选（signal@1）可回退。
-// ---------------------------------------------------------------------------
-
-export const DEFECT_REVIEW_FENCE = 'defect-review';
-
-export interface DefectReviewEntry {
-  /** 信号引用（producer 给出的信号身份/文本锚，与 uncertain_signals 的 target 呼应） */
-  signal: string;
-  verdict: 'confirmed' | 'disputed';
-  rationale?: string;
-}
-
-const DEFECT_REVIEW_FENCE_RE = new RegExp(
-  '```' + DEFECT_REVIEW_FENCE + '\\s*\\r?\\n([\\s\\S]*?)```',
-  'i',
-);
-
-/**
- * 从 testing 报告解析 defect-review 块。无块/空块 → ok:false（unreviewed，fail-closed）。
- * verdict 非法值按 disputed 处理（不明确不产候选，停等）。
- */
-export function parseDefectReviewBlock(text: string): {
-  ok: boolean;
-  entries: DefectReviewEntry[];
-  reason: string;
-} {
-  if (!text || !text.trim()) return { ok: false, entries: [], reason: 'testing 报告为空' };
-  const m = DEFECT_REVIEW_FENCE_RE.exec(text);
-  if (!m) return { ok: false, entries: [], reason: `缺 ${DEFECT_REVIEW_FENCE} fenced 块` };
-  const entries: DefectReviewEntry[] = [];
-  const lines = m[1].split(/\r?\n/);
-  let i = 0;
-  while (i < lines.length) {
-    const signalMatch = /^\s*-\s*signal:\s*(.+?)\s*$/.exec(lines[i]);
-    if (!signalMatch) { i++; continue; }
-    i++;
-    const verdictMatch = i < lines.length ? /^\s*verdict:\s*(\S+)\s*$/.exec(lines[i]) : null;
-    if (!verdictMatch) continue;
-    const raw = verdictMatch[1].toLowerCase();
-    i++;
-    let rationale: string | undefined;
-    if (i < lines.length) {
-      const raMatch = /^\s*rationale:\s*(.+?)\s*$/.exec(lines[i]);
-      if (raMatch) {
-        rationale = raMatch[1].trim();
-        i++;
-      }
-    }
-    entries.push({
-      signal: signalMatch[1].trim(),
-      verdict: raw === 'confirmed' ? 'confirmed' : 'disputed',
-      ...(rationale ? { rationale } : {}),
-    });
-  }
-  if (entries.length === 0) return { ok: false, entries: [], reason: 'defect-review 块无合法条目' };
-  return { ok: true, entries, reason: `${entries.length} 条逐信号复核` };
-}
 
 export const ISSUE_VERIFICATION_FENCE = 'issue-verification';
 
@@ -193,6 +136,10 @@ export interface IssueVerificationEntry {
    * 缺失=旧格式=不采信（fail-closed），不新增 receipt/key/registry/ledger。
    */
   evidence?: string;
+  /** 非法原始 verdict 不等同于合法 unclear，仅供同源诊断。 */
+  invalid_reason?: string;
+  /** Existing responsibility field, optional on a current independently-verified issue. No write grant. */
+  repair_owner?: string;
 }
 
 const ISSUE_FENCE_RE = new RegExp(
@@ -218,59 +165,83 @@ export function parseIssueVerificationBlock(text: string): {
   const m = ISSUE_FENCE_RE.exec(text);
   if (!m) return { ok: false, entries: [], reason: `缺 ${ISSUE_VERIFICATION_FENCE} fenced 块` };
   const entries: IssueVerificationEntry[] = [];
-  const lines = m[1].split(/\r?\n/);
-  let i = 0;
-  while (i < lines.length) {
-    const issueMatch = /^\s*-\s*issue:\s*(.+?)\s*$/.exec(lines[i]);
-    if (!issueMatch) { i++; continue; }
-    i++;
-    const verdictMatch = i < lines.length ? /^\s*verdict:\s*(\S+)\s*$/.exec(lines[i]) : null;
-    if (!verdictMatch) continue;
-    const raw = verdictMatch[1].toLowerCase();
-    i++;
-    // evidence 为可选后继行（证据新鲜度绑定）——不在则本条按旧格式处理（消费侧不采信）
-    let evidence: string | undefined;
-    if (i < lines.length) {
-      const evMatch = /^\s*evidence:\s*(.+?)\s*$/.exec(lines[i]);
-      if (evMatch) {
-        evidence = evMatch[1].trim();
-        i++;
-      }
-    }
+  let rows: unknown;
+  try { rows = YAML.parse(m[1]); }
+  catch (error) { return { ok: false, entries: [], reason: `${ISSUE_VERIFICATION_FENCE} YAML不可解析：${(error as Error).message}` }; }
+  if (!Array.isArray(rows)) return { ok: false, entries: [], reason: `${ISSUE_VERIFICATION_FENCE} 必须是原逐项数组` };
+  for (const row of rows) {
+    if (!row || typeof row !== 'object' || typeof row.issue !== 'string' || !row.issue.trim() || typeof row.verdict !== 'string') continue;
+    const raw = row.verdict.toLowerCase();
+    const evidence = typeof row.evidence === 'string' && row.evidence.trim() ? row.evidence.trim() : undefined;
+    const repairOwner = typeof row.repair_owner === 'string' && /^[a-z][a-z0-9_-]*$/.test(row.repair_owner) ? row.repair_owner : undefined;
     entries.push({
-      issue: issueMatch[1].trim(),
+      issue: row.issue.trim(),
       verdict: raw === 'confirmed' || raw === 'refuted' ? raw : 'unclear',
       ...(evidence ? { evidence } : {}),
+      ...(repairOwner ? { repair_owner: repairOwner } : {}),
+      ...(['confirmed', 'refuted', 'unclear'].includes(raw) ? {} : { invalid_reason: `非法 verdict=${raw}` }),
     });
   }
   if (entries.length === 0) return { ok: false, entries: [], reason: '逐条验证块无合法条目' };
   return { ok: true, entries, reason: `${entries.length} 条逐条验证` };
 }
 
+/** This comparison measures text preservation; only independent current evidence judges the resulting test strength. */
+export function testStrengthVerification(input: {
+  check: { id: string; details?: string; affected_files?: readonly string[] };
+  verifierReportText: string | null;
+  verifierSubjectCurrent: boolean;
+}): IssueVerificationEntry | null {
+  if (!input.verifierSubjectCurrent || input.check.id !== 'coding_existing_test_preserved' || !input.check.affected_files?.length || !input.check.details?.trim()) return null;
+  const parsed = parseIssueVerificationBlock(input.verifierReportText ?? '');
+  const entries = parsed.entries.filter(entry => entry.issue === input.check.id);
+  if (!parsed.ok || entries.length !== 1 || entries[0].invalid_reason || !entries[0].evidence) return null;
+  const normalized = (text: string): string => text.replace(/\\/g, '/').replace(/\s+/g, '').toLowerCase();
+  const evidence = normalized(entries[0].evidence);
+  return evidence.includes(normalized(input.check.details)) && input.check.affected_files.every(file => evidence.includes(normalized(file))) ? entries[0] : null;
+}
+
 // ---------------------------------------------------------------------------
 // review 侧生产点
 // ---------------------------------------------------------------------------
 
+type DeclinedRepairIssue = Pick<RepairDeclineState, 'id' | 'summary' | 'files' | 'source_phase'> & { item_fingerprint?: string };
+
 export interface ReviewCandidateInput {
+  responsibility?: RepairResponsibilityContext;
+  reviewFidelity?: ReviewFidelity | null;
   /** review-report.md 全文 */
   reportText: string;
+  phaseIssues?: PhaseRepairIssues | null;
   /** verifier.report.md 全文（缺失传 null——零 candidate） */
   verifierReportText: string | null;
   /** @deprecated legacy receipt flag, ignored; human authorization cannot suppress a defect. */
   conditionalReceiptValid?: boolean;
   /** 报告结构/引用/结论一致性等 report-validity 检查存在 BLOCKER FAIL → 抑制 */
   reportValidityBlocked: boolean;
+  /**
+   * plan 33784ed1 §4.5：有拒修在案的候选（resolveRepairDeclineState 的 declined_rounds>0）。
+   * 与 verifierSubjectCurrent=false 合取时该行不成立——沿用的历史评审没看过拒修依据。
+   */
+  declinedFingerprints?: ReadonlySet<string>;
+  /** 历史原料不全时只要求当前审查，不据此宣称指纹等价。来源仍是共享拒修回放。 */
+  declinedIssues?: ReadonlyArray<DeclinedRepairIssue>;
+  /** verifier 正文是否属于本轮签发的 subject（false = 沿用历史 subject）；缺省视为 true */
+  verifierSubjectCurrent?: boolean;
 }
 
-interface IssueRow {
+export interface ReviewIssueRow {
+  classification: string;
   id: string;
   severity: string;
   state: string;
   files: string[];
   summary: string;
+  /** Concrete diagnosis locations, separate from the authority artifact to repair. */
+  evidence?: string;
 }
 
-function parseIssueRows(reportText: string): IssueRow[] {
+export function parseReviewIssueRows(reportText: string): ReviewIssueRow[] {
   const section = getSectionContent(reportText, '问题清单');
   if (!section) return [];
   const tables = extractTables(section);
@@ -280,22 +251,351 @@ function parseIssueRows(reportText: string): IssueRow[] {
   const iId = col(h => h.trim() === 'ID' || h.includes('编号'));
   const iSev = col(h => h.includes('严重程度') || h.includes('严重等级'));
   const iState = col(h => h.includes('状态'));
+  const iCategory = col(h => h.includes('分类'));
   const iFiles = col(h => h.includes('涉及文件'));
   const iFix = col(h => h.includes('修复建议'));
   const iDesc = col(h => h.includes('问题描述') || h.includes('描述'));
+  const iEvidence = col(h => h.includes('依据') || h.includes('证据'));
   if (iId < 0 || iSev < 0 || iFiles < 0) return [];
   return table.rows.map(row => ({
     id: (row[iId] ?? '').trim(),
     severity: (row[iSev] ?? '').trim(),
+    classification: iCategory >= 0 ? (row[iCategory] ?? '').trim() : '',
     state: iState >= 0 ? (row[iState] ?? '').trim() : '',
-    files: (row[iFiles] ?? '')
-      .split(/[,，;；\s]+/)
-      .map(f => f.replace(/`/g, '').trim())
-      .filter(f => f.length > 0 && f !== '-'),
+    files: normalizeReviewFiles((row[iFiles] ?? '')
+      .split(/[,，、;；\s]+/)
+      .filter(Boolean)),
     summary: normalizeSummary(
       (iFix >= 0 ? row[iFix] : undefined) || (iDesc >= 0 ? row[iDesc] : undefined) || '',
     ),
+    evidence: [iDesc >= 0 ? row[iDesc] : '', iEvidence >= 0 ? row[iEvidence] : ''].filter(Boolean).join('；'),
   })).filter(r => r.id.length > 0);
+}
+
+export interface PhaseRepairIssues {
+  phase: string;
+  reportText: string;
+  reportPath: string;
+  /** Only proposals with readable current line references qualify for failed-phase diagnosis. */
+  rows: ReviewIssueRow[];
+  evidenceFiles: Array<{ label: string; content: string }>;
+  diagnostics?: string[];
+  /** Derived from an actual independent report invocation, never an authored report flag. */
+  independentReviewRows?: readonly string[];
+}
+
+function independentReviewRows(projectRoot: string, feature: string, runId: string | undefined,
+  reportPath: string, reportText: string, rows: readonly ReviewIssueRow[]): string[] | undefined {
+  if (!runId) return undefined;
+  const { featureFilePath } = require('../../config') as typeof import('../../config');
+  const { executionRequestForInvoke } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
+  const { invocationCompleted } = require('./invocation-completion') as typeof import('./invocation-completion');
+  const { workUnitExecutionRole } = require('./goal-phase-executor') as typeof import('./goal-phase-executor');
+  const reportHash = sha256Hex(reportText);
+  const runs = repairDeclineHistory(projectRoot, feature, runId).reverse();
+  const completedOriginal = (file: string): boolean => runs.some(run => {
+    const relative = path.relative(featureFilePath(projectRoot, feature, `goal-runs/${run.run_id}`), path.resolve(projectRoot, file));
+    const parts = relative.split(path.sep);
+    return parts.length >= 4 && parts[0] === 'phases' && run.events.some(event => event.type === 'agent_invoke_end'
+      && event.phase === parts[1] && event.invoke_id === parts[2] && invocationCompleted({ ...event, exitCode: event.exit_code }));
+  });
+  for (const run of runs) {
+    for (const start of [...run.events].reverse()) {
+      if (start.type !== 'agent_invoke_start' || start.phase !== 'review' || !start.invoke_id) continue;
+      const original = executionRequestForInvoke(featureFilePath(projectRoot, feature, `goal-runs/${run.run_id}`), start.invoke_id);
+      const request = original?.request;
+      if (!request || request.context.feature !== feature || request.context.runId !== run.run_id
+        || workUnitExecutionRole(request.context, request.purpose) !== 'verifier'
+        || !request.write_boundary?.verifierResultPath || !request.pre_snapshot
+        || path.resolve(projectRoot, request.write_boundary.verifierResultPath) !== path.resolve(projectRoot, reportPath)) continue;
+      const segment = run.events.slice(run.events.indexOf(start) + 1);
+      const end = segment.find(event => event.type === 'agent_invoke_end' && event.invoke_id === start.invoke_id);
+      if (!end || !invocationCompleted({ ...end, exitCode: end.exit_code })
+        || segment.some(event => event.type === 'phase_write_violation' && event.invoke_id === start.invoke_id)) return undefined;
+      const writes = segment.filter(event => event.type === 'phase_write_observed' && event.invoke_id === start.invoke_id)
+        .flatMap(event => {
+          const observed = event as GoalRunEvent & { owned?: Array<{ path: string; post_sha256?: string | null }>;
+            observations?: Array<{ path: string; post_sha256?: string | null }> };
+          return [...(observed.owned ?? []), ...(observed.observations ?? [])];
+        });
+      const output = writes.filter(write => path.resolve(projectRoot, write.path) === path.resolve(projectRoot, reportPath)).at(-1);
+      if (!output) continue;
+      if (output.post_sha256 !== reportHash) return undefined;
+      const current = (file: string): boolean => {
+        const absolute = path.resolve(projectRoot, file);
+        if (!isInsideProjectRoot(projectRoot, absolute)) return false;
+        const entry = request.pre_snapshot!.entries.find(item => path.resolve(projectRoot, item.path) === absolute && item.kind === 'file');
+        try { return fs.existsSync(absolute) ? !!entry && sha256Hex(fs.readFileSync(absolute)) === entry.sha256 : !entry; }
+        catch { return false; }
+      };
+      return rows.filter(row => {
+        const evidence = readableIssueEvidence(projectRoot, row.evidence ?? '', { feature });
+        return row.files.length > 0 && rows.filter(other => other.id === row.id).length === 1
+          && row.files.every(current) && !!row.evidence?.trim() && evidence.every(file => current(file.label) || completedOriginal(file.label));
+      }).map(row => row.id);
+    }
+  }
+  return undefined;
+}
+
+/** The existing test-strength protocol may be returned by the unit's actual independent reviewer. */
+export function independentReviewTestStrength(input: {
+  projectRoot: string; feature: string; runId?: string;
+  check: Parameters<typeof testStrengthVerification>[0]['check'];
+}): IssueVerificationEntry | null {
+  if (input.check.id !== 'coding_existing_test_preserved' || !input.check.affected_files?.length) return null;
+  const { resolveFeatureArtifact } = require('../../config') as typeof import('../../config');
+  const report = resolveFeatureArtifact(input.projectRoot, input.feature, 'review-report.md');
+  if (!report.exists) return null;
+  try {
+    const text = fs.readFileSync(report.actualPath, 'utf8');
+    const result = testStrengthVerification({ check: input.check, verifierReportText: text, verifierSubjectCurrent: true });
+    if (!result) return null;
+    const rows = independentReviewRows(input.projectRoot, input.feature, input.runId,
+      path.relative(input.projectRoot, report.actualPath).replace(/\\/g, '/'), text, [{ id: input.check.id,
+        severity: 'BLOCKER', classification: 'test strength', state: '', files: [...input.check.affected_files],
+        summary: input.check.details ?? '', evidence: result.evidence }]);
+    return rows?.includes(input.check.id) ? result : null;
+  } catch { return null; }
+}
+
+export function verifierSemanticChecks(reportText: string, phase: string, feature?: string): Record<string, unknown>[] {
+  const findings: Record<string, unknown>[] = [];
+  for (const block of reportText.matchAll(/```(?:yaml|yml)\s*\r?\n([\s\S]*?)```/g)) {
+    try {
+      const result = YAML.parse(block[1])?.verification_result;
+      if (result?.phase !== phase || feature && result.feature !== feature || !Array.isArray(result?.checks)) continue;
+      findings.push(...result.checks.filter((row: unknown): row is Record<string, unknown> => !!row && typeof row === 'object' && !Array.isArray(row)));
+    } catch { /* The existing diagnosis path requests a readable independent conclusion. */ }
+  }
+  return findings;
+}
+
+/** The verifier's structured findings share the existing row-level confirmation and owner route. */
+export function readVerifierSemanticIssues(projectRoot: string, feature: string, phase: string, reportText: string, reportPath: string, frameworkRoot = path.resolve(__dirname, '../../..'), runId = process.env.MAISON_GOAL_RUN_ID?.trim()): PhaseRepairIssues | null {
+  if (phase !== 'spec' && phase !== 'plan') return null;
+  const findings = verifierSemanticChecks(reportText, phase, feature);
+  if (!findings.some(finding => finding.status === 'FAIL' && ['MAJOR', 'BLOCKER'].includes(String(finding.severity))
+    && (!Array.isArray(finding.acceptance_ids) || finding.acceptance_ids.length > 0))) return null;
+  const { SpecLoader } = require('./spec-loader') as typeof import('./spec-loader');
+  const { resolveFeatureArtifact } = require('../../config') as typeof import('../../config');
+  const acceptanceFile = resolveFeatureArtifact(projectRoot, feature, 'acceptance.yaml');
+  let inputs: import('./capability-resolution').ResolvedPhaseInputs | undefined;
+  if (!acceptanceFile.exists) {
+    const { resolveCapabilityResolutionEntryInput } = require('./capability-resolution-entry-input') as typeof import('./capability-resolution-entry-input');
+    const { resolveCapabilityInputs } = require('./capability-resolution') as typeof import('./capability-resolution');
+    const { resolveFeatureTrack } = require('./runtime-policy') as typeof import('./runtime-policy');
+    const { loadFeatureTrackDecl } = require('./feature-track') as typeof import('./feature-track');
+    const { relFeaturesDir } = require('../../config') as typeof import('../../config');
+    const entry = resolveCapabilityResolutionEntryInput({ purpose: 'design-authority-probe', frameworkRoot, projectRoot, feature, phase,
+      featuresDir: relFeaturesDir(projectRoot), ...(runId ? { goalRunId: runId } : {}) });
+    inputs = resolveCapabilityInputs({ purpose: 'design-authority-probe', frameworkRoot, projectRoot, feature, phase,
+      track: resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature)), ...(runId ? { goalRunId: runId } : {}), ...entry }).inputs;
+  }
+  const acceptance = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot).loadFeatureSpec(feature, inputs).acceptance;
+  if (!acceptance) return null;
+  const required = new Set([...acceptance.criteria, ...(acceptance.boundaries ?? [])].map(row => row.id));
+  const rows: ReviewIssueRow[] = [], evidenceFiles = new Map<string, string>();
+  const diagnostics: string[] = [];
+  for (const finding of findings) {
+    if (finding.status !== 'FAIL' || typeof finding.id !== 'string' || !['MAJOR', 'BLOCKER'].includes(String(finding.severity))) continue;
+    // Severity alone cannot turn a suggestion into a mandatory product obligation.
+    if (!Array.isArray(finding.acceptance_ids)) {
+      diagnostics.push(`${finding.id}：旧发现未区分必需验收问题与建议；原独立 verifier 对照当前材料补 acceptance_ids（仅建议写 []），必需问题再补 affected_files 及逐条核实。不改历史报告、不从自由文本猜责任。`);
+      continue;
+    }
+    if (!finding.acceptance_ids.length) continue;
+    if (!finding.acceptance_ids.every(id => typeof id === 'string' && required.has(id))) {
+      diagnostics.push(`${finding.id}：acceptance_ids 未对上当前验收；原独立 verifier 核对真实义务或明确为建议。`); continue;
+    }
+    if (findings.filter(other => other.id === finding.id).length !== 1 || typeof finding.details !== 'string' || typeof finding.suggestion !== 'string') {
+      diagnostics.push(`${finding.id}：必需验收问题的编号重复或缺 details/suggestion；由原独立 verifier 补核当前原始发现。`); continue;
+    }
+    if (!Array.isArray(finding.affected_files) || !finding.affected_files.length || !finding.affected_files.every(file => typeof file === 'string')) {
+      diagnostics.push(`${finding.id}：必需验收问题缺真实 affected_files；由原独立 verifier 补核责任对象。`); continue;
+    }
+    const files = normalizeReviewFiles(finding.affected_files as string[]);
+    if (files.some(file => path.isAbsolute(file) || /^[A-Za-z]:/.test(file) || !isInsideProjectRoot(projectRoot, path.resolve(projectRoot, file)))) {
+      diagnostics.push(`${finding.id}：affected_files 不是合法项目内目标；由原独立 verifier 核对实际责任产物。`); continue;
+    }
+    const referenceDiagnostics: string[] = [];
+    const evidence = readableIssueEvidence(projectRoot, finding.details, { feature, diagnostics: referenceDiagnostics });
+    diagnostics.push(...referenceDiagnostics.map(message => `${finding.id}：${message}；由原独立 verifier 明确证据引用。`));
+    if (!evidence.length) { diagnostics.push(`${finding.id}：必需验收问题缺当前可读的项目相对路径:行号证据；由原独立 verifier 补核，不新增问题文件。`); continue; }
+    let readable = true;
+    for (const file of files) {
+      try {
+        if (!isInsideProjectRoot(fs.realpathSync(projectRoot), fs.realpathSync(path.resolve(projectRoot, file)))) { readable = false; break; }
+        evidenceFiles.set(file, fs.readFileSync(path.resolve(projectRoot, file), 'utf8'));
+      } catch { readable = false; break; }
+    }
+    if (!readable) { diagnostics.push(`${finding.id}：真实修复目标不可读取；由原独立 verifier 补核当前来源和责任对象。`); continue; }
+    for (const entry of evidence) evidenceFiles.set(entry.label, entry.content);
+    rows.push({ id: finding.id, severity: String(finding.severity), state: '', classification: '必需验收', files,
+      summary: normalizeSummary(`${finding.details}；${finding.suggestion}`).trim(), evidence: finding.details });
+  }
+  if (!rows.length && !diagnostics.length) return null;
+  if (acceptanceFile.exists) evidenceFiles.set(path.relative(projectRoot, acceptanceFile.actualPath).replace(/\\/g, '/'), fs.readFileSync(acceptanceFile.actualPath, 'utf8'));
+  else {
+    const resolved = inputs?.values.acceptance;
+    if (resolved?.state === 'resolved') for (const dependency of resolved.binding.dependencies) {
+      const file = resolveDependencyPath(projectRoot, dependency.path);
+      if (dependency.exists && isInsideProjectRoot(projectRoot, file) && /\.(?:yaml|yml|md|json)$/.test(file)) {
+        evidenceFiles.set(path.relative(projectRoot, file).replace(/\\/g, '/'), fs.readFileSync(file, 'utf8'));
+      }
+    }
+  }
+  return { phase, reportText, reportPath, rows, evidenceFiles: [...evidenceFiles].map(([label, content]) => ({ label, content })), diagnostics };
+}
+
+/** Upstream diagnosis cannot hand the current producer's own artifacts back as someone else's implementation work. */
+function currentPhaseOwnsRepairTarget(phase: string, files: string[], context: RepairResponsibilityContext): boolean {
+  return files.length > 0 && files.every(file => resolveRepairResponsibility({ ...context, currentPhase: phase, target: { files: [file] } }).owner === phase);
+}
+
+/** A producer may retain verification while its contract permits another legal modifier. */
+function verifiedRepairOwnerMatches(result: RepairResponsibility, verifiedOwner?: string): boolean {
+  return !verifiedOwner || result.owner === verifiedOwner
+    || result.roles.verifier === verifiedOwner && result.roles.legalModifier === result.owner;
+}
+
+/** Current project-local evidence; no new evidence protocol or caller-provided freshness flag. */
+export function readableIssueEvidence(projectRoot: string, text: string, context?: { feature?: string; diagnostics?: string[] }): Array<{ label: string; content: string }> {
+  const out = new Map<string, string>();
+  const refs = [...text.matchAll(/`([^`\r\n]+?):(\d+)(?:-(\d+))?`/g)];
+  if (!refs.length) return [];
+  for (const ref of refs) {
+    const rel = ref[1].replace(/\\/g, '/').replace(/^\.\//, '');
+    const fail = (reason: string): void => { context?.diagnostics?.push(`${ref[0]}：${reason}`); };
+    if (!isInsideProjectRoot(projectRoot, path.resolve(projectRoot, rel)) || path.isAbsolute(rel) || /^[A-Za-z]:/.test(rel)) {
+      fail('证据引用越出项目范围'); continue;
+    }
+    const candidates = [path.resolve(projectRoot, rel)];
+    if (context?.feature) {
+      const { featureFilePath } = require('../../config') as typeof import('../../config');
+      const featureRoot = featureFilePath(projectRoot, context.feature, '');
+      const local = path.resolve(featureRoot, rel);
+      if (isInsideProjectRoot(featureRoot, local)) candidates.push(local);
+    }
+    const existing = [...new Set(candidates)].filter(file => fs.existsSync(file));
+    if (existing.length !== 1) {
+      fail(existing.length ? `证据引用有歧义：${existing.map(file => path.relative(projectRoot, file).replace(/\\/g, '/')).join('、')}` : '证据文件不存在'); continue;
+    }
+    const abs = existing[0];
+    try {
+      if (!isInsideProjectRoot(fs.realpathSync(projectRoot), fs.realpathSync(abs))) { fail('证据链接越出项目范围'); continue; }
+      const content = fs.readFileSync(abs, 'utf8');
+      const lines = content.split(/\r?\n/);
+      const start = Number(ref[2]); const end = Number(ref[3] ?? ref[2]);
+      if (start < 1 || end < start || end > lines.length || !lines.slice(start - 1, end).join('').trim()) { fail('证据行号不存在或内容为空'); continue; }
+      out.set(path.relative(projectRoot, abs).replace(/\\/g, '/'), content);
+    } catch { fail('证据文件不可读取'); }
+  }
+  return [...out].map(([label, content]) => ({ label, content }));
+}
+
+/** All production consumers resolve the same stage-owned artifact, including canonical/legacy rules. */
+export function readPhaseRepairIssues(projectRoot: string, feature: string, phase: string, context?: { subjectId?: string | null; frameworkRoot?: string; runId?: string }): PhaseRepairIssues | null {
+  if (phase === 'spec' || phase === 'plan') {
+    const { loadVerifierReportTextOrNull } = require('./verifier-evidence') as typeof import('./verifier-evidence');
+    const { parseResultBlock, verifierReportMdFilename } = require('./verifier-subject') as typeof import('./verifier-subject');
+    const { featurePhaseReportsDir } = require('../../config') as typeof import('../../config');
+    const frameworkRoot = context?.frameworkRoot ?? path.resolve(__dirname, '../../..');
+    const text = loadVerifierReportTextOrNull(projectRoot, feature, phase, { frameworkRoot, ...(context && 'subjectId' in context ? { subjectId: context.subjectId } : {}) });
+    const terminal = parseResultBlock(text);
+    if (!text || !terminal) return null;
+    const file = path.join(featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot), verifierReportMdFilename(terminal.subject_id));
+    return readVerifierSemanticIssues(projectRoot, feature, phase, text, path.relative(projectRoot, file).replace(/\\/g, '/'), frameworkRoot, context?.runId);
+  }
+  const name = phase === 'review' ? 'review-report.md' : phase === 'coding' ? 'upstream-issues.md'
+    : phase === 'ut' ? 'testability-audit.md' : null;
+  if (!name) return null;
+  const { resolveFeatureArtifact } = require('../../config') as typeof import('../../config');
+  try {
+    const resolved = resolveFeatureArtifact(projectRoot, feature, name);
+    if (!resolved.exists) return null;
+    const reportText = fs.readFileSync(resolved.actualPath, 'utf8');
+    const evidenceFiles = new Map<string, string>();
+    const parsed = openReviewIssues(reportText);
+    const diagnostics: string[] = [];
+    const frameworkRoot = context?.frameworkRoot ?? path.resolve(__dirname, '../../..');
+    let responsibilityContext: RepairResponsibilityContext | undefined;
+    const authority = (): RepairResponsibilityContext => responsibilityContext ??= repairResponsibilityContext({ projectRoot, frameworkRoot, feature,
+      runId: context?.runId ?? process.env.MAISON_GOAL_RUN_ID?.trim() });
+    {
+      const { loadVerifierReportTextOrNull } = require('./verifier-evidence') as typeof import('./verifier-evidence');
+      const verification = parseIssueVerificationBlock(loadVerifierReportTextOrNull(projectRoot, feature, phase, { frameworkRoot }) ?? '');
+      for (const row of parsed) {
+        const verified = verification.entries.find(entry => entry.issue === row.id && entry.verdict === 'confirmed' && entry.repair_owner);
+        if (!verified || reviewIssueDiagnosis(row, verification.entries, {})) continue;
+        const target = resolveRepairResponsibility({ ...authority(), target: { files: row.files, owner: verified.repair_owner } });
+        if (!verifiedRepairOwnerMatches(target, verified.repair_owner)) diagnostics.push(`${row.id}：核实的负责方与实际修复职责不一致：${target.reason}。请核对真实修复对象及其产物/修改/验证职责后独立重验；诊断页不能替代上游产物。`);
+      }
+    }
+    if (!parsed.length && phase !== 'review') diagnostics.push('问题文件存在但没有可读取的问题表行。使用 ## 问题清单 与列 ID | 严重程度 | 分类 | 问题描述 | 涉及文件 | 修复建议；问题描述须含当前可读证据 `项目相对路径:行号`，涉及文件填真正修复对象。coding-upstream-issues@1 不接受纯叙述替代表格。');
+    const rows = parsed.filter(row => {
+      if (phase === 'review') return true;
+      if (parsed.filter(other => other.id === row.id).length !== 1) return false;
+      if (!row.files.length || row.files.some(file => !isInsideProjectRoot(projectRoot, path.resolve(projectRoot, file)))) return false;
+      for (const file of row.files) {
+        const abs = path.resolve(projectRoot, file);
+        if (fs.existsSync(abs) && !isInsideProjectRoot(fs.realpathSync(projectRoot), fs.realpathSync(abs))) return false;
+      }
+      row.files = normalizeFiles(row.files.map(file => path.relative(projectRoot, path.resolve(projectRoot, file)).replace(/\\/g, '/')));
+      if (currentPhaseOwnsRepairTarget(phase, row.files, authority())) { diagnostics.push(`${row.id}：修复目标属于当前 ${phase}，请在本阶段修正；上游提案应填写真正责任产物。`); return false; }
+      const referenceDiagnostics: string[] = [];
+      const evidence = readableIssueEvidence(projectRoot, row.evidence ?? '', { feature, diagnostics: referenceDiagnostics });
+      diagnostics.push(...referenceDiagnostics.map(message => `${row.id}：${message}；由原独立 verifier 明确证据引用。`));
+      if (!evidence.length) { diagnostics.push(`${row.id}：缺少可读的当前证据；在问题描述提供 \`项目相对路径:行号\`，不能把证据文件误作修复目标。`); return false; }
+      row.summary = [row.evidence, row.summary].filter(Boolean).join('；').replace(/\s+/g, ' ').trim();
+      for (const file of evidence) evidenceFiles.set(file.label, file.content);
+      for (const file of row.files) {
+        try { evidenceFiles.set(file, fs.readFileSync(path.resolve(projectRoot, file), 'utf8')); }
+        catch { /* A missing authority may itself be the proposed gap; independent verification decides. */ }
+      }
+      return true;
+    });
+    const reportPath = path.relative(projectRoot, resolved.actualPath).replace(/\\/g, '/');
+    return { phase, reportText, reportPath, rows,
+      evidenceFiles: [...evidenceFiles].map(([label, content]) => ({ label, content })), diagnostics,
+      ...(phase === 'review' ? { independentReviewRows: independentReviewRows(projectRoot, feature,
+        context?.runId ?? process.env.MAISON_GOAL_RUN_ID?.trim(), reportPath, reportText, rows) } : {}) };
+  } catch { return null; }
+}
+
+export function isDesignAuthorityRepairFile(file: string): boolean {
+  return /(?:^|\/)(?:component-blueprint|change-unit)\.yaml$/.test(file) || file === 'framework.config.json';
+}
+
+/** The current subject must have read these exact proposal/evidence bytes, including runtime logs. */
+export function phaseIssuesForVerifierSubject(projectRoot: string, feature: string, phase: string, subjectId: string | null,
+  frameworkRoot?: string, phaseIssues?: PhaseRepairIssues | null, runId = process.env.MAISON_GOAL_RUN_ID?.trim(),
+  currentEvidence?: { phaseIssues: PhaseRepairIssues | null; acceptanceEvidence: readonly import('./types').ContextFileEntry[];
+    authorityReaders?: import('./identity-neutral-digest').IdentityNeutralDigestReaders }): PhaseRepairIssues | null {
+  const semantic = phase === 'spec' || phase === 'plan';
+  if (currentEvidence) phaseIssues = currentEvidence.phaseIssues;
+  else if (semantic || phaseIssues === undefined) phaseIssues = readPhaseRepairIssues(projectRoot, feature, phase, { ...(semantic ? { subjectId } : {}), frameworkRoot, runId });
+  if (!phaseIssues || phase === 'review') return phaseIssues;
+  if (!subjectId) return null;
+  const { featurePhaseReportsDir } = require('../../config') as typeof import('../../config');
+  const { readVerifierMaterialOrNull, collectCurrentAcceptanceEvidence, verifierMaterialFileMatchesCurrent } = require('./verifier-material') as typeof import('./verifier-material');
+  const material = readVerifierMaterialOrNull(featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot), subjectId);
+  if (!material) return null;
+  if (runId && designRepairDeclines(projectRoot, feature, runId).length) {
+    const { assembleGoalBrief, renderGoalBrief } = require('./goal-brief') as typeof import('./goal-brief');
+    const brief = assembleGoalBrief(projectRoot, feature, { runId });
+    if (![true, false].some(requirementInContext => sha256Hex(renderGoalBrief(brief, { requirementInContext }).replace(/\r\n/g, '\n')) === material.goal_brief_sha256)) return null;
+  }
+  // A verifier report is this subject's output; hashing it as its own input creates a cycle.
+  const digestReaders = semantic ? currentEvidence?.authorityReaders ?? (require('./identity-neutral-digest') as typeof import('./identity-neutral-digest')).createIdentityNeutralDigestReaders() : undefined;
+  const acceptanceEvidence = semantic ? (currentEvidence?.acceptanceEvidence ?? collectCurrentAcceptanceEvidence({ projectRoot, feature, phase, frameworkRoot, subjectId, phaseIssues, runId, authorityReaders: digestReaders }))
+    .filter(entry => !entry.label.startsWith('(')) : [];
+  for (const file of [...(semantic ? [] : [phaseIssues.reportPath]), ...phaseIssues.evidenceFiles.map(entry => entry.label), ...acceptanceEvidence.map(entry => entry.label)]) {
+    try {
+      if (!verifierMaterialFileMatchesCurrent({ projectRoot, feature, material, file, authorityReaders: digestReaders })) return null;
+    } catch { return null; }
+  }
+  return phaseIssues;
 }
 
 /**
@@ -328,6 +628,70 @@ function isVerificationEvidenceCurrent(
   return ev.includes(current);
 }
 
+export type ReviewFidelity = Pick<FidelityIntentSsot, 'effective_fidelity' | 'acceptance_strictness'>;
+
+/** Classification is verified by the existing issue verifier; missing fidelity never grants disclosure. */
+export function reviewIssueRequiresRepair(row: ReviewIssueRow, fidelity?: ReviewFidelity | null): boolean {
+  if (!['BLOCKER', 'MAJOR'].includes(row.severity) || /已关闭|已修复|closed|fixed/i.test(row.state)) return false;
+  return !(row.classification === '视觉保真' && row.severity === 'MAJOR'
+    && fidelity?.acceptance_strictness === 'best_effort'
+    && ['pixel_1to1', 'semantic_layout', 'reference_only'].includes(fidelity.effective_fidelity));
+}
+
+function openReviewIssues(reportText: string, fidelity?: ReviewFidelity | null): ReviewIssueRow[] {
+  return parseReviewIssueRows(reportText).filter(row => reviewIssueRequiresRepair(row, fidelity));
+}
+
+function sameDeclinedIssue(issue: DeclinedRepairIssue, row: ReviewIssueRow, sourcePhase?: string): boolean {
+  if (!sourcePhase || sourcePhase === 'review') return issue.id === row.id && issue.summary.replace(/\s+/g, ' ').trim() === row.summary;
+  return issue.source_phase === sourcePhase && !issue.summary.endsWith('…')
+    && issue.summary.replace(/\s+/g, ' ').trim() === row.summary
+    && (issue.files ? JSON.stringify(normalizeReviewFiles(issue.files)) === JSON.stringify(row.files) : issue.id === row.id);
+}
+
+export interface ReviewDiagnosisContext {
+  reportText: string;
+  rows?: ReviewIssueRow[];
+  sourcePhase?: string;
+  declinedFingerprints?: ReadonlySet<string>;
+  declinedIssues?: ReadonlyArray<DeclinedRepairIssue>;
+  verifierSubjectCurrent?: boolean;
+  diagnostics?: readonly string[];
+}
+
+/** Writer and runtime read the same proposal, diagnostics, refusal and subject context. */
+export function buildCurrentVerifierDiagnosisContext(input: {
+  projectRoot: string; feature: string; phase: string; frameworkRoot?: string; runId?: string;
+  subjectId: string | null; phaseIssues?: PhaseRepairIssues | null; verifierSubjectCurrent?: boolean;
+}): ReviewDiagnosisContext | undefined {
+  const issues = input.phaseIssues === undefined ? readPhaseRepairIssues(input.projectRoot, input.feature, input.phase,
+    { subjectId: input.subjectId, frameworkRoot: input.frameworkRoot, runId: input.runId }) : input.phaseIssues;
+  if (!issues) return undefined;
+  return { reportText: issues.reportText, rows: issues.rows, diagnostics: issues.diagnostics, sourcePhase: input.phase,
+    ...reviewRepairVerificationContext(input.projectRoot, input.feature, input.runId, input.verifierSubjectCurrent ?? true) };
+}
+
+/** 候选生产与失败诊断同一判据；合法 refuted/unclear 不因 verdict 本身被重投。 */
+function reviewIssueDiagnosis(
+  row: ReviewIssueRow,
+  entries: readonly IssueVerificationEntry[],
+  context: Pick<ReviewDiagnosisContext, 'declinedFingerprints' | 'declinedIssues' | 'verifierSubjectCurrent' | 'sourcePhase'>,
+): string | null {
+  const matches = entries.filter(entry => entry.issue === row.id);
+  if (matches.length === 0) return `${row.id}：缺逐条验证条目`;
+  if (matches.length !== 1) return `${row.id}：逐条验证条目重复/冲突`;
+  const verified = matches[0];
+  if (verified.invalid_reason) return `${row.id}：${verified.invalid_reason}`;
+  if (!verified.evidence?.trim()) return `${row.id}：缺 evidence 绑定`;
+  if (!isVerificationEvidenceCurrent(verified.evidence, row)) return `${row.id}：evidence 与当前文件/问题摘要不一致`;
+  if (context.verifierSubjectCurrent === false
+    && (context.declinedFingerprints?.has(itemFingerprintOf(row.id, row.files, row.summary))
+      || context.declinedIssues?.some(issue => sameDeclinedIssue(issue, row, context.sourcePhase)))) {
+    return `${row.id}：拒修在案，沿用的旧 subject 无法作当前逐条确认`;
+  }
+  return null;
+}
+
 /**
  * review 侧候选组装（信任合取，缺一不产）：
  * · 结论 ∈ {有条件通过, 不通过}（负面裁决两分支都覆盖）；
@@ -338,28 +702,17 @@ function isVerificationEvidenceCurrent(
  */
 export function collectReviewRepairCandidates(input: ReviewCandidateInput): RepairCandidate[] {
   if (input.reportValidityBlocked) return [];
-  const section = getSectionContent(input.reportText, '结论')
-    ?? getSectionContent(input.reportText, '审查结论') ?? '';
-  const { verdict } = extractDeclaredVerdict(section, ['有条件通过', '不通过', '通过']);
+  const { verdict } = extractReviewVerdict(input.reportText);
   if (verdict !== '有条件通过' && verdict !== '不通过') return [];
   const verification = parseIssueVerificationBlock(input.verifierReportText ?? '');
-  if (!verification.ok) return [];
-  const confirmed = new Map(
-    verification.entries.filter(e => e.verdict === 'confirmed').map(e => [e.issue, e]),
-  );
+  const independentlyReviewed = !input.verifierReportText && input.phaseIssues?.reportText === input.reportText
+    ? input.phaseIssues.independentReviewRows ?? [] : [];
+  if (!verification.ok && !independentlyReviewed.length) return [];
   const out: RepairCandidate[] = [];
-  for (const row of parseIssueRows(input.reportText)) {
-    if (row.severity !== 'BLOCKER' && row.severity !== 'MAJOR') continue;
-    if (/已关闭|已修复|closed|fixed/i.test(row.state)) continue;
-    const verified = confirmed.get(row.id); // 未验证/refuted/unclear 一律留在 review
-    if (!verified) continue;
-    // 证据新鲜度（codex 冻结项⑥）：验证条目须绑定**当前**该 CR 的内容——同 ID 复用但
-    // 内容已变（上一轮 verifier 产物残留）时不采信，留在 review 重新验证。
-    if (!isVerificationEvidenceCurrent(verified.evidence, row)) continue;
-    const category = deriveCategoryFromFiles(row.files);
-    if (category === null) continue; // 归属推导不出——宁缺毋滥
-    const files = normalizeFiles(row.files);
-    out.push({
+  for (const row of openReviewIssues(input.reportText, input.reviewFidelity)) {
+    if (!independentlyReviewed.includes(row.id) && (reviewIssueDiagnosis(row, verification.entries, input)
+      || verification.entries.find(entry => entry.issue === row.id)?.verdict !== 'confirmed')) continue;
+    for (const { category, files } of issueResponsibilityGroups(row, input.responsibility, verification.entries.find(entry => entry.issue === row.id)?.repair_owner)) out.push({
       id: row.id,
       category,
       files,
@@ -369,6 +722,102 @@ export function collectReviewRepairCandidates(input: ReviewCandidateInput): Repa
     });
   }
   return out;
+}
+
+/** The independently verified issue can state a cause owner; test permission still needs the real comparison. */
+function issueResponsibilityGroups(row: ReviewIssueRow, context: RepairResponsibilityContext = {}, verifiedOwner?: string): Array<{ category: RepairOwnerCategory; files: string[] }> {
+  const groups = new Map<RepairOwnerCategory, string[]>();
+  let authority: RepairResponsibilityContext;
+  try { authority = repairResponsibilityContext({ frameworkRoot: path.resolve(__dirname, '../../..'), ...context }); }
+  catch { return []; }
+  for (const file of row.files) {
+    const factsFile = authority.projectRoot && authority.feature
+      ? (require('./context-facts') as typeof import('./context-facts')).resolveFactsAbsPath(authority.projectRoot, authority.feature) : undefined;
+    const factsOwner = factsFile && path.resolve(authority.projectRoot!, file) === path.resolve(factsFile)
+      ? factsRepairResponsibility(authority)?.owner ?? undefined : undefined;
+    const result = resolveRepairResponsibility({ ...authority, target: { files: [file], owner: verifiedOwner, ...(factsOwner ? { factsOwner } : {}) } });
+    if (!verifiedRepairOwnerMatches(result, verifiedOwner)) continue;
+    if (!result.category) continue;
+    const files = groups.get(result.category) ?? []; files.push(file); groups.set(result.category, files);
+  }
+  return [...groups].map(([category, files]) => ({ category, files: normalizeFiles(files) }));
+}
+
+/** Review keeps its verdict contract; coding/UT proposals use the same row-level verification. */
+export function verifiedPhaseRepairIssues(input: {
+  phaseIssues?: PhaseRepairIssues | null;
+  verifierReportText: string | null;
+  declinedFingerprints?: ReadonlySet<string>;
+  declinedIssues?: ReviewCandidateInput['declinedIssues'];
+  verifierSubjectCurrent?: boolean;
+}): ReviewIssueRow[] {
+  const verification = parseIssueVerificationBlock(input.verifierReportText ?? '');
+  if (!input.verifierReportText && input.phaseIssues?.phase === 'review' && input.phaseIssues.independentReviewRows?.length) {
+    return input.phaseIssues.rows.filter(row => input.phaseIssues!.independentReviewRows!.includes(row.id));
+  }
+  if (!verification.ok) return [];
+  return (input.phaseIssues?.rows ?? []).filter(row => !input.phaseIssues?.diagnostics?.some(message => message.startsWith(`${row.id}：`))
+    && !reviewIssueDiagnosis(row, verification.entries, { ...input, sourcePhase: input.phaseIssues?.phase })
+    && verification.entries.find(entry => entry.issue === row.id)?.verdict === 'confirmed');
+}
+
+/** Projection of the same verified rows into the existing external/design-authority finding contract. */
+export function verifiedPhaseDesignFindings(input: Parameters<typeof verifiedPhaseRepairIssues>[0] & {
+  responsibility?: Pick<RepairResponsibilityContext, 'projectRoot' | 'feature'>;
+}): import('./blueprint-skill-projection').DesignAuthorityFinding[] {
+  return verifiedPhaseRepairIssues(input).flatMap(row => {
+    const artifacts = row.files.filter(isDesignAuthorityRepairFile);
+    if (!artifacts.length) return [];
+    const { projectRoot, feature } = input.responsibility ?? {};
+    const projections = row.files.filter(file => !artifacts.includes(file));
+    if (projections.some(file => {
+      if (!projectRoot || !feature || !['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml'].includes(path.basename(file))) return true;
+      const { resolveFeatureArtifact } = require('../../config') as typeof import('../../config');
+      const target = resolveFeatureArtifact(projectRoot, feature, path.basename(file));
+      try { return path.resolve(projectRoot, file) !== path.resolve(target.actualPath)
+        || !String(YAML.parse(fs.readFileSync(target.actualPath, 'utf8'))?.source ?? '').startsWith('derive.blueprint-'); }
+      catch { return true; }
+    })) return [];
+    const verifiedOwner = parseIssueVerificationBlock(input.verifierReportText ?? '').entries.find(entry => entry.issue === row.id)?.repair_owner;
+    if (['spec', 'plan'].includes(input.phaseIssues!.phase) && verifiedOwner !== 'external') return [];
+    const responsibility = resolveRepairResponsibility({ target: { files: artifacts, owner: verifiedOwner, designAuthority: true } });
+    if (responsibility.action !== 'design') return [];
+    return [{ check: `${input.phaseIssues!.phase}:${row.id}`, codes: ['change_unit_blueprint_reconciliation_required'], class: 'B2' as const,
+      artifacts, basis: `${input.phaseIssues?.reportPath} → ${row.id}（${REPAIR_DECLINE_GATE_PREFIX}${itemFingerprintOf(row.id, row.files, row.summary)}）：${row.summary}；${row.evidence ?? ''}`,
+      needs: ['设计 owner 对照当前提案与所引事实修订权威产物，或给出有依据的拒修理由。'] }];
+  });
+}
+
+/** Verified findings are summary facts, never invented script execution results. */
+export function projectDesignFindingsIntoSummary(summary: import('./types').HarnessRunSummary,
+  findings: readonly import('./blueprint-skill-projection').DesignAuthorityFinding[]): void {
+  if (!findings.length) return;
+  for (const finding of findings) {
+    if (summary.blockers.some(blocker => blocker.id === finding.check)) continue;
+    summary.blockers.push({ id: finding.check, status: 'FAIL', severity: 'BLOCKER', repair_owner: 'external',
+      details_excerpt: finding.basis, affected_files: finding.artifacts,
+      suggestion: finding.needs.join('；'), source: 'issue-verification' });
+  }
+  summary.blocker_count = summary.blockers.length;
+  summary.verdict = 'FAIL'; summary.closure_status = 'open'; summary.release_readiness = 'BLOCKED';
+  summary.completion_status = 'INCOMPLETE'; summary.next_action = 'fix_blockers_then_rerun';
+  if (summary.quality_axes) summary.quality_axes.functional = { ...summary.quality_axes.functional, applicable: true, verdict: 'FAIL',
+    blocking_class: 'needs_fix', source_checks: [...new Set([...summary.quality_axes.functional.source_checks, ...findings.map(finding => finding.check)])],
+    resolution: { class: 'needs_fix', owner: 'external', retry_phase: String(summary.phase) } };
+}
+
+/** Diagnose/probe reads the same current proposal, verifier subject and refusal context as the writer. */
+export function readVerifiedPhaseDesignFindings(projectRoot: string, frameworkRoot: string, feature: string, phase: string, runId?: string): import('./blueprint-skill-projection').DesignAuthorityFinding[] {
+  const { featurePhaseReportsDir } = require('../../config') as typeof import('../../config');
+  const { loadVerifierReportTextOrNull } = require('./verifier-evidence') as typeof import('./verifier-evidence');
+  try {
+    const summary = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot), 'summary.json'), 'utf8'));
+    if (summary.report_validity === 'FAIL') return [];
+    const phaseIssues = phaseIssuesForVerifierSubject(projectRoot, feature, phase, summary.verifier_subject_id ?? null, frameworkRoot, undefined, runId ?? summary.run_id);
+    return verifiedPhaseDesignFindings({ phaseIssues, responsibility: { projectRoot, feature },
+      verifierReportText: loadVerifierReportTextOrNull(projectRoot, feature, phase, { frameworkRoot }),
+      ...reviewRepairVerificationContext(projectRoot, feature, runId ?? summary.run_id, Boolean(summary.verifier_request)) });
+  } catch { return []; }
 }
 
 // ---------------------------------------------------------------------------
@@ -391,11 +840,21 @@ export interface CheckOwnedCandidateInput {
   affectedFiles?: readonly string[];
 }
 
+/**
+ * plan f7045213 §7：check id 的有效责任方——去向表登记的结果依据类读去向表，没登记的读既有注册表。
+ * 'current_phase' = 当前阶段修复与重试，不产生回退候选。
+ */
+export function effectiveRepairOwner(checkId: string): RepairOwnerCategory | 'current_phase' | null {
+  const owner = resultBasisOwner(checkId);
+  if (owner) return owner;
+  return CHECK_ID_OWNER_REGISTRY[checkId] ?? null;
+}
+
 /** 机器 check id 归属的候选（check FAIL 时由所在阶段的组装层调用；
- *  信任条件=该 check 自身的判定，不再叠加 verifier）。未注册 id → null。 */
+ *  信任条件=该 check 自身的判定，不再叠加 verifier）。未注册 id 或当前阶段责任 → null。 */
 export function checkOwnedCandidate(input: CheckOwnedCandidateInput): RepairCandidate | null {
-  const category = CHECK_ID_OWNER_REGISTRY[input.checkId];
-  if (!category) return null;
+  const category = effectiveRepairOwner(input.checkId);
+  if (!category || category === 'current_phase' || category === input.sourcePhase) return null;
   const files = normalizeFiles(input.affectedFiles ?? []);
   const summary = normalizeSummary(input.detail);
   return {
@@ -509,15 +968,36 @@ export function parseVerifierCheckStatus(
 export function findUnreadableDiagnosisChecks(
   phase: string,
   verifierReportText: string | null,
+  review?: ReviewDiagnosisContext,
 ): string[] {
   if (!verifierReportText || !verifierReportText.trim()) return [];
+  if (phase === 'spec' || phase === 'plan') {
+    const incomplete = verifierSemanticChecks(verifierReportText, phase).flatMap(finding => finding.status === 'FAIL'
+      && ['MAJOR', 'BLOCKER'].includes(String(finding.severity)) && !Array.isArray(finding.acceptance_ids)
+      ? [`${finding.id}：原独立 verifier 补核 acceptance_ids/affected_files；仅建议显式写 acceptance_ids: []`] : []);
+    if (incomplete.length || review?.diagnostics?.length) return [...new Set([...incomplete, ...(review?.diagnostics ?? [])])];
+    if (!review?.rows?.length) return [];
+    const verification = parseIssueVerificationBlock(verifierReportText);
+    if (!verification.ok) return [ISSUE_VERIFICATION_FENCE];
+    return review.rows.flatMap(row => { const reason = reviewIssueDiagnosis(row, verification.entries, { ...review, sourcePhase: phase }); return reason ? [reason] : []; });
+  }
+  if ((phase === 'coding' || phase === 'ut') && review?.rows?.length) {
+    const verification = parseIssueVerificationBlock(verifierReportText);
+    if (!verification.ok) return [ISSUE_VERIFICATION_FENCE];
+    return [...(review.diagnostics ?? []).filter(message => review.rows!.some(row => message.startsWith(`${row.id}：`))),
+      ...review.rows.flatMap(row => { const reason = reviewIssueDiagnosis(row, verification.entries, { ...review, sourcePhase: phase }); return reason ? [reason] : []; })];
+  }
   if (phase === 'ut') {
     return ['end_to_end_driving', 'business_assertion_value'].filter(
       id => parseVerifierCheckStatus(verifierReportText, id) === null,
     );
   }
   if (phase === 'review') {
-    return parseIssueVerificationBlock(verifierReportText).ok ? [] : [ISSUE_VERIFICATION_FENCE];
+    if (review && openReviewIssues(review.reportText).length === 0) return [];
+    const verification = parseIssueVerificationBlock(verifierReportText);
+    if (!verification.ok) return [ISSUE_VERIFICATION_FENCE];
+    return review ? openReviewIssues(review.reportText)
+      .flatMap(row => { const reason = reviewIssueDiagnosis(row, verification.entries, review); return reason ? [reason] : []; }) : [];
   }
   return [];
 }
@@ -527,9 +1007,12 @@ export function findUnreadableDiagnosisChecks(
 // ---------------------------------------------------------------------------
 
 export interface PhaseCandidateInput {
+  responsibility?: RepairResponsibilityContext;
+  reviewFidelity?: ReviewFidelity | null;
   phase: string;
   /** review-report.md 全文（review 阶段；其余 null） */
   reviewReportText: string | null;
+  phaseIssues?: PhaseRepairIssues | null;
   /** reports/verifier.report.md 全文（agent 自跑轮可能尚无——零 candidate，gate 轮出现） */
   verifierReportText: string | null;
   /** summary.report_validity（harness 派生）——非 PASS 时**报告自由文本**派生候选抑制
@@ -537,6 +1020,10 @@ export interface PhaseCandidateInput {
   reportValidity: 'PASS' | 'FAIL' | 'UNVERIFIED';
   /** @deprecated legacy receipt flag, ignored. */
   conditionalReceiptValid?: boolean;
+  /** §4.5：见 ReviewCandidateInput 同名字段 */
+  declinedFingerprints?: ReadonlySet<string>;
+  declinedIssues?: ReadonlyArray<DeclinedRepairIssue>;
+  verifierSubjectCurrent?: boolean;
   /** 本轮 checks（机器 check id 归属的生产点消费） */
   checks: ReadonlyArray<{
     id: string;
@@ -546,9 +1033,10 @@ export interface PhaseCandidateInput {
     classification?: string;
     failure_kind?: string;
     failure_code?: string;
-    repair_owner?: 'coding' | 'spec' | 'plan' | 'testing' | 'capability' | 'external';
+    repair_owner?: 'coding' | 'spec' | 'plan' | 'ut' | 'testing' | 'capability' | 'external';
     coding_candidate?: boolean;
     affected_files?: readonly string[];
+    structured?: unknown;
   }>;
 }
 
@@ -566,13 +1054,40 @@ export interface PhaseCandidateInput {
  */
 export function collectPhaseRepairCandidates(input: PhaseCandidateInput): RepairCandidate[] {
   const out: RepairCandidate[] = [];
+  for (const check of input.checks.filter(check => check.status === 'FAIL' && check.repair_owner && check.repair_owner !== input.phase
+    && ['context_exploration_facts_source_stale', 'context_exploration_facts_baseline_stale', 'context_exploration_facts_established_by_invalid'].includes(check.id))) {
+    const result = resolveRepairResponsibility({ ...input.responsibility, target: { factsOwner: check.repair_owner, files: check.affected_files } });
+    if (!result.category || out.some(candidate => candidate.id === check.id && candidate.category === result.category)) continue;
+    const files = normalizeFiles(check.affected_files ?? []), summary = normalizeSummary(check.details ?? check.id);
+    out.push({ id: check.id, category: result.category, files, summary, item_fingerprint: itemFingerprintOf(check.id, files, summary), source_phase: input.phase });
+  }
+  if (['spec', 'plan', 'coding', 'ut'].includes(input.phase) && input.reportValidity !== 'FAIL') {
+    for (const row of verifiedPhaseRepairIssues(input)) {
+      const prior = input.declinedIssues?.find(issue => sameDeclinedIssue(issue, row, input.phase));
+      const verified = parseIssueVerificationBlock(input.verifierReportText ?? '').entries.find(entry => entry.issue === row.id);
+      for (const { category, files } of issueResponsibilityGroups(row, input.responsibility, verified?.repair_owner)) out.push({ id: row.id, category, files, summary: row.summary,
+        item_fingerprint: prior?.item_fingerprint ?? itemFingerprintOf(row.id, row.files, row.summary), source_phase: input.phase });
+    }
+  }
   if (input.phase === 'review' && input.reviewReportText) {
     out.push(...collectReviewRepairCandidates({
+      responsibility: input.responsibility,
       reportText: input.reviewReportText,
+      phaseIssues: input.phaseIssues,
+      reviewFidelity: input.reviewFidelity,
       verifierReportText: input.verifierReportText,
       // c7e4a2d9：review 候选依赖报告内容——report invalid 时继续抑制；机器候选不受此闸
       reportValidityBlocked: input.reportValidity !== 'PASS',
+      declinedFingerprints: input.declinedFingerprints,
+      declinedIssues: input.declinedIssues,
+      verifierSubjectCurrent: input.verifierSubjectCurrent,
     }));
+  }
+  for (const check of input.checks.filter(check => check.status === 'FAIL' && (check.repair_owner === 'ut' || check.repair_owner === 'testing'))) {
+    const files = normalizeFiles(check.affected_files ?? []);
+    const summary = normalizeSummary(check.details ?? check.id);
+    out.push({ id: check.id, category: 'verification', files, summary,
+      item_fingerprint: itemFingerprintOf(check.id, files, summary), source_phase: input.phase });
   }
   if (input.phase === 'plan') {
     const scope = input.checks.find(
@@ -586,6 +1101,34 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
         affectedFiles: scope.affected_files,
       });
       if (c) out.push(c);
+    }
+  }
+  if (input.phase === 'coding' || input.phase === 'review') {
+    for (const check of input.checks.filter(c => c.status === 'FAIL' && (c.repair_owner === 'plan' || c.repair_owner === 'spec'))) {
+      const files = normalizeFiles(check.affected_files ?? []);
+      const summary = normalizeSummary(check.details ?? check.id);
+      out.push({ id: check.id, category: check.repair_owner as 'plan' | 'spec', files, summary,
+        item_fingerprint: itemFingerprintOf(check.id, files, summary), source_phase: input.phase });
+    }
+  }
+  if (input.phase === 'ut') {
+    for (const check of input.checks.filter(c => c.id === 'ut_unsupported_targets_handled' && c.status === 'FAIL')) {
+      const repairs = (check.structured as { repair_candidates?: unknown } | undefined)?.repair_candidates;
+      if (!Array.isArray(repairs)) continue;
+      for (const repair of repairs) {
+        if (!repair || !['coding', 'spec'].includes(repair.category) || typeof repair.id !== 'string'
+          || typeof repair.summary !== 'string' || !Array.isArray(repair.files) || !repair.files.every((file: unknown) => typeof file === 'string')) continue;
+        const files = normalizeFiles(repair.files);
+        const summary = normalizeSummary(repair.summary);
+        if (files.length && summary) out.push({ id: repair.id, category: repair.category, files, summary,
+          item_fingerprint: itemFingerprintOf(repair.id, files, summary), source_phase: 'ut' });
+      }
+    }
+    for (const check of input.checks.filter(c => c.status === 'FAIL' && c.repair_owner === 'plan')) {
+      const files = normalizeFiles(check.affected_files ?? []);
+      const summary = normalizeSummary(check.details ?? check.id);
+      out.push({ id: check.id, category: 'plan', files, summary,
+        item_fingerprint: itemFingerprintOf(check.id, files, summary), source_phase: 'ut' });
     }
   }
   if (input.phase === 'ut' && input.verifierReportText) {
@@ -606,7 +1149,7 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
     //      均 PASS——测试真在驱动业务且断言有价值，否则失败可能是 UT 写错）。
     const utTest = input.checks.find(c => c.id === 'ut_hvigor_test');
     const utStructureClean = !input.checks.some(
-      c => c.status === 'FAIL' && c.severity === 'BLOCKER' && c.id !== 'ut_hvigor_test',
+      c => isBlockingCheck(c) && c.id !== 'ut_hvigor_test',
     );
     const semanticsValid =
       parseVerifierCheckStatus(input.verifierReportText, 'end_to_end_driving') === 'PASS' &&
@@ -617,7 +1160,7 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
       utStructureClean &&
       semanticsValid
     ) {
-      const files = normalizeFiles(utTest.affected_files ?? []);
+      const files = input.responsibility ? repairOwnerSourceTargets('coding', utTest.affected_files ?? [], input.responsibility) : normalizeFiles(utTest.affected_files ?? []);
       const summary = normalizeSummary(
         utTest.details ?? 'UT 真实断言失败且测试语义已验真——产品源码缺陷',
       );
@@ -632,6 +1175,16 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
     }
   }
   if (input.phase === 'testing') {
+    // Only a real P0 definition gap goes upstream; ordinary visual evidence bookkeeping stays local.
+    for (const check of input.checks.filter(c => c.status === 'FAIL' && c.repair_owner === 'spec'
+      && ['p0_coverage_integrity', 'p0_semantic_coverage_integrity'].includes(c.id))) {
+      const files = normalizeFiles(check.affected_files ?? []);
+      const summary = normalizeSummary(check.details ?? check.id);
+      if (!out.some(c => c.category === 'spec' && c.summary === summary)) out.push({
+        id: check.id, category: 'spec', files, summary,
+        item_fingerprint: itemFingerprintOf(check.id, files, summary), source_phase: 'testing',
+      });
+    }
     // T3：coding candidate 只允许由已执行 StepResult 的冻结 pair 产生。
     // explicit skip/unexecuted 没有 failure_kind/code，不能通过 check id 或 status 猜测 coding。
     //
@@ -660,6 +1213,7 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
       const summary = normalizeSummary(
         failure.details ?? '已执行 StepResult assertion_mismatch——默认回 coding/product 修复',
       );
+      const ref = (failure.structured as { repair_evidence?: unknown } | null)?.repair_evidence;
       out.push({
         id: failure.id,
         category: 'coding',
@@ -667,6 +1221,7 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
         summary,
         item_fingerprint: itemFingerprintOf(failure.id, files, summary),
         source_phase: 'testing',
+        ...(ref && validateRepairEvidenceRef(ref).length === 0 ? { evidence_refs: [ref as RepairEvidenceRef] } : {}),
       });
     }
   }
@@ -682,6 +1237,28 @@ export function collectPhaseRepairCandidates(input: PhaseCandidateInput): Repair
         affectedFiles: scopeViolation.affected_files,
       });
       if (c) out.push(c);
+    }
+  }
+  // plan f7045213 §7：去向表登记的结果依据类失败——责任在上游（spec/plan/coding）的产生回退候选，由既有 assess
+  // 推荐路由；责任在当前阶段的走既有的当前阶段修复与重试（checkOwnedCandidate 对 current_phase 返回 null）。
+  for (const check of input.checks) {
+    if (check.status !== 'FAIL' || !resultBasisOwner(check.id) || out.some(c => c.id === check.id)) continue;
+    const c = checkOwnedCandidate({ checkId: check.id, sourcePhase: input.phase, detail: check.details ?? check.id, affectedFiles: check.affected_files });
+    if (c) out.push(c);
+  }
+  if (input.responsibility) for (const candidate of out) {
+    const cause = input.checks.find(check => check.id === candidate.id || check.failure_kind === candidate.id)?.repair_owner
+      ?? effectiveRepairOwner(candidate.id);
+    if ((cause === 'spec' || cause === 'plan') && candidate.category === cause) {
+      const targets = repairOwnerArtifactTargets(cause, input.responsibility);
+      const projectRoot = input.responsibility.projectRoot;
+      const declared = !!projectRoot && candidate.files.length > 0 && candidate.files.every(file => targets.some(target =>
+        path.resolve(projectRoot, target) === path.resolve(projectRoot, file)));
+      const diagnosis = !declared && candidate.files.length > 0 && candidate.files.every(file => {
+        const actual = resolveRepairResponsibility({ ...input.responsibility, target: { files: [file] } });
+        return actual.action === 'current' && actual.owner === input.phase && actual.owner !== cause;
+      });
+      if (targets.length && (!candidate.files.length || diagnosis)) candidate.files = targets;
     }
   }
   return out;
@@ -701,21 +1278,29 @@ export interface RepairCandidateCheckInput {
   /** 机器归因（check 侧真实字段；ui-scope-gate 等只写它，details 未必含归因文本） */
   failure_kind?: string;
   failure_code?: string;
-  repair_owner?: 'coding' | 'spec' | 'plan' | 'testing' | 'capability' | 'external';
+  repair_owner?: 'coding' | 'spec' | 'plan' | 'ut' | 'testing' | 'capability' | 'external';
   coding_candidate?: boolean;
   affected_files?: string[];
+  structured?: unknown;
 }
 
 export interface SummaryRepairCandidatesInput {
+  responsibility?: RepairResponsibilityContext;
+  reviewFidelity?: ReviewFidelity | null;
   phase: string;
   checks: readonly RepairCandidateCheckInput[];
   reportValidity: 'PASS' | 'FAIL' | 'UNVERIFIED';
   reviewReportText: string | null;
+  phaseIssues?: PhaseRepairIssues | null;
   verifierReportText: string | null;
   /** @deprecated legacy receipt flag, ignored. */
   conditionalReceiptValid?: boolean;
   /** details 文本兜底归因解析器（harness-runner 既有实现注入，测试同款） */
   parseClassificationFromDetails?: (details: string) => string | undefined;
+  /** §4.5：见 ReviewCandidateInput 同名字段 */
+  declinedFingerprints?: ReadonlySet<string>;
+  declinedIssues?: ReadonlyArray<DeclinedRepairIssue>;
+  verifierSubjectCurrent?: boolean;
 }
 
 /**
@@ -727,10 +1312,16 @@ export function buildSummaryRepairCandidates(
   input: SummaryRepairCandidatesInput,
 ): RepairCandidate[] {
   return collectPhaseRepairCandidates({
+    responsibility: input.responsibility ? repairResponsibilityContext(input.responsibility) : undefined,
     phase: input.phase,
     reviewReportText: input.reviewReportText,
+    phaseIssues: input.phaseIssues,
+    reviewFidelity: input.reviewFidelity,
     verifierReportText: input.verifierReportText,
     reportValidity: input.reportValidity,
+    declinedFingerprints: input.declinedFingerprints,
+    declinedIssues: input.declinedIssues,
+    verifierSubjectCurrent: input.verifierSubjectCurrent,
     checks: input.checks.map((c) => ({
       id: c.id,
       status: c.status,
@@ -744,15 +1335,23 @@ export function buildSummaryRepairCandidates(
       repair_owner: c.repair_owner,
       coding_candidate: c.coding_candidate,
       affected_files: c.affected_files,
+      structured: c.structured,
     })),
   });
 }
 
-/**
- * 回退交接上下文的事件回放恢复**唯一实现**（goal-runner resume 与测试共用）：
- * 每条 `phase_backtrack_requested` 都**无条件覆盖**——非 repair 回退（无 candidates）
- * 自动清空，旧候选不泄漏到后续 prompt（codex 冻结项④）。
- */
+/** runtime 的有界候选事件投影，证据与原身份同时保留。 */
+export function serializeBacktrackRepairCandidate(candidate: RepairCandidate): RepairCandidate {
+  return {
+    id: candidate.id, category: candidate.category, files: candidate.files.slice(0, 10),
+    summary: candidate.summary.length > 400 ? `${candidate.summary.slice(0, 400)}…` : candidate.summary,
+    item_fingerprint: candidate.item_fingerprint, source_phase: candidate.source_phase,
+    ...(candidate.identity_schema ? { identity_schema: candidate.identity_schema } : {}),
+    ...(candidate.evidence_refs ? { evidence_refs: candidate.evidence_refs } : {}),
+  };
+}
+
+/** 最后一条回退覆盖原候选；非 repair 回退自动清空，旧证据不泄漏到后续 prompt。 */
 export function restoreBacktrackCandidatesFromEvents(
   events: ReadonlyArray<{ type?: string; candidates?: unknown }>,
 ): RepairCandidate[] {
@@ -765,8 +1364,338 @@ export function restoreBacktrackCandidatesFromEvents(
 }
 
 // ---------------------------------------------------------------------------
+// 拒修与反驳状态（plan 33784ed1 §4.3）——四处判定与目标简报的唯一来源
+// ---------------------------------------------------------------------------
+// 回修轮 = 一条 phase_backtrack_requested 及其窗口（到同 run 下一条同类事件；没有时到该 run 的有效
+// run_end——resolveEffectiveRunEnd：没被其后 run_start/resume 取代的最后一条；没有则窗口开放）。
+// 拒修动作 = 候选责任阶段账本里的一行：gate_id=repair_candidate:<fp>、decision 以 `declined:` 开头，
+// run_id 等于回修轮所在 run 且 ts 落在窗口内；来源核验 = 依据里「」引文全部逐字出现在当前目标文本。
+// 只读事件与账本：内存回退待办、完成事件上的清单都不是来源。
+
+export const REPAIR_DECLINE_GATE_PREFIX = 'repair_candidate:';
+
+export interface RepairDeclineRound { run_id: string; ts: string }
+
+export interface RepairDeclineState {
+  id: string;
+  summary: string;
+  files?: string[];
+  source_phase?: string;
+  /** 有来源核验通过的拒修动作的回修轮数 */
+  declined_rounds: number;
+  /** 是否已在一次拒修之后再次出现在回修轮里（反驳轮已用） */
+  rebuttal_used: boolean;
+  /** 最近一次拒修：依据原文、所在 run 与回修轮 */
+  basis: { text: string; run_id: string; round: RepairDeclineRound } | null;
+  /** 第一次拒修所在回修轮——已尝试记录只豁免这一轮 */
+  first_declined_round: RepairDeclineRound | null;
+}
+
+/** A refusal is a public argument; only the current independent response may confirm, refute or leave it unknown. */
+export function verifiedRepairDeclineResponses(input: {
+  verifierReportText: string;
+  verifierSubjectCurrent: boolean;
+  declines: ReadonlyMap<string, RepairDeclineState>;
+}): IssueVerificationEntry[] {
+  if (!input.verifierSubjectCurrent) return [];
+  const parsed = parseIssueVerificationBlock(input.verifierReportText);
+  if (!parsed.ok) return [];
+  const out: IssueVerificationEntry[] = [];
+  for (const [fingerprint, state] of input.declines) {
+    if (!state.basis) continue;
+    const matches = parsed.entries.filter(entry => entry.issue === state.id || entry.issue === REPAIR_DECLINE_GATE_PREFIX + fingerprint);
+    if (matches.length !== 1) continue;
+    const entry = matches[0];
+    if (entry.issue === state.id && [...input.declines.values()].filter(other => other.id === state.id).length !== 1) continue;
+    if (!entry.invalid_reason && entry.evidence?.includes(state.basis.text)) out.push(entry);
+  }
+  return out;
+}
+
+export interface DeclineLedgerLine { run_id: string; gate_id: string; decision: string; ts: string }
+
+/** 来源核验：返回依据原文；不是拒修或引文不逐字 → null。 */
+export function verifiedDeclineBasis(decision: string, requirementText: string, verifyFact?: (basis: string) => boolean): string | null {
+  const m = /^\s*declined:\s*([\s\S]*\S)\s*$/.exec(decision);
+  if (!m) return null;
+  const quotes = [...m[1].matchAll(/「([^」]*)」/g)].map(q => q[1]);
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { checkRequirementQuote } = require('./fidelity-shared') as typeof import('./fidelity-shared');
+  if (quotes.length) return quotes.every(q => checkRequirementQuote(q, requirementText) === 'ok') ? m[1] : null;
+  return verifyFact?.(m[1]) ? m[1] : null;
+}
+
+/** 旧候选的 producer 类别投影；实际写权仍由当前单元的共享 resolver 决定。 */
+function roundOwnerPhase(category: unknown, files: unknown, context: RepairResponsibilityContext = {}): string | null {
+  if (category !== 'spec' && category !== 'plan' && category !== 'coding' && category !== 'verification') return null;
+  const { loadWorkflowSpec } = require('../../workflow-loader') as typeof import('../../workflow-loader');
+  const workflow = context.workflow ?? loadWorkflowSpec(context.frameworkRoot ?? path.resolve(__dirname, '../../..'), 'obligation-driven');
+  const result = resolveRepairResponsibility({ ...context, workflow, target: { category, files: Array.isArray(files) && files.every(file => typeof file === 'string') ? files : undefined } });
+  return result.owner;
+}
+
+export function resolveRepairDeclineState(input: {
+  responsibility?: RepairResponsibilityContext;
+  /** 交付周期内的 run（祖先在前与否不限，按回修事件 ts 排序） */
+  runs: ReadonlyArray<{ run_id: string; events: ReadonlyArray<{ ts?: string; type?: string; to_phase?: unknown; invalidated_phases?: unknown; candidates?: unknown }> }>;
+  /** 方法工作区 → 原账本行；同一单元作者的论据不由工作区名称裁掉。 */
+  ledgers: Readonly<Record<string, ReadonlyArray<DeclineLedgerLine>>>;
+  requirementText: string;
+  verifyFactDecline?: (input: { owner: string; ledgerOwner?: string; fingerprint: string; basis: string; runId: string }) => boolean;
+}): Map<string, RepairDeclineState> {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { resolveEffectiveRunEnd } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
+  const rounds: Array<RepairDeclineRound & { end: number; candidates: Array<{ fp: string; id: string; summary: string; owner: string; files?: string[]; source_phase?: string }> }> = [];
+  const ledgerLines = Object.entries(input.ledgers).flatMap(([ledgerOwner, entries]) => entries.map(line => ({ ledgerOwner, line })));
+  const canonicalFingerprints = new Map<string, string>();
+  for (const run of input.runs) {
+    const bts = run.events.filter(e => e.type === 'phase_backtrack_requested' && typeof e.ts === 'string');
+    // 窗口上界：同 run 下一条回修事件；没有时取 resolveEffectiveRunEnd（没被其后 run_start/resume 取代的
+    // 最后一条 run_end，其后的 finalize_* 收尾事件不影响），有则以它关窗，否则保持开放
+    //（停机后 resume 同一 run 会接着写同一个 events 文件、不重发回修事件，resume 后写的拒修仍属这一轮）。
+    const effectiveEnd = resolveEffectiveRunEnd(run.events as GoalRunEvent[]);
+    const runEnded = typeof effectiveEnd?.ts === 'string' ? Date.parse(effectiveEnd.ts) : Infinity;
+    bts.forEach((e, i) => {
+      // 原候选保留 producer 身份；拒修材料仍按真实 run、窗口和指纹绑定。
+      const candidates = (Array.isArray(e.candidates) ? e.candidates : [])
+        .map(c => c as Record<string, unknown>)
+        .filter(c => c && typeof c.item_fingerprint === 'string')
+        .map(c => {
+          const fp = String(c.item_fingerprint);
+          // 只由原事件完整身份原料证明别名。截断/缺字段不能倒推旧 fp，native 原身份不变。
+          if (c.source_phase === 'review' && typeof c.id === 'string' && typeof c.summary === 'string'
+            && Array.isArray(c.files) && c.files.every(file => typeof file === 'string')
+            && itemFingerprintOf(c.id, c.files, c.summary) === fp) {
+            canonicalFingerprints.set(fp, itemFingerprintOf(c.id, normalizeReviewFiles(c.files), c.summary));
+          }
+          return { fp, id: String(c.id ?? ''), summary: String(c.summary ?? ''), owner: roundOwnerPhase(c.category, c.files, input.responsibility),
+            ...(Array.isArray(c.files) && c.files.every(file => typeof file === 'string') ? { files: normalizeReviewFiles(c.files as string[]) } : {}),
+            ...(typeof c.source_phase === 'string' ? { source_phase: c.source_phase } : {}) };
+        })
+        .filter((c): c is { fp: string; id: string; summary: string; owner: string; files?: string[]; source_phase?: string } => c.owner !== null);
+      const next = bts[i + 1]?.ts;
+      rounds.push({ run_id: run.run_id, ts: e.ts!, end: next ? Date.parse(next) : runEnded, candidates });
+    });
+  }
+  rounds.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+  const out = new Map<string, RepairDeclineState>();
+  for (const round of rounds) {
+    const start = Date.parse(round.ts);
+    const candidates = new Map<string, typeof round.candidates[number] & { originalFps: Set<string> }>();
+    for (const candidate of round.candidates) {
+      const fp = canonicalFingerprints.get(candidate.fp) ?? candidate.fp;
+      const key = `${candidate.owner}:${fp}`;
+      const grouped = candidates.get(key);
+      if (grouped) grouped.originalFps.add(candidate.fp);
+      else candidates.set(key, { ...candidate, fp, originalFps: new Set([candidate.fp]) });
+    }
+    for (const c of candidates.values()) {
+      let st = out.get(c.fp);
+      if (!st) {
+        st = { id: c.id, summary: c.summary, declined_rounds: 0, rebuttal_used: false, basis: null, first_declined_round: null };
+        out.set(c.fp, st);
+      }
+      for (const fp of c.originalFps) out.set(fp, st);
+      if (st.declined_rounds > 0) st.rebuttal_used = true;
+      st.id = c.id;
+      st.summary = c.summary;
+      st.files = c.files; st.source_phase = c.source_phase;
+      let latest: { text: string; at: number } | null = null;
+      for (const { ledgerOwner, line } of ledgerLines) {
+        if (!c.originalFps.has(line.gate_id.slice(REPAIR_DECLINE_GATE_PREFIX.length))
+          || !line.gate_id.startsWith(REPAIR_DECLINE_GATE_PREFIX) || line.run_id !== round.run_id) continue;
+        const at = Date.parse(line.ts);
+        if (!(at >= start && at < round.end)) continue;
+        const text = verifiedDeclineBasis(line.decision, input.requirementText, basis => input.verifyFactDecline?.({
+          owner: c.owner, ledgerOwner, fingerprint: c.fp, basis, runId: round.run_id,
+        }) ?? false);
+        if (text !== null && (!latest || at >= latest.at)) latest = { text, at };
+      }
+      if (!latest) continue;
+      const key = { run_id: round.run_id, ts: round.ts };
+      st.declined_rounds += 1;
+      st.first_declined_round ??= key;
+      st.basis = { text: latest.text, run_id: round.run_id, round: key };
+    }
+  }
+  return out;
+}
+
+/** 本次出现即反驳轮：拒修过一次且反驳轮未用（整轮重复判断排除它）。 */
+export function isRebuttalAppearance(state: RepairDeclineState | undefined): boolean {
+  return !!state && state.declined_rounds === 1 && !state.rebuttal_used;
+}
+
+/** 已尝试记录的豁免：只豁免该候选第一次拒修所在的回修轮。 */
+export function declineAttemptExemption(
+  states: ReadonlyMap<string, RepairDeclineState>,
+  runId: string,
+): (backtrackEvent: { ts?: string }, fingerprint: string) => boolean {
+  return (e, fp) => {
+    const first = states.get(fp)?.first_declined_round;
+    return !!first && first.run_id === runId && first.ts === e.ts;
+  };
+}
+
+/** 未收敛停机说明：并列执行者的拒修依据与裁判的缺陷描述（§4.5）。 */
+export function declineDisputeLines(
+  candidates: ReadonlyArray<Pick<RepairCandidate, 'id' | 'summary' | 'item_fingerprint'>>,
+  states: ReadonlyMap<string, RepairDeclineState>,
+): string[] {
+  const rows = candidates.flatMap(c => {
+    const b = states.get(c.item_fingerprint)?.basis;
+    return b ? [`- ${c.id}：执行者拒修依据（run ${b.run_id}）：${b.text}；裁判缺陷描述：${c.summary}`] : [];
+  });
+  return rows.length ? ['双方依据（执行者按目标拒修、裁判仍然提出；是否修改需求由用户看过双方依据后决定）：', ...rows] : [];
+}
+
+/**
+ * 从盘上读出交付周期内的原事件、Skill 方法账本与当前目标文本，
+ * 交给 resolveRepairDeclineState。run 不存在或不可读 → 空状态。
+ */
+function repairDeclineHistory(projectRoot: string, feature: string, runId: string): Array<{ run_id: string; events: GoalRunEvent[] }> {
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const pathMod = require('path') as typeof import('path');
+  const { loadFrameworkConfig } = require('../../config') as typeof import('../../config');
+  const { featureRelativePath } = require('./feature-identity') as typeof import('./feature-identity');
+  const { readSupersededAncestorRuns, loadAuthoritativeEvents } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
+  /* eslint-enable @typescript-eslint/no-require-imports */
+  if (!runId.trim()) return [];
+  let featuresDir = 'doc/features';
+  try { featuresDir = (loadFrameworkConfig(projectRoot).paths?.features_dir ?? featuresDir).replace(/\\/g, '/'); } catch { /* 默认目录 */ }
+  const runDir = pathMod.join(projectRoot, featuresDir, featureRelativePath(feature), 'goal-runs', runId);
+  const eventsPath = pathMod.join(runDir, 'events.jsonl');
+  if (!fs.existsSync(eventsPath)) return [];
+  let successorSeed: string[] = [];
+  try {
+    const m = JSON.parse(fs.readFileSync(pathMod.join(runDir, 'manifest.json'), 'utf8')) as { successor_of?: unknown; execution_scope?: unknown };
+    if (m.execution_scope && typeof m.successor_of === 'string' && m.successor_of) successorSeed = [m.successor_of];
+  } catch { /* 无 manifest → 只看事件里的 supersede */ }
+  const events = loadAuthoritativeEvents(eventsPath);
+  const ancestors = readSupersededAncestorRuns({ projectRoot, featuresDir, feature, seedTargets: successorSeed, currentEvents: events });
+  return [...ancestors, { run_id: runId, events }];
+}
+
+export function loadRepairDeclineState(projectRoot: string, feature: string, runId: string, frameworkRoot = path.resolve(__dirname, '../../..')): Map<string, RepairDeclineState> {
+  const runs = repairDeclineHistory(projectRoot, feature, runId);
+  if (!runs.length) return new Map();
+  const { relFeaturesDir } = require('../../config') as typeof import('../../config');
+  const { loadHeadlessLedger } = require('./headless-assumptions') as typeof import('./headless-assumptions');
+  const { collectCurrentRequirementText } = require('./fidelity-shared') as typeof import('./fidelity-shared');
+  const { loadFeatureContracts, phaseContractIndex } = require('./skill-contract') as typeof import('./skill-contract');
+  const phases = phaseContractIndex(loadFeatureContracts(frameworkRoot)).keys();
+  const ledgers: Record<string, DeclineLedgerLine[]> = {};
+  for (const p of phases) ledgers[p] = loadHeadlessLedger(projectRoot, feature, p)?.entries ?? [];
+  return resolveRepairDeclineState({
+    responsibility: { projectRoot, frameworkRoot, feature, runId },
+    runs,
+    ledgers,
+    requirementText: collectCurrentRequirementText(projectRoot, feature, relFeaturesDir(projectRoot), runId),
+    verifyFactDecline: ({ owner, ledgerOwner, fingerprint, basis }) => {
+      const { loadVerifierReportTextOrNull } = require('./verifier-evidence') as typeof import('./verifier-evidence');
+      const { readVerifierMaterialOrNull } = require('./verifier-material') as typeof import('./verifier-material');
+      const { featurePhaseReportsDir } = require('../../config') as typeof import('../../config');
+      const { headlessLedgerPath } = require('./headless-assumptions') as typeof import('./headless-assumptions');
+      const evidence = readableIssueEvidence(projectRoot, basis);
+      if (!evidence.length) return false;
+      try {
+        const dir = featurePhaseReportsDir(projectRoot, feature, owner);
+        const summary = JSON.parse(fs.readFileSync(path.join(dir, 'summary.json'), 'utf8'));
+        if (!summary.verifier_request || !summary.verifier_subject_id) return false;
+        const material = readVerifierMaterialOrNull(dir, summary.verifier_subject_id);
+        const ledger = path.relative(projectRoot, headlessLedgerPath(projectRoot, feature, ledgerOwner ?? owner)).replace(/\\/g, '/');
+        for (const file of [ledger, ...evidence.map(entry => entry.label)]) {
+          if (material?.files.find(entry => entry.path === file)?.sha256 !== createHash('sha256').update(fs.readFileSync(path.resolve(projectRoot, file))).digest('hex')) return false;
+        }
+        const verification = parseIssueVerificationBlock(loadVerifierReportTextOrNull(projectRoot, feature, owner) ?? '');
+        const entries = verification.entries.filter(entry => entry.issue === `${REPAIR_DECLINE_GATE_PREFIX}${fingerprint}`);
+        return verification.ok && entries.length === 1 && entries[0].verdict === 'confirmed' && !entries[0].invalid_reason
+          && !!entries[0].evidence?.replace(/\s+/g, '').includes(basis.replace(/\s+/g, ''));
+      } catch { return false; }
+    },
+  });
+}
+
+/** One read of original ledgers and their actual request/window/fingerprint attribution. */
+export function readRepairDeclineOriginals(projectRoot: string, feature: string, runId: string | undefined, frameworkRoot = path.resolve(__dirname, '../../..')):
+  Array<{ path: string; raw: string; entries: import('./headless-assumptions').HeadlessDecisionEntry[] }> {
+  if (!runId) return [];
+  const { loadHeadlessLedger, headlessLedgerPath } = require('./headless-assumptions') as typeof import('./headless-assumptions');
+  const { loadFeatureContracts, phaseContractIndex } = require('./skill-contract') as typeof import('./skill-contract');
+  const { resolveEffectiveRunEnd } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
+  const out: Array<{ path: string; raw: string; entries: import('./headless-assumptions').HeadlessDecisionEntry[] }> = [];
+  const runs = repairDeclineHistory(projectRoot, feature, runId);
+  const windows = runs.flatMap(run => {
+    const rounds = (run.events as Array<GoalRunEvent & { candidates?: Array<{ item_fingerprint?: string }> }>)
+      .filter(event => event.type === 'phase_backtrack_requested' && typeof event.ts === 'string');
+    const end = resolveEffectiveRunEnd(run.events)?.ts;
+    return rounds.map((round, index) => ({ runId: run.run_id, start: Date.parse(round.ts ?? ''),
+      end: rounds[index + 1]?.ts ? Date.parse(rounds[index + 1].ts!) : end ? Date.parse(end) : Infinity,
+      fingerprints: new Set((Array.isArray(round.candidates) ? round.candidates : []).map(candidate => candidate.item_fingerprint)) }));
+  });
+  const { readExecutionRequestOriginal } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
+  const { workUnitExecutionRole } = require('./goal-phase-executor') as typeof import('./goal-phase-executor');
+  const { featureFilePath } = require('../../config') as typeof import('../../config');
+  for (const run of runs) {
+    const runEnd = resolveEffectiveRunEnd(run.events)?.ts;
+    for (const [index, event] of run.events.entries()) {
+      if (event.type !== 'agent_invoke_start' || !event.invoke_id || !event.ts) continue;
+      try {
+        const original = readExecutionRequestOriginal(featureFilePath(projectRoot, feature, `goal-runs/${run.run_id}`), event.invoke_id);
+        const context = original?.request.context;
+        if (!context || context.runId !== run.run_id || context.feature !== feature
+          || workUnitExecutionRole(context, original?.request.purpose) !== 'author'
+          || event.owner_id && context.owner.owner_id !== event.owner_id
+          || event.owner_epoch !== undefined && context.owner.epoch !== event.owner_epoch) continue;
+        const fingerprints = new Set([...(context.instruction ?? '').matchAll(/item_fingerprint:\s*([0-9a-f]{64})/g)].map(match => match[1]));
+        if (!fingerprints.size) continue;
+        const ended = run.events.slice(index + 1).find(item => item.type === 'agent_invoke_end' && item.invoke_id === event.invoke_id)?.ts;
+        windows.push({ runId: run.run_id, start: Date.parse(event.ts),
+          end: Math.min(ended ? Date.parse(ended) : Infinity, runEnd ? Date.parse(runEnd) : Infinity), fingerprints });
+      } catch { /* Missing original requests cannot establish another refusal window. */ }
+    }
+  }
+  for (const phase of phaseContractIndex(loadFeatureContracts(frameworkRoot)).keys()) {
+    const entries = loadHeadlessLedger(projectRoot, feature, phase)?.entries.filter(entry =>
+      entry.gate_id.startsWith(REPAIR_DECLINE_GATE_PREFIX) && entry.decision.startsWith('declined:')
+      && windows.some(window => entry.run_id === window.runId && window.fingerprints.has(entry.gate_id.slice(REPAIR_DECLINE_GATE_PREFIX.length))
+        && Date.parse(entry.ts) >= window.start && Date.parse(entry.ts) < window.end)) ?? [];
+    if (!entries.length) continue;
+    const file = headlessLedgerPath(projectRoot, feature, phase);
+    out.push({ path: path.relative(projectRoot, file).replace(/\\/g, '/'), raw: fs.readFileSync(file, 'utf8'), entries });
+  }
+  return out;
+}
+
+/** Pending and accepted refusals retain full original bytes and separately explain attribution. */
+export function repairDeclineContextFiles(projectRoot: string, feature: string, runId: string | undefined, frameworkRoot = path.resolve(__dirname, '../../..')): Array<{ label: string; content: string }> {
+  const out: Array<{ label: string; content: string }> = [];
+  for (const original of readRepairDeclineOriginals(projectRoot, feature, runId, frameworkRoot)) {
+    out.push({ label: original.path, content: '以下保留原账本完整字节；当前匹配实际请求/调用窗口及候选指纹的原行另列，其它身份/窗口的条目不采信为本次拒修。\n'
+      + original.raw + '\n当前匹配原行：\n' + original.entries.map(entry => JSON.stringify(entry)).join('\n') });
+    for (const entry of original.entries) out.push(...readableIssueEvidence(projectRoot, entry.decision));
+  }
+  if (out.length) out.push({ label: '(repair decline verification)', content:
+    '责任方拒修是待核实依据，不是修改需求或 PASS。读取原账本与当前证据；对没有目标引文的事实拒修，在原 issue-verification 块按 issue=<gate_id> 逐条给 confirmed/refuted/unclear，evidence 原样包含 declined: 后的完整依据并说明事实核对。目标冲突仍核「」内的目标原文。原提案阶段收到理由后修自身产物或补真实新事实；换ID、措辞和路径格式不算新事实。' });
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // 证据链验真器产出的候选合并（testing actionable defects——收编统一路由）
 // ---------------------------------------------------------------------------
+
+/** Existing failed design-repair results preserve independently checked refusal reasons without claiming publication. */
+export function designRepairDeclines(projectRoot: string, feature: string, runId: string): Array<{ candidate: string; basis: string; run_id: string }> {
+  const { featureFilePath } = require('../../config') as typeof import('../../config');
+  const { loadAuthoritativeEvents } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
+  try {
+    return loadAuthoritativeEvents(featureFilePath(projectRoot, feature, `goal-runs/${runId}/events.jsonl`)).flatMap(event => {
+      const e = event as unknown as Record<string, unknown>;
+      return e.type === 'design_authority_repair' && e.stage === 'failed' && e.failed_step === 'declined' && typeof e.reason === 'string'
+        ? [{ candidate: Array.isArray(e.checks) ? e.checks.map(check => String((check as { check?: unknown }).check)).join('、') : '设计提案', basis: e.reason, run_id: runId }] : [];
+    });
+  } catch { return []; }
+}
 
 /**
  * 把 testing 侧证据链验真器（collectActionableDefects：截图/build 身份/时间窗三重绑定）
@@ -785,12 +1714,14 @@ export function actionableDefectsToCandidates(
     signal_identity?: boolean;
   }>,
   sourcePhase: string,
+  responsibility?: RepairResponsibilityContext,
 ): RepairCandidate[] {
   return defects.map((d) => ({
     id: `${d.source}:${d.screen_or_case_id}`,
     category: 'coding' as const,
-    files: normalizeFiles(d.evidence_path ? [d.evidence_path] : []),
-    summary: normalizeSummary(d.instructions.join('；')),
+    files: responsibility ? repairOwnerSourceTargets('coding', d.evidence_path ? [d.evidence_path] : [], responsibility)
+      : normalizeFiles(d.evidence_path ? [d.evidence_path] : []),
+    summary: normalizeSummary((responsibility && d.evidence_path ? `诊断证据：${d.evidence_path}；` : '') + d.instructions.join('；')),
     // M1（plan e2b7c4a9）：信号级身份——collectActionableDefects 已把 fingerprint 存为
     // 单条 computeDefectFingerprint(screen, defect)；这里 sha256 成 64-hex identity。
     item_fingerprint: sha256Hex(d.fingerprint),
@@ -842,33 +1773,86 @@ export function mergeRepairCandidatesIntoSummary(input: {
  * driver 据此判目标缺席（backtrack_target_absent），不静默回链首。
  */
 export function resolveInvalidatablePhases(input: {
+  responsibility?: RepairResponsibilityContext;
+  candidates?: readonly RepairCandidate[];
   chain: readonly string[];
   /** testing 缺陷特例在场（既有 collectActionableDefects 供给；t4 收编后并入候选） */
   hasActionable: boolean;
   candidateCategories: readonly RepairOwnerCategory[];
-  track: 'full' | 'lite';
+  track: 'full';
 }): string[] {
-  const targetIdx: number[] = [];
-  if (input.hasActionable) {
-    const i = input.chain.indexOf('coding');
-    if (i >= 0) targetIdx.push(i);
-  }
-  for (const category of new Set(input.candidateCategories)) {
-    const p = mapCategoryToChainPhase(category, input.chain, input.track);
-    if (p !== null) {
-      const i = input.chain.indexOf(p);
-      if (i >= 0) targetIdx.push(i);
-    }
-  }
-  if (targetIdx.length === 0) return [];
-  return [...input.chain.slice(Math.min(...targetIdx))];
+  const { affectedScopePhases } = require('./execution-scope') as typeof import('./execution-scope');
+  const { loadWorkflowSpec } = require('../../workflow-loader') as typeof import('../../workflow-loader');
+  const workflow = input.responsibility?.workflow ?? loadWorkflowSpec(path.resolve(__dirname, '../../..'), 'obligation-driven');
+  const targets = input.candidates?.map(candidate => resolveRepairResponsibility({ ...input.responsibility, workflow,
+    target: candidate }).owner)
+    ?? input.candidateCategories.map(category => resolveRepairResponsibility({ ...input.responsibility, workflow, target: { category } }).owner);
+  if (input.hasActionable) targets.push(resolveRepairResponsibility({ ...input.responsibility, workflow, target: { category: 'coding' } }).owner);
+  return affectedScopePhases(targets.filter((owner): owner is string => !!owner && input.chain.includes(owner)), input.chain,
+    { scope: input.responsibility?.executionScope, workflow });
 }
 
 // ---------------------------------------------------------------------------
 // summary 字段形状校验（validateSummaryV11 消费；可选字段——缺失合法）
 // ---------------------------------------------------------------------------
 
-const OWNER_CATEGORIES: ReadonlySet<string> = new Set(['spec', 'plan', 'coding']);
+const OWNER_CATEGORIES: ReadonlySet<string> = new Set(['spec', 'plan', 'coding', 'verification']);
+
+function evidencePathValid(value: unknown): boolean {
+  return typeof value === 'string' && value.trim().length > 0 && !/^[\\/]|^[A-Za-z]:|\\|\0/.test(value)
+    && !value.split('/').includes('..');
+}
+
+export function validateRepairEvidenceRef(value: unknown): string[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return ['证据引用非对象'];
+  const ref = value as Record<string, unknown>;
+  const errors: string[] = [];
+  if (Object.keys(ref).some(key => !['trace_path', 'case_id', 'step_index', 'derived_plan_path', 'artifact_paths'].includes(key))) errors.push('证据引用含未知字段');
+  if (!evidencePathValid(ref.trace_path)) errors.push('trace_path 须为工程相对路径');
+  if (typeof ref.case_id !== 'string' || !ref.case_id.trim()) errors.push('case_id 缺失/空');
+  if (!Number.isInteger(ref.step_index) || Number(ref.step_index) < 0) errors.push('step_index 非非负整数');
+  if (ref.derived_plan_path !== undefined && !evidencePathValid(ref.derived_plan_path)) errors.push('derived_plan_path 须为工程相对路径');
+  if (ref.artifact_paths !== undefined && (!Array.isArray(ref.artifact_paths) || !ref.artifact_paths.every(evidencePathValid))) errors.push('artifact_paths 须为工程相对路径数组');
+  return errors;
+}
+
+/** executor prompt 的证据段；修复目标仍只来自 candidate.files。 */
+export function formatRepairEvidenceRefs(candidate: Pick<RepairCandidate, 'evidence_refs' | 'files'>): string[] {
+  const refs = Array.isArray(candidate.evidence_refs)
+    ? candidate.evidence_refs.filter(ref => validateRepairEvidenceRef(ref).length === 0) : [];
+  if (refs.length === 0) return [];
+  return [
+    ...refs.map(ref => `  只读证据：${ref.trace_path} → case=${ref.case_id} step=${ref.step_index}`
+      + (ref.derived_plan_path ? `；派生计划=${ref.derived_plan_path}` : '')
+      + (ref.artifact_paths?.length ? `；失败边界=${ref.artifact_paths.join('、')}` : '')),
+    '  读取原 StepResult 的 selector request/resolution、outcome 与 diagnostic；证据路径不是修复目标或范围授权。',
+    ...(candidate.files.length === 0 ? ['  产品源码尚未机器定位；在当前已授权范围内调查，不能把 trace/截图当作源码修改。'] : []),
+  ];
+}
+
+/**
+ * plan a2f7c9e4 §3.6 / c3f8a2d7 §3.3：返修窗口的局部复看要求——coding 收到候选（任何来源）且本 run
+ * 有设备资格（调用方由有效阶段链经 `chainRequiresDevice` 派生）时给出；其余情形返回空。
+ * 只是提示词要求：不加检查、不看 `_adhoc` 产物，设备当下是否可用仍由 adhoc 设备门判断。
+ */
+export function formatRepairLocalDiagnosis(
+  phase: string,
+  mine: readonly unknown[],
+  ctx: { harnessDir: string; feature: string; deviceCapable: boolean },
+): string[] {
+  if (phase !== 'coding' || mine.length === 0 || !ctx.deviceCapable) return [];
+  const cli = `cd ${ctx.harnessDir} && npm run adhoc-device-test -- --bundle <app bundle id>`;
+  return [
+    '**Local device diagnosis — recheck before handing back (diagnosis, not acceptance):** you have no visual judgement of your own, but you CAN obtain current device observation data — element geometry and screenshots.',
+    '- For a repair that affects device UI or interaction, when the conditions allow you MUST reproduce the relevant state with your current build and check the fix result before handing back. One valid recheck of the same screen can cover several related candidates.',
+    '- If the conditions do not allow it (device gate stops, no device, the state cannot be reached), record what you tried, the obstacle and the remaining uncertainty in the existing handoff section of coding/notes.md.',
+    '- This recheck does not replace review → UT → testing acceptance, and a missing diagnosis file never blocks the phase on its own.',
+    `- Before fixing, look at the failing screen as it is now: \`${cli} --dump-ui-only\` (current screen), or \`--observe-ui --steps "<navigation in natural language>"\` to drive there first and dump.`,
+    `- After fixing, put YOUR current build on the device and look again: add \`--install-current-build\` to the same command (it builds the current working tree with the same product/build-mode resolver as testing and force-installs it); add \`--measure-screen <screen_id> --feature ${ctx.feature}\` for a screenshot + layout + measurement of that screen's ui-spec elements.`,
+    '- By default outputs go to `doc/features/_adhoc/testing/reports/` (stderr `ADHOC_DUMP_UI_PATH=` / `ADHOC_MEASURE_DIR=`); do not point `--dump-ui-out` at formal feature directories. They only help you pick a fix: they sign nothing, are not acceptance evidence, and never replace review → UT → testing; testing re-installs and re-judges its own build. Do not edit formal testing / device-testing evidence.',
+    '- The CLI runs the device gate itself; if it stops there, keep working from the source and the evidence above instead of working around the gate. Its time counts toward this invocation\'s active time and timeout; there is no separate allowance.',
+  ];
+}
 
 export function validateRepairCandidatesShape(value: unknown): string[] {
   if (value === undefined || value === null) return [];
@@ -882,6 +1866,11 @@ export function validateRepairCandidatesShape(value: unknown): string[] {
       errors.push(`repair_candidates[${i}].category 非法（${String(r.category)}）`);
     }
     if (!Array.isArray(r.files)) errors.push(`repair_candidates[${i}].files 非数组`);
+    if (r.evidence_refs !== undefined) {
+      if (!Array.isArray(r.evidence_refs)) errors.push(`repair_candidates[${i}].evidence_refs 非数组`);
+      else r.evidence_refs.forEach((ref, index) => errors.push(...validateRepairEvidenceRef(ref)
+        .map(error => `repair_candidates[${i}].evidence_refs[${index}] ${error}`)));
+    }
     if (typeof r.item_fingerprint !== 'string' || !/^[0-9a-f]{64}$/.test(r.item_fingerprint)) {
       errors.push(`repair_candidates[${i}].item_fingerprint 非 sha256`);
     }
@@ -899,18 +1888,20 @@ export function validateRepairCandidatesShape(value: unknown): string[] {
 // 单向数据流：**输入 = 既有归属层产出的候选，输出 = 设计事实**。这里不新增 check id、
 // 不动 CHECK_ID_OWNER_REGISTRY、不判断意图——机器分不出「获准目标确有设计缺口」与
 // 「coding 改错了文件」，那一步由 plan 的独立裁决兜底（D0.3 原文：修订提议不预设结论）。
-// 触发条件只有一条：候选 category ∈ {spec, plan} 且 source_phase ∈ {coding, review}。
+// 触发条件只有一条：设计归属候选，以及完整交付中已出链的 coding 候选；source_phase ∈ {coding, review, ut, testing}。
 
 /** 允许产出修订输入的来源阶段（写集越界类未注册归属，结构上到不了这里）。 */
-const SCOPE_REVISION_SOURCE_PHASES: ReadonlySet<string> = new Set(['coding', 'review']);
+const SCOPE_REVISION_SOURCE_PHASES: ReadonlySet<string> = new Set(['coding', 'review', 'ut', 'testing']);
 
 /** 候选类别 → 它要求的设计事实种类（review 归因 spec 时是验收定义）。 */
-const SCOPE_REVISION_FACT_KIND: Readonly<Record<'spec' | 'plan', string>> = Object.freeze({
+export const SCOPE_REVISION_FACT_KIND: Readonly<Partial<Record<RepairOwnerCategory, string>>> = Object.freeze({
   plan: 'design-decision',
   spec: 'acceptance-definition',
+  coding: 'implementation',
 });
 
 export interface ScopeRevisionInputContext {
+  currentDisposition?: CurrentDisposition;
   projectRoot: string;
   frameworkRoot: string;
   feature: string;
@@ -929,45 +1920,105 @@ export function scopeRevisionInputFromRepairCandidates(
   ctx: ScopeRevisionInputContext,
 ): { input: ExecutionScopeInput; candidateIds: string[] } | null {
   const owned = candidates.filter(candidate =>
-    (candidate.category === 'spec' || candidate.category === 'plan')
-    && SCOPE_REVISION_SOURCE_PHASES.has(candidate.source_phase)
-    && candidate.files.length > 0);
+    SCOPE_REVISION_SOURCE_PHASES.has(candidate.source_phase)
+    && (candidate.files.length > 0 || candidate.category === 'coding'));
   if (!owned.length) return null;
   const runId = ctx.runId ?? process.env.MAISON_GOAL_RUN_ID?.trim();
   /* eslint-disable @typescript-eslint/no-require-imports */
-  const { loadEffectiveExecutionScope } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+  const { resolveEffectiveScopeSource } = require('./goal-run-creation') as typeof import('./goal-run-creation');
   const { OBLIGATION_PROVIDERS } = require('./execution-scope') as typeof import('./execution-scope');
-  const { resolveCapabilityInputs } = require('./capability-resolution') as typeof import('./capability-resolution');
+  const { resolveCapabilityInputs, readRunBoundContracts } = require('./capability-resolution') as typeof import('./capability-resolution');
   /* eslint-enable @typescript-eslint/no-require-imports */
   // 第五轮必修 1：无 run 时**不能**直接返回 null——那样 D0.3 的修订触发在交互路径上整条失效
   //（无 run 出口读到的提案永远是空）。统一入口自己按载体选来源：有 run 读 run 的有效范围，
   // 无 run 读 feature 冻结记录；两者皆无才不产提议。不新增第二套校验。
-  const scope = loadEffectiveExecutionScope(ctx.projectRoot, ctx.feature, runId);
+  const scope = resolveEffectiveScopeSource(ctx.projectRoot, ctx.feature, runId)?.scope;
   if (!scope) return null;
-  // 责任阶段取自**本 run 的有效范围**：同一 provider 家族里已有义务的 owner_phase 就是这一轮
-  // 解析出来的责任映射。不重读当前 active workflow——workflow 漂移时那会选错阶段甚至选不到；
-  // 范围里证明不了责任阶段就不产提议（fail-closed），不猜。
-  const ownerPhase = (kind: string): string | undefined => {
-    const family = Object.values(OBLIGATION_PROVIDERS).find(kinds => kinds.includes(kind)) ?? [];
-    return scope.obligations.find(obligation => family.includes(obligation.kind))?.owner_phase;
-  };
+  const context = repairResponsibilityContext({ ...ctx, runId, executionScope: scope });
+  const legacyRoot = inferLegacyProjectRoot(ctx.projectRoot, scope);
+  const sourceOwners = [...new Set(workUnitWriteDomains(context.contracts?.domains ?? [], scope)
+    .filter(domain => domain.kind === 'source').map(domain => domain.owner))];
 
   const facts = scope.obligations.map(obligation => structuredClone(obligation) as ExecutionScopeInput['facts'][number]);
   const responsible: string[] = [];
   const candidateIds: string[] = [];
   for (const candidate of owned) {
-    const kind = SCOPE_REVISION_FACT_KIND[candidate.category as 'spec' | 'plan'];
-    const phase = ownerPhase(kind);
-    if (!phase) continue;
+    const responsibility = resolveRepairResponsibility({ ...context, target: candidate });
+    const phase = responsibility.owner;
+    if (!phase || responsibility.action === 'design') continue;
+    if (responsibility.action === 'unavailable') {
+      const object = currentRepairObject(context, candidate);
+      const boundary = context.contracts && { ...context.contracts, executionRole: 'author' as const };
+      // This only proposes a necessary duty under the original full-Feature goal.
+      // The live source grant remains denied until the existing revision boundary accepts it.
+      const mayPropose = scope.completion_target === 'feature' && candidate.category === 'coding'
+        && object?.action === 'repair' && object.owner === phase && candidate.files.length > 0 && !!boundary
+        && candidate.files.every(file => object.files?.some(current => path.resolve(ctx.projectRoot, current) === path.resolve(ctx.projectRoot, file))
+          && repairOwnerSourceTargets(phase, [file], context).length === 1 && workUnitMayWritePath(boundary, file));
+      if (!mayPropose) continue;
+    }
+    // Existing source repairs keep their grant; definition decisions still require the original proposal.
+    if (responsibility.action === 'current' && responsibility.category !== 'plan' && responsibility.category !== 'spec' && (candidate.files.length
+      ? candidate.files.every(file => sourceOwners.some(owner => repairOwnerSourceTargets(owner, [file], context).length > 0))
+      : sourceOwners.includes(phase))) continue;
+    if (responsibility.action === 'current' && (responsibility.category === 'plan' || responsibility.category === 'spec')) {
+      // An approved absent local output stays unfinished work until its first valid definition proof.
+      const kinds = OBLIGATION_PROVIDERS[responsibility.category === 'plan' ? 'obligations.plan' : 'obligations.spec'];
+      const unfinished = scope.obligations.filter(obligation => obligation.owner_phase === phase
+        && obligation.applicability === 'required' && kinds.includes(obligation.kind));
+      const artifacts = new Set(repairOwnerArtifactTargets(phase, context).map(file => path.resolve(ctx.projectRoot, file)));
+      if (unfinished.length && unfinished.every(obligation => !obligation.satisfied_by?.length) && candidate.files.length
+        && candidate.files.every(file => {
+          const target = path.resolve(ctx.projectRoot, file);
+          const original = unfinished.flatMap(obligation => obligation.basis.flatMap(binding => binding.dependencies))
+            .filter(dependency => resolveDependencyPath(ctx.projectRoot, dependency.path, legacyRoot) === target);
+          return artifacts.has(target) && original.length > 0 && original.every(dependency => dependency.exists === false);
+        })) continue;
+    }
+    // Unit modification authority does not make a disabled formal check capability executable.
+    if (!context.workflow?.artifacts.some(artifact => artifact.id === phase)
+      || !context.skillContracts?.has(phase) || context.profile?.phasesDisabled.has(phase)) continue;
+    const provider = context.workflow?.artifacts.find(artifact => artifact.id === phase)?.obligation_provider_id;
+    const kinds = OBLIGATION_PROVIDERS[provider ?? ''] ?? [];
+    const kind = SCOPE_REVISION_FACT_KIND[responsibility.category ?? candidate.category] ?? kinds[0];
+    if (!kind) continue;
     const id = `${kind}:${candidate.id}`;
-    if (facts.some(fact => fact.id === id)) continue;
-    // 触发文件绑定走生产解析器，指纹与 §4.1.0 的核验同源（不自行拼 InputBinding）。
-    const resolved = resolveCapabilityInputs({
+    const priorFact = facts.find(fact => fact.id === id);
+    let targets = [...candidate.files];
+    let invalidated: string[] = [];
+    if (responsibility.category === 'coding') {
+      // UT 的 affected_files 是诊断落点（可含 ohosTest 目录/占位），不代表实现源码或写集。
+      // 候选只触发修订；实现事实复用本 run 已有实现依据，重新解析当前源码指纹。
+      const sourceFiles = (files: string[]): string[] => [...new Set(files.map(file => resolveDependencyPath(ctx.projectRoot, file, legacyRoot))
+        .filter(file => {
+          if (!isInsideProjectRoot(ctx.projectRoot, file)) return false;
+          try { return fs.statSync(file).isFile(); } catch { return false; }
+        }).map(file => path.relative(ctx.projectRoot, file).replace(/\\/g, '/')))];
+      targets = sourceFiles(scope.obligations.filter(obligation => obligation.kind === 'implementation')
+        .flatMap(obligation => obligation.basis.filter(binding => binding.source.kind === 'derive' && binding.source.provider_id === 'derive.codebase')
+          .flatMap(binding => binding.dependencies.filter(dep => dep.role === 'derive').map(dep => dep.path))));
+      if (!targets.length) {
+        try { targets = sourceFiles(readRunBoundContracts(ctx.projectRoot, ctx.frameworkRoot, ctx.feature, runId).files ?? []); }
+        catch { continue; } // 既有实现与受信契约都无真实源码依据时，不凭诊断猜写集。
+      }
+      if (!targets.length) continue;
+      invalidated = resolveInvalidatablePhases({ chain: context.workflow!.artifacts.filter(artifact => artifact.scope === 'feature').map(artifact => artifact.id),
+        responsibility: context, hasActionable: false, candidateCategories: ['coding'], track: 'full' });
+    }
+    // 文件绑定走生产解析器，指纹与 §4.1.0 的核验同源（不自行拼 InputBinding）。
+    const resolvedInputs = resolveCapabilityInputs({
       projectRoot: ctx.projectRoot, frameworkRoot: ctx.frameworkRoot, feature: ctx.feature, phase, track: 'full',
-      testTargets: [...candidate.files],
+      testTargets: targets,
       inputContext: { schema_version: '1.1', subject: { feature: ctx.feature }, obligations: {}, required_outputs: [] },
-    }).inputs?.values?.codebase;
+    }).inputs?.values;
+    const sourceBindings = Object.values(resolvedInputs ?? {}).filter(value => value.state === 'resolved' && value.binding.source.kind === 'derive'
+      && ['derive.codebase', 'derive.test-targets'].includes(value.binding.source.provider_id)
+      && targets.every(target => value.binding.dependencies.some(dependency => path.resolve(dependency.path) === path.resolve(ctx.projectRoot, target))));
+    const resolved = sourceBindings.find(value => value.state === 'resolved' && value.binding.source.kind === 'derive'
+      && value.binding.source.provider_id === (responsibility.category === 'verification' && kinds.includes('unit-evidence') ? 'derive.test-targets' : 'derive.codebase'));
     if (!resolved || resolved.state !== 'resolved') continue;
+    if (priorFact) facts.splice(facts.indexOf(priorFact), 1);
+    for (const fact of facts) if (scope.obligations.some(obligation => obligation.id === fact.id && invalidated.includes(obligation.owner_phase))) delete fact.satisfied_by;
     facts.push({
       id, kind, applicability: 'required',
       // 语义是「这项发现需要责任阶段裁决」，不是「机器已证明该扩展合理」——
@@ -1030,4 +2081,19 @@ export function writeScopeRevisionInputToScriptReport(
   carrier.scope_revision_input = input;
   fs.writeFileSync(scriptReportPath, JSON.stringify(report, null, 2), 'utf-8');
   return 'written';
+}
+
+/** 归因文本回退解析（**全仓唯一**"失败归因：xxx"实现）；导出供测试与 D1 判据注入，禁止复制第二份。 */
+export function extractFailureClassification(details: string): string | undefined {
+  const match = details.match(/失败归因：([a-zA-Z0-9_]+)/);
+  return match?.[1];
+}
+
+/** Shared current/carried-subject input for writer and closure recomputation. */
+export function reviewRepairVerificationContext(projectRoot: string, feature: string, runId: string | undefined, verifierSubjectCurrent: boolean): Pick<ReviewCandidateInput, 'declinedFingerprints' | 'declinedIssues' | 'verifierSubjectCurrent'> {
+  const declines = runId ? loadRepairDeclineState(projectRoot, feature, runId) : undefined;
+  return { verifierSubjectCurrent,
+    declinedFingerprints: declines ? new Set([...declines].filter(([, state]) => state.declined_rounds > 0).map(([fp]) => fp)) : undefined,
+    declinedIssues: declines ? [...declines].filter(([, state]) => state.declined_rounds > 0)
+      .map(([item_fingerprint, { id, summary, files, source_phase }]) => ({ id, summary, files, source_phase, item_fingerprint })) : undefined };
 }

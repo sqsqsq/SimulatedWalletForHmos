@@ -15,10 +15,10 @@
 //     → plan 重跑并独立裁决 → PASS 后 runner 新签 snapshot → 回 coding
 //
 // **不新增**：注册表 / 签名服务 / 凭据配置 / 新权限系统 / 新预算面 / **额外的防震荡规则**。
-// 收敛**只**由既有 DEFAULT_MAX_BACKTRACKS 负责；耗尽 / chain 不含 plan 时如实返回
+// 硬资源由 runtime 的总调用/活跃时长负责；chain 不含 plan 时如实返回
 // unavailable，由调用方落到**既有**等待机制——本模块不自造 halt 语义。
 //
-// 曾经加过一个「同一组越界文件只 replan 一次」的指纹集，**已删**：全局回退预算本就负责
+// 曾经加过一个「同一组越界文件只 replan 一次」的指纹集，**已删**：总调用/活跃时长本就兜底
 // 收敛，它是重复机制；更糟的是它**削弱自愈**——plan 第一次没扩对时，第二次本还有机会
 // 重新裁决，却被指纹提前拦掉、转去注定无效的 coding retry。
 // 注意这与既有 seenRoundFingerprints / seenDriftFingerprints **不是一回事**：那两个针对
@@ -61,7 +61,7 @@ export type ScopeReplanOutcome =
   /** 不可回退——调用方走**既有**等待机制，不得在此新造 halt 分类 */
   | {
       kind: 'unavailable';
-      reason: 'chain_lacks_plan' | 'backtrack_budget_exhausted';
+      reason: 'chain_lacks_plan';
       detail: string;
     };
 
@@ -92,7 +92,6 @@ export interface ScopeReplanInput {
    */
   phasesWithOutcome: readonly string[] | null;
   backtracksUsed: number;
-  maxBacktracks: number;
   trigger: ScopeReplanTrigger;
   /** 触发点所在阶段（事件 cause_phase）；启动期用链首 */
   causePhase: string;
@@ -123,14 +122,6 @@ export function tryScopeReplan(input: ScopeReplanInput): ScopeReplanOutcome {
         + `(b) 用户改需求走既有 correction / successor 签发新 run`,
     };
   }
-  if (input.backtracksUsed >= input.maxBacktracks) {
-    return {
-      kind: 'unavailable',
-      reason: 'backtrack_budget_exhausted',
-      detail: `回退预算已耗尽（${input.backtracksUsed}/${input.maxBacktracks}，与其他回退共用）`,
-    };
-  }
-
   const endIdx = Math.min(input.endPhaseIdx, input.chain.length - 1);
   const span = input.chain.slice(planIdx, endIdx + 1).map(String);
   const invalidatedPhases =
@@ -189,7 +180,7 @@ export type PlanAuthorityOutcome =
  *
  * runner-owned-machine-facts 裁剪（codex 定案）后语义统一为一句话：
  * **授权 = 仓内 fresh 的 plan closure**。检查复用 recomputePhaseEvidenceStaleness
- * （与截断链 preflight / assess 同一把尺）：manifest 完整性 + 回执指针锚 + 冻结面
+ * （与截断链 preflight / assess 同一把尺）：manifest schema/aggregate 完整性 + 冻结面
  * （plan.md / contracts.yaml 等 outputs∪inputs）逐文件哈希比对 + 环境重算——跨 run
  * 稳定：fresh 的 --start coding 无需本 run 状态即可开工；resume 语义相同（无内存态
  * 依赖）。pass snapshot 已整体退役（旧 per-run 快照/内存锚方案的动机与缺陷分析见
@@ -218,12 +209,12 @@ export function checkPlanAuthority(input: {
   if (input.executionScope) {
     const design = input.executionScope.obligations.filter(o => o.kind === 'design-context' && o.applicability === 'required');
     if (design.length && design.every(o => o.satisfied_by?.length) && !input.executionScope.obligations.some(o => o.kind === 'design-decision' && o.applicability !== 'not_applicable' && !o.satisfied_by?.length)) {
-      const issues = executionScopeEvidenceIssues(input.projectRoot, input.feature, input.executionScope, new Set(design.map(o => o.id)), input.currentRunId, input.pendingOwnerPhase);
+      const issues = executionScopeEvidenceIssues(input.projectRoot, input.feature, input.executionScope, new Set(design.map(o => o.id)), input.currentRunId, input.pendingOwnerPhase, input.frameworkRoot);
       return issues.length ? { kind: 'replan', reason: 'live_drift', detail: issues.join('; '), affectedFiles: [] } : { kind: 'ok' };
     }
   }
   // runner-owned-machine-facts 裁剪（codex 定案；宿主实锤 run 20260815T162931Z-3aa520）：
-  // 授权唯一依据=仓内 fresh 的 **plan closure**（phase-evidence-manifest + 回执指针，
+  // 授权唯一依据=仓内 fresh 的 **plan closure**（phase-evidence-manifest 的完整性与条目核对，
   // 跨 run 稳定）。per-run pass snapshot 只是同阶段 closure-retry 的 TOCTOU 缓存，
   // 不是授权载体——旧实现按当前 runId 查快照，跨 run 下游起点（--start coding）必得
   // kind=none → 无处回退 → halt，合法分段续跑结构性跑不通。
@@ -232,6 +223,7 @@ export function checkPlanAuthority(input: {
   //   stale → live_drift replan（changed_paths 即漂移面）；
   //   missing/tampered → closure_untrusted replan。
   const plan = recomputePhaseEvidenceStaleness(input.projectRoot, input.feature, ['plan'], {
+    runId: input.currentRunId,
     ...(input.frameworkRoot ? { frameworkRoot: input.frameworkRoot } : {}),
     ...(input.pendingOwnerPhase ? { pendingOwnerPhase: input.pendingOwnerPhase } : {}),
   })[0];
@@ -255,7 +247,7 @@ export function checkPlanAuthority(input: {
       kind: 'replan',
       reason: 'live_drift',
       detail:
-        `plan closure 冻结面已偏离（${[...fileChanges, ...envChanges, ...(plan.receipt_changed ? ['<receipt>'] : [])].join('、')}）` +
+        `plan closure 冻结面已偏离（${[...fileChanges, ...envChanges].join('、')}）` +
         '——不在漂移的授权面上开工，回 plan 重新裁决',
       affectedFiles: fileChanges,
     };

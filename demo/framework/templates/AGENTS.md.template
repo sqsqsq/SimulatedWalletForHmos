@@ -1,7 +1,8 @@
 # {{AGENT_ENTRY_FILE}} — {{PROJECT_NAME}}（{{PROJECT_TYPE_LABEL}}）全局指令
 
-> 由 `framework/skills/project/framework-init` 基于 `framework/templates/AGENTS.md.template` 实例化生成，是本工程所有 AI coding agent 的**全局系统指令**。
-> 每次对话开始：先读完这里的全局约束，再按当前任务跳到对应 Skill 执行。**这里只列清单，不复述细节**——展开文本见 [framework/skills/reference/agents-entry-detail.md](framework/skills/reference/agents-entry-detail.md)（条件加载：需要某条红线的完整判据文本时读）。
+> 由 `framework/skills/project/framework-init` 基于 `framework/templates/AGENTS.md.template` 实例化生成，是本工程所有 AI coding agent 的**全局系统指令**。每次对话开始：先读完这里的全局约束，再按当前任务跳到对应 Skill 执行。**这里只列清单，不复述细节**——展开文本见 [framework/skills/reference/agents-entry-detail.md](framework/skills/reference/agents-entry-detail.md)（条件加载：需要某条红线的完整判据文本时读）。
+
+**产品修改先后顺序**：先完整读取[统一前门](framework/docs/operations/project-entry.md)及本请求需求与源码，在**首次选路、设计写入或产品写入前**把七项发在正常可见助手文本，例如：“Q1=否，Q2=否，Q3=否，依赖结果=否，跨部件=否，预期明确=是，做法唯一=否。依据：<已读需求相对路径>、<已读源码相对路径>。”值和路径须按实际已读来源替换；内部思考、工具参数和最后总结不代替这次说明。随后按 §4.0 进入对应准备/准入：特别简单直接修改，不新增分类命令；小型先完成同协议短设计；中型/复杂的新完整交付先由既有 Goal 路径取得 admitted 设计与真实 CU 准入，再按有效范围施工。已公开七项、发现历史实现或已有短蓝图都不代替 CU 准入。真实用户覆盖、仅设计/局部终点、已有 run 与 unknown 仍按统一前门及原请求边界处理。
 
 ## 一、基础信息
 
@@ -36,32 +37,34 @@
 | 3 | Scope 守门 | spec 声明 in/out_of_scope_modules（须在 Catalog 存在）；扩展须走用户批准的提议流程；diff 不得越界 | check-spec / diff_within_scope |
 | 4 | 宿主 toolchain 守门 | {{PROFILE_AGENT_GUARDRAILS}} | compile capabilities |
 | 5 | 文档与代码同步 | contracts.yaml/use-cases.yaml 为强契约真源；架构影响声明非 none 才更新架构文档 | plan Step 12 |
-| 6 | Context Facts Gate | 该 track 首个 phase（full=spec/lite=change）建立 `context/facts.md` 全量事实，后续各 phase 只追加 `## phase_delta: <phase>` 节，不重做全量探索 | context-facts |
+| 6 | Context Facts Gate | 该 track 首个 phase（旧出生协议为 spec）建立 `context/facts.md` 全量事实，后续各 phase 只追加 `## phase_delta: <phase>` 节，不重做全量探索 | context-facts |
 | 7 | Agent 行为规约 | Research First / Minimum Viable / Surgical / Verify Before Proceed 四原则 | agent-behavioral-principles + Layer 2 量化门禁 |
-| 8 | 阶段边界推进 | 四件套 PASS ≠ 授权下一 Skill；须 `phase.next_step` 或明示授权才可推进 | user-confirmation-ux §8 |
-| 9 | framework 只读 | `framework/` 是 Maison 发布件，不就地修改；升级由用户/CI 明确集成新发布件，临时脚本放 `scratch/`（[边界细则](framework/skills/reference/consumer-framework-boundary.md)） | task sandbox / 只读挂载 / 受限 OS token；无强隔离时仅 PreToolUse 合作守卫（shell/脚本/场外进程为明确盲区，无 Git/hash 兜底） |
+| 8 | 原请求边界 | 依现有授权持续到原终点；检查PASS不扩大范围，不按phase重复确认 | user-confirmation-ux §8 |
+| 9 | framework 只读 | `framework/` 是 Maison 发布件，不就地修改；升级由用户/CI 明确集成新发布件，需求临时件放所属蓝图 `blueprint/` 或 Feature `tmp/`，无关需求诊断放系统临时目录，用完清理（[材料归属细则](framework/skills/reference/consumer-framework-boundary.md#材料归属与临时文件清理)） | task sandbox / 只读挂载 / 受限 OS token；无强隔离时仅 PreToolUse 合作守卫（shell/脚本/场外进程为明确盲区，无 Git/hash 兜底） |
 
 ## 四、工作流与 Skill 路由
 
-### 4.0 需求路由（正式性与请求终点）
+### 4.0 需求路由（统一前门与请求终点）
 
-> **两问定路由**：① 本轮要动什么（**范围**）；② 按什么标准算对（**验收语义**）。「不改实现」只回答①，不免除②。
-> **正式需求**＝有明确交付或验收责任，且拟改变**部件行为、外部契约、数据/NFR、运行语义或架构责任**的事项；不改变这些语义的**纯文档和机械维护**除外。**主 Agent 的前置责任**：把本次请求接入对应执行路径。同一交付单元的下游产出必须以**已具备的上游依据和有效范围**为输入——不得边补前置边提前施工，不得要求设计追认已写好的实现。**委派不豁免你**：子 Agent 的边界是它那个 Skill 的边界，不解除你自己的前置责任。已有有效输入与证据按规则复用，缺口交回责任方。
+所有产品修改默认消费开头的前门顺序，普通自然语言、维护、补测试同样适用；只有真实用户明确豁免才跳过。先答本轮**范围**与**验收语义**两问；「不改实现」只回答范围，不免除验收语义。判类前**先查已有依据**（既有 acceptance、蓝图、[{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}})、约束知识及源码），查到即复用并写明引用；查完仍存在影响断言或交付的语义缺口时，**只就该缺口**问用户。机器从事实派生外框，不能只填档位名，不新增分类命令/模型/表单/确认，不按行数或文件数分类。规则、判例、用户覆盖与 unknown 恢复只维护在[统一入口规则](framework/docs/operations/project-entry.md)。支持的编辑 hook 只证明同会话规则已加载，不保证逐请求语义；Shell/脚本/场外进程/未覆盖工具有盲区，无 hook 依指引及能力调用后验，真实能力见 [adapter 说明](framework/agents/README.md#前门规则与真实客户端证据)。用户可升/降档、限定验证；真实 user 原文及请求边界优先，assistant 转述/引用/代码块不授豁免。默认豁免限本请求与续作，新请求恢复 Maison；明确本会话豁免才扩大，撤销即恢复。无固定选择仅新依据或有据纠错能双向调整，保留代码、有效证据及真实 FAIL；未执行不作 PASS，权限/秘密/不可逆动作/硬预算沿原边界。新完整开发请求返回 unknown 时，按入口给出的完整设计步骤继续；同一作者可在启动前补事实后调用同一入口，不等待用户、不新增分类轮次。仅设计、局部验证、真实用户指定与已有 run 仍沿原终点。
 
-判类前**先查已有依据**（既有 acceptance、蓝图、[{{MODULE_CATALOG_PATH}}]({{MODULE_CATALOG_PATH}})、约束知识）：查到即复用并写明引用；只有涉及**新增或变更预期**才进入设计职责，再决定复用、修订还是新建蓝图——不因「不改实现」跳过②，也不因「补测试」强制新建蓝图。查完仍存在影响断言或交付的语义缺口时，**只就该缺口**问用户。正式需求进入 [component-design](framework/skills/project/component-design/SKILL.md)，沿已有需求源、蓝图与 CU 设计继续；上游明确的正式分类不得降级。非正式维护按本次范围直接完成、不创建蓝图；任何需要编译或跑测试的校验一律经框架执行器（专项 request CLI 或 `harness-runner --phase`）；不裸调 hvigor，也不引导用户去运行宿主自带脚本。执行器会从 `framework.local.json` 补齐工具链环境（`DEVECO_SDK_HOME` / JBR）——裸调不会执行这段补齐逻辑。三条边界。**准备工作（读代码、看截图、查依据）可以并行**，禁的只是依赖未满足就提前施工。**局部 review / UT / testing 请求**走各自的 request 准备路径，不强迫建蓝图或 Feature；**无 Feature 的独立测试请求，落笔写测试之前先跑 `--prepare-request` 确认落点与载体**；**已有 Feature/CU 上下文的测试沿其有效范围和阶段入口执行**，不得把正式交付中的测试拆成独立请求。**恢复已有任务**复用既有有效范围与证据，不因本节重跑完整链。
+**按外框交付**：特别简单直接修改，无新增设计文件/CU；小型在同一路径/协议写短蓝图，只保留改动点、可检验验收、已知文件和必要局部选择，不建 CU、不派独立设计质询、不产独立评审文件。中型/复杂及已有 CU 保留完整设计/准入；已有明确映射由原 writer 复用/生成，不为转录再跑 plan。新事实可使短蓝图原位扩充完整设计，用户固定外框不自动加重；在途真实用户调整沿原 run 的范围修订核源，保留历史 CU/成果/FAIL，不拆 request 清账。各档依最终内容补接口、路由、持久化、金额/幂等及架构等适用验证；注释/排版不按路径误触发逻辑专项，编译绿不代表其它专项已跑。
+
+**主 Agent 的前置责任**：把本次请求接入对应执行路径。同一交付单元的下游产出必须以**已具备的上游依据和有效范围**为输入——不得边补前置边提前施工，不得要求设计追认已写好的实现。**委派不豁免你**：子 Agent 的边界是它那个 Skill 的边界，不解除你自己的前置责任。已有有效输入与证据按规则复用，缺口交回责任方。compile/request/设计入口从可用原生环境自动核真实 user、会话与项目，不要求先编辑或手配引用；已有原 request/Goal 或显式交接沿返回的 `session_ref` 原样传给 `--session-ref`（支持 JSONL/DSH 消息引用及 OpenCode 原生 SQLite 引用），追加消息不换原锚，自动准备同 schema request，不手写 JSON/假 Feature/内部脚本，细则见 [request CLI](framework/docs/operations/request-harness.md)。**准备工作（读代码、看截图、查依据）可以并行**，禁的只是依赖未满足就提前施工。**局部 review / UT / testing 请求**先按终点用共享方法；只审查/解释/设计用例不要求 request、facts 或报告，实际写/跑测试或要求 checker 校验报告才走 request，不强迫建蓝图或 Feature；**无 Feature 的独立测试请求，落笔写测试之前完成载体与允许写界准备；自动准备并入首次能力调用**，显式 request-file 仍可先跑 `--prepare-request`；**已有 Feature/CU 上下文的测试沿其有效范围和阶段入口执行**，不得把正式交付中的测试拆成独立请求。**恢复已有任务**复用既有有效范围与证据，不因本节重跑完整链。任何需要编译或跑测试的校验一律经框架执行器（纯编译用 `npm run compile`，测试用专项 request CLI 或正式 `harness-runner --phase`）；不裸调 hvigor，也不引导用户去运行宿主自带脚本。执行器会从 `framework.local.json` 补齐工具链环境（`DEVECO_SDK_HOME` / JBR）——裸调不会执行这段补齐逻辑，`framework/` 只读保护始终优先。
 
 | 请求终点 | 主 Agent 的职责 |
 |---|---|
-| 显式 Skill / 局部维护 | 仅执行该职责；project 原生 CLI 或 review/UT/testing 的 request CLI；产出请求结果后结束 |
+| 只编译工程 | `cd framework/harness` 后运行 `npm run compile -- --project-root <宿主根> --json`；不强造 Feature；特别简单同次自动核源；已有请求复用返回的 session_ref |
+| 特别简单 / 小型产品修改 / 显式局部能力 | 特别简单直接修改；小型先完成同协议短设计，再沿同一原 request 调用 compile/架构及适用 review/UT/testing，断言绑定当前蓝图具体验收；请求结果不冒充 CU/Component 完成 |
 | 查看 / 局部设计 / 完整设计 | 复用已有产物，按缺口继续；component-design 到本次设计终点或 CU readiness 即交还结果，不启动施工 |
-| 完整实现交付 | **依赖顺序，不是验证流水线**：① **设计交接**（admitted blueprint + ready CU）是范围候选的输入——蓝图与 CU 不是可并行赶的文书，是范围的来源；② `goal-mode-entry --prepare-scope` 生成候选并写入 `feature.yaml`（主 Agent 只提供四项输入：**完成终点**、**请求结果**、**明确的请求动作** `--requested-phases`、**影响判断及其来源路径**；绑定、指纹、unit/device/visual 派生、code-review 补齐全部由机器完成），核对它打印的范围投影——**`--prepare-scope` 只生成候选、不冻结范围**；③ 进入受管执行：**不建 run** 则逐阶段 `harness-runner --phase <p> --feature <f>`，**首次阶段调用**冻结 feature 级范围记录并核对候选指纹；**建 run** 则 `--prepare-run` 创建真实 attended Goal（以转交时 feature 的有效范围出生）；④ 各阶段产物只在其阶段内产生，两条路都按冻结的 `execution_scope` 推进到完成终点。**用户已授权完整交付时，走完这条链到完成终点是主 Agent 自己的事**——不把正式闭环当收尾时可再问一次的可选项，仍须询问的只有既有确认点（真实授权、策展语义、预算、外部不可逆动作、设计缺口澄清）。|
-| 继续 | 先读取已有 active run、冻结范围和 successor/revision；恢复该运行，不重新选择流程 |
+| 完整实现交付（完整设计；中型/复杂及已有 CU） | 主Agent最初判类并传原请求/来源/影响与可信授权；有人经prepare-run/next/report-result，无人经goal-runner --detach，共用一个完成协调器及各root/CU/request专用作者。无CU先受管设计、真实独立质询和发布，再持续全部适用CU和原部件终点。公开检查用原作者request/owner/fence，不重派同名phase作者。全部CU绿或evaluate条件绿不代签component，正式writer记录并重读校验后才消费。需求、模型/视觉钉和显式用户UTC截止按原件继承；新run无默认总轮次/阶段配额。完整交付授权后持续执行，不重复phase确认；真实范围变化、秘密、不可逆操作和用户限制仍按原授权。 |
+| 继续 | 先读取已有 active run、冻结范围和 successor/revision；恢复该运行，不重新选择流程，同请求不因途中 commit/恢复重置起始基线或洗掉失败 |
 
-阶段不是固定套餐：有可复用输入不补物理文档；unknown 交既有责任方补依据；仅 review 不自动安排 UT/testing。新任务按义务计算范围；旧运行恢复见 MIGRATION。
+阶段不是固定套餐：有可复用输入不补物理文档；unknown 交既有责任方补依据；仅 review 不自动安排 UT/testing。会话按 `--next` 返回的精确命令上报：`--report-result '@<当前请求结果输入文件>' --request '<已签发请求绝对路径>'`。只写该请求指定的结果输入文件，原请求、身份与时限保持原件。正常 CU/Feature 的 `feature.yaml.execution_scope` 是出生前候选，run 的 `manifest.execution_scope` 是冻结范围权威；无 CU 的受管初始设计变体没有施工范围，不代表写产品获准。新请求使用 obligation-driven，按义务计算范围，旧运行恢复见 MIGRATION。
 
 **普通请求由主 Agent 负责**：framework-init 仅用于明确安装、更新、配置或 adapter 物化意图；产物提及 framework 不构成 init 意图。init-next-steps 是可选建议，不授权 catalog、glossary、Graph 或 Feature 全链。入口与独立动作见 [项目请求入口](framework/docs/operations/project-entry.md)。
 
-**修正三问**（中途 NL 修正必答，先分层再动手）：
+**修正三问**（在途 Feature 的中途 NL 修正必答；普通维护不跑 correction-init）：
 
 | 问 | 是 → 落点层 |
 |---|---|
@@ -69,9 +72,9 @@
 | Q2 需求没变，接口/契约/设计要变？ | plan（plan.md/contracts.yaml；旧记录=change.md Scope/关键契约） |
 | Q3 上游都没错——要改产品代码？ | 是→coding；否（纯补验证）→ut/testing |
 
-`--correction-init` 按上述事实自动路由责任阶段，不要求人签、不写状态、没有收口命令。只改根因层 SSOT 产物、代码与测试输入，再跑一次 `--revalidate --feature <feature> [--from <phase>]`：落点层及下游已闭环 phase 只重跑脚本门禁并按既有闭环路径收口（语义 verifier 不重审——材料未变复用既有报告，材料变了但历史有 PASS 标 `completed_with_prior_review`，差异登记在 `summary.verifier_closure`）；重验 ≠ 重做，不重新进入六阶段、不重写 spec/plan/review 全文（相应产物追加"修正记录"小节即可），不为修正另建 feature 或状态。
+`--correction-init` 按上述事实自动路由责任阶段，不要求人签、不写状态、没有收口命令。只改根因层 SSOT 产物、代码与测试输入，再跑一次 `--revalidate --feature <feature> [--from <phase>]`：落点层及下游已闭环 phase 只重跑脚本门禁并按既有闭环路径收口（语义 verifier 不重审——材料未变复用既有报告，变化材料必须独立补核受影响内容，不借历史PASS自动关闭）；重验 ≠ 重做，不重新进入六阶段、不重写 spec/plan/review 全文（相应产物追加"修正记录"小节即可），不为修正另建 feature 或状态。
 重验后按**漂移分级**补一次复核，不无条件重走 review→UT→testing：文档/报告/备注变化不复审产品；测试代码变化只跑相关测试；导航/状态/业务交互变化做一次 scoped diff review；布局/字号/颜色/资源变化做一次真机截图或 `--measure` 几何量测复核；多类同时变化做一次最终合并 diff review（`review_closure_attestation` / `ut_no_src_mutation` 以 WARN 列出所需复核类型并如实标注，不再永久 BLOCKER）。用户反馈是 successor/correction 输入，不是对上一 run 的签名。
-**已完成后的修正**不走重验（重验只做在途的机械复检、不签发完成）：在同一 feature 上以 supersede 起一个后继 run，范围由框架按当前输入与既往证据算出，只跑未覆盖义务的责任阶段、其余复用；feature 载体（无 run 完成）先追加范围修订再起新 run。改动已提交进仓库的，起后继时把基线重设为当前提交；未提交的沿用源 run 基线。测试用例一律由后继的 UT 阶段以新增测试文件或新增用例产出（同字节重写不算覆盖），框架不把基线里已有的测试算作本轮覆盖证据。
+**明确要求已完成 Feature 正式重新交付时**不走重验（重验只做在途的机械复检、不签发完成）：在同一 feature 上以 supersede 起一个后继 run，范围由框架按当前输入与既往证据算出，只跑未覆盖义务的责任阶段、其余复用；feature 载体（无 run 完成）先追加范围修订再起新 run。改动已提交进仓库的，起后继时把基线重设为当前提交；未提交的沿用源 run 基线。测试输入由该工作单元作者在实际授权内修订，受影响验证须读取真实断言与执行原件（同字节重写不算覆盖），框架不把基线里已有的测试算作本轮覆盖证据。
 
 ### 4.0.1 阶段 Skill 总表
 
@@ -89,19 +92,19 @@
 | 1-6. Spec/Plan/编码/审查/业务级UT/真机测试 | [framework/skills/feature/{spec,plan,coding,code-review,business-ut,device-testing}/SKILL.md](framework/skills/README.md) |
 
 {{EXTENSION_SKILL_SECTION}}
-> **catalog-bootstrap（catalog+glossary）是所有其它 Skill 的前置**：先建好 Catalog+Glossary，后续 spec 术语消歧与 Scope 守门才有可校验基准。
 
-**执行规则**：进入某阶段前必须完整读一遍对应 SKILL.md 主干；SKILL.md 内"条件加载索引"指向的 reference/template/checklist **仅在对应场景/步骤触发时才读**，不是入口即全读（C3 skill-slim）。产物必须通过 `harness-runner.ts --phase <phase> --feature <name>` 及独立 verifier 子 agent 执行 `verify-*.md`。
+{{COMPONENT_DESIGN_KNOWLEDGE}}
+> **catalog-bootstrap（catalog+glossary）**：正式需求的术语消歧与模块 Scope 消费相应资料；独立编译不要求先建 Catalog/Glossary，专项请求只补实际缺少的输入。
 
-**主 agent 与 verifier 子 agent 职责切分**（反误读明示授权，BLOCKER）：结构级 harness 必须由主 agent 自己执行（不得等 verifier/用户）；语义级 verify 在结构级 PASS 后由主 agent 主动通过 Task 工具触发 verifier 子 agent。完整反误读文本见 [agents-entry-detail.md](framework/skills/reference/agents-entry-detail.md)。
+**执行规则**：按当前真实问题读取适用Skill方法；条件加载资料只在触发时读。phase选择工具检查族，不是作者资格。工作单元作者持续修实现与测试输入，正式检查、核验与完成原件由原producer/writer产生。
+
+**作者与verifier职责**：原单元专用作者接收完整当前反馈；独核只消费真实request/material，保完整拒修论据、原报告与受影响diff，不能自写产品或自签PASS。主会话只接入/观察/呈现，不代施工、不重复派独核。
 
 **实例扩展与生命周期钩子**：允许在不改 `framework/` 前提下挂业务 Skill/知识/phase 钩子，落点 `doc/extensions/`（`paths.extension_dir` 可覆盖）。触发询问时机与协议 SSOT 见 reference。
 
-## 五、交付凭证与阶段闭环判定
+## 五、当前事实与完成判定
 
-每阶段完成须在 `{{FEATURES_DIR}}/<feature>/<phase>/reports/<timestamp>/<model>-<phase>/trace.json` 产出凭证（schema 见 `framework/harness/trace/trace.schema.json`）。**阶段闭环 = harness verdict=PASS + verifier 一次 PASS + `check-receipt.ts` 通过**（trace.json 由 harness 产出；verifier 只跑一次——材料未变复用既有报告，材料变了但历史有 PASS 沿用并如实标 `completed_with_prior_review`；回执是 harness 只读投影，agent 不手填，备注写 `<phase>/notes.md`；harness 输出末尾的 `NEXT:` 行就是下一步）；`init`/`catalog`/`glossary`/`docs` 四个全局阶段豁免。严禁仅口头宣告完成；Stop hook（若配置）以此判据物理拦截。
-
-**跨会话恢复**：新会话/继续 feature 前须先 `check-receipt.ts --feature <feature> --phase <phase>`（或 `harness-runner.ts --sync-closure`）；exit 0 → 已闭环，停等 `phase.next_step`，禁止重跑。清理陈旧状态：`harness-runner.ts --clear-state`。会话边界表/resume 完整机制见 reference。
+检查、独核和输入绑定沿原writer保真。readCurrentDispositionInput / resolveCurrentDisposition是唯一当前处置，status/progress/NEXT/完成及release只读同一结果；本次已有currentResults/disposition直接透传。FAIL/unknown/缺正式原件不签完成，events中的COMPLETED或作者退出0也不能替代业务依据。完整原请求还需其真实Feature/CU/部件终点；普通完成与发布就绪分别投影。跨会话先接原run和原请求；有效结果复用，同条件等待不重派，真实条件变化后只补受影响部分。原生SID失效则重建专用上下文并披露。原用户截止不重置，取消/设备/写保护及真实调用结束继续有效。
 
 ## 六、与用户交互的硬性规则
 

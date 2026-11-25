@@ -1050,6 +1050,9 @@ function buildRenderEnv(
     module_catalog_path: vars.MODULE_CATALOG_PATH,
     glossary_path: vars.GLOSSARY_PATH,
     conventions_path: vars.CONVENTIONS_PATH,
+    component_index_path: vars.COMPONENT_INDEX_PATH,
+    component_catalog_path: vars.COMPONENT_CATALOG_PATH,
+    component_design_knowledge: vars.COMPONENT_DESIGN_KNOWLEDGE,
     features_dir: vars.FEATURES_DIR,
     module_inner_layers_csv: Array.isArray(arch?.module_inner_layers)
       ? (arch.module_inner_layers as string[]).join(' / ')
@@ -1488,6 +1491,7 @@ function inspect03(env: InspectorEnv): Inspection[] {
       const upsert = computeHooksConfigUpsert(
         tgBuf === null ? null : tgBuf.toString('utf-8'),
         tplBuf.toString('utf-8'),
+        env.projectRoot,
       );
       if (upsert.status === 'unchanged') {
         fileRows.push({
@@ -2023,6 +2027,7 @@ function applyInitMechanismSync(
       const upsert = computeHooksConfigUpsert(
         existingBuf === null ? null : existingBuf.toString('utf-8'),
         tplBuf.toString('utf-8'),
+        projectRoot,
       );
       if (upsert.status === 'invalid_json' || upsert.status === 'invalid_schema') {
         // 第七轮 codex P1-2：blocked 须可见传播（不再记 unchanged 静默）——effect: 'blocked'
@@ -2400,6 +2405,7 @@ const checker: PhaseChecker = {
           const upsert = computeHooksConfigUpsert(
             tgBuf === null ? null : tgBuf.toString('utf-8'),
             tplBuf.toString('utf-8'),
+            ctx.projectRoot,
           );
           if (upsert.status === 'invalid_json' || upsert.status === 'invalid_schema') {
             problems.push(`${f.targetRel}: ${upsert.note ?? upsert.status}`);

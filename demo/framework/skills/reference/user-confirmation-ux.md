@@ -66,7 +66,7 @@
 
 ### 3.4 Artifact + portable（registry: `spec.terminology`）
 
-对话 gate 后 **必须写回** artifact；口头 OK 无效。正式需求在 `/component-design` 确认，写回蓝图 `discovery.facts` 的 `term:<术语>` 事实（`provenance.extraction_method: user_confirmed`，由 `check-component-blueprint terminology_facts_confirmed` 校验）；CU-bound spec 的术语映射表只投影蓝图、不再用本确认点。spec 只在非 CU-bound（存量平铺 Feature）使用本确认点，写回 spec `## 0. 术语映射表` 的 `[x]` 列。
+对话 gate 后 **必须写回** artifact；口头 OK 无效。先按 [统一前门](../../docs/operations/project-entry.md) 核适用外框；以下为进入完整蓝图/CU 路径后的术语确认，不为特别简单额外建蓝图或制造确认。适用设计在 `/component-design` 确认，写回蓝图 `discovery.facts` 的 `term:<术语>` 事实（`provenance.extraction_method: user_confirmed`，由 `check-component-blueprint terminology_facts_confirmed` 校验）；CU-bound spec 的术语映射表只投影蓝图、不再用本确认点。spec 只在非 CU-bound（存量平铺 Feature）使用本确认点，写回 spec `## 0. 术语映射表` 的 `[x]` 列。
 
 ```text
 1. 全部确认 confidence=high 的行（写回蓝图 term: 事实 user_confirmed；非 CU-bound：spec [x]）
@@ -156,15 +156,15 @@ S1 **`InitTaskPlan.adapter_catalog[]`** 为唯一程序化候选源；registry `
 - ❌ 聊天 OK 但未写回 artifact（spec `[x]`、gap-notes）
 - ❌ freeform 提议未展示正文只要用户回 `1`
 - ❌ 多题并存时接受裸 `y` / `好`（init/setup 编排须 registry 编号；见 §3 gate/enum）
-- ❌ 阶段闭环（closed）后在**同一 agent 执行流**自动 Read 下一 Skill 并开干（见 §8）
+- ❌ 用检查PASS扩大原请求范围，或对已授权完整交付按phase重复确认/轮流派作者（见§8）
 - ❌ 把 `phase-completion-receipt.md` / trace / 「可进入 Skill N」当作下一阶段授权
-- ❌ **headless / goal-mode** 下仍 stop 问用户（触发 `headless_interaction_required` 或等价行为）——见 §9
+- ❌ **已获原目标内自动决议授权** 时仍为同项 stop 问用户（触发 `headless_interaction_required` 或等价行为）——见 §9
 
 ---
 
 ## 9. Goal / headless 无人值守闸门解析（BLOCKER）
 
-当 **goal-runner** 以 headless 方式拉起 phase agent 时（`buildPhasePrompt` 注入 Unattended 块），阶段内确认闸门须按本节自动解析，**禁止** stop 问人。
+当共同授权策略确认原目标内自动决议时，阶段内确认按本节解析，不重复问已授权事项。detached 保留既有完整交付来源；attended 主 Agent 从可信原全权授权在 prepare/每次控制调用重传非持久 --authorize-autonomy。never/goal_mode、打印文本和 Agent 留痕不授业务权；真实目标/验收改变、秘密、不可逆动作与用户硬预算仍守实际授权。
 
 ### 9.1 按 interaction class 默认解析
 
@@ -191,10 +191,8 @@ S1 **`InitTaskPlan.adapter_catalog[]`** 为唯一程序化候选源；registry `
 {"decision_id":"<唯一>","run_id":"<run id>","phase":"<phase>","gate_id":"<registry id>","class":"<gate|enum|matrix|artifact_checkbox|freeform>","decision":"<决议内容，或 n/a: 理由>","must_review":true,"source":"agent","ts":"<ISO 8601>"}
 ```
 
-- **check-receipt BLOCKER 校验**（goal 环境）：文件缺失 / 行 schema 非法（含 phase/run_id 失配、
-  decision_id 重复、source 非 agent|goal-runner、ts 非法）/ confirmation-registry.yaml 中该
-  phase 任一 gate 无对应行（decision 或显式 `n/a: 理由`）→ 阶段闭环失败。registry 不可读同样
-  fail-closed。
+- 账本只留痕，不拥有阶段闭环否决权（check-receipt 的账本校验已退役）；返修候选的拒修记录
+  （`gate_id=repair_candidate:<指纹>`）由 goal 运行时从账本回放消费。
 - `headless-assumptions.md` 降级为**人读投影**（可选）；旧 md-only 现场兼容读取时表格行
   **保守全量**计入待复核（事故教训：行内正则 vs 表格错配曾让待审清单静默消失）。
 - **账本 ≠ 授权**：自动决议账本只记录普通输入、假设与审计 provenance，不能降低任何硬门禁。
@@ -204,73 +202,19 @@ S1 **`InitTaskPlan.adapter_catalog[]`** 为唯一程序化候选源；registry `
 
 ### 9.4 与交互态关系
 
-本节 **仅** 在 goal-runner headless prompt 生效。用户对话内直接跑 spec/plan 等 Skill **不**注入 Unattended 块，仍走 §3 交互流程。
+本节按共同授权策略生效，运输声明仍如实区分 attended/detached。直接单职责 Skill 不因 goal_mode/默认 never 获得全权；未授权会话沿 §3。换会话先恢复可信原授权再重传，不能从日志自授，也不重复询问已明确授权的用户。
 
 ---
 
-## 8. 阶段边界推进（BLOCKER）
+## 8. 原请求授权与持续执行（BLOCKER）
 
-**阶段闭环（harness + verifier + evidence + trace PASS）只证明当前 phase 完成，不授权下一 Skill。**
+先核本次范围、验收终点及已有可信授权。明确授权的完整交付由同一完成协调器持续推进，不在每个检查族结束后重复调 phase.next_step / *.ok_to_*；这些旧登记只供兼容说明，不再创建 phase 派工队列。直接专项请求仍止于原终点，不借检查PASS扩大授权。
 
-「可进入 Skill N」= **资格**，≠ **授权**。Stop hook 只管「假完成」，不管「擅自开下一阶段」。
+用户选择有人在场或无人值守；歧义才用 goal.run_mode，--detach 恒为无人值守。可命令适配器共用原 goal-mode-entry / GoalPhaseRuntime。各工作单元有专用作者上下文，独立核验保持真实独立；缺SID时重建专用上下文并披露，不回主会话施工。
 
-### 8.1 默认策略 `transition_policy=manual`
+assess/NEXT 是共同当前事实的展示，不授予写权或重新派工。只读 assess 默认不写 next.json，显式 --write 才更新投影；缺失、损坏、stale缓存从当前原件重读，不手改投影。所有适用必修、补核与等待原因完整呈现；普通完成、正式Feature/CU/部件终点及release就绪保持区别。
 
-启动下一 Skill 前，须满足以下**任一**：
-
-1. 用户消息含下一 Skill **触发意图**（各 SKILL「触发条件」关键词）；
-2. 用户消息含 **batch 多阶段意图**（§8.2）→ `transition_policy=batch_authorized`；
-3. 用户通过 **`phase.next_step`** 或对应 **`*.ok_to_*`** 闭环闸门确认（见 registry）；
-4. **`goal_mode`**：`goal-runner` manifest 显式启动（见 [goal-mode/SKILL.md](../project/goal-mode/SKILL.md)）；自然语言触发词为「目标模式 / 全自动」等；裁决 SSOT 在 runner，非对话内自驱动。
-
-**禁止**：读完 `phase-completion-receipt.md` 或 trace 后，在同一 agent 执行流内自动 Read 下一 Skill 并开干。
-
-**闭环后默认动作（manual）**：汇报本 phase 摘要 → 调 **`phase.next_step`**（确认菜单 + portable 编号）→ **停等**。
-
-| 当前 phase 闭环后 | 专用闸门（可选，与 `phase.next_step` 等价语义） |
-|-------------------|--------------------------------------------------|
-| spec | `phase.next_step`（`spec.freeze` 只冻结 spec 内容，不替代闭环停等，除非 batch 授权） |
-| plan | `plan.ok_to_code`（Step 13.1 PASS 后 **每次** MUST，含首遍 plan） |
-| coding | `coding.ok_to_review` 或 `phase.next_step` |
-| review | `review.ok_to_ut` 或 `phase.next_step` |
-| ut | `ut.ok_to_testing` 或 `phase.next_step` |
-| testing | `phase.next_step`（通常仅「暂停 / 结束」） |
-
-### 8.2 Batch 多阶段授权（`batch_authorized`）
-
-用户**同一条或可追溯承接**的消息声明多阶段范围时，允许在**已声明范围内**连续执行；**超出范围仍须停等**。
-
-启发式示例（非穷举）：
-
-- 「做到 review / 做到 CR / coding 并 review」
-- 「spec 到 UT / 全链路交付 / 从 plan 到真机测试」
-- 「对 `<feature>` 做到 `<phase>` 为止」
-
-解析 SSOT：`framework/harness/scripts/utils/phase-transition-policy.ts`（lint + unit test）。
-
-### 8.2b Goal 模式（`goal_mode` / goal-runner）
-
-用户通过 `/goal-mode`、自然语言（**目标模式 / 全自动 / 无人值守全自动**）或 [goal-mode](../project/goal-mode/SKILL.md) 显式启动时，`transition_policy=goal_mode`。解析 SSOT：`resolveTransitionPolicy` — **goal_mode 优先于** §8.2 的 `batch_authorized`（同句同时命中时以 goal 为准）。
-
-运行方式只暴露 **有人在场 / 无人值守**：明确意图直接映射；歧义时使用 [confirmation-registry.yaml](./confirmation-registry.yaml) 的 `goal.run_mode`；`--detach` 恒为无人值守。不得在菜单中暴露 in-session/headless/tier。
-
-主 agent **自跑** driver/goal-runner（勿让用户手跑 harness）。跨 phase 推荐只来自 `assess@1`，driver 再执行授权、预算、fencing、设备与 trust 门禁；每次只执行一个 phase 后重新 assess。运行证据：`<features_dir>/<feature>/goal-runs/<run-id>/`。
-
-- DEFERRED（外部阻塞）≠ completed；新 run 的成功态是 `CHAIN_SLICE_COMPLETED`，feature 完成仍须 `verify-feature-completion=VALID`。
-- 运行手册：`framework/docs/operations/goal-mode-runbook.md`
-
-### 8.3 `phase.next_step` portable 模板
-
-```text
-{current_phase} 阶段已闭环（harness / verifier / evidence / trace 齐全）。
-
-请选择下一步（回复编号；支持 widget 时可直接选，同轮仍附下列编号）：
-1. 执行 assess 推荐动作 — {assess_recommendation}
-2. 暂停 — 本阶段到此，暂不进入下游
-3. 其它 — 我在对话中说明意图
-```
-
-`{assess_recommendation}` 来自刚生成且指纹已验证的 `assess@1`；投影位于 `<paths.features_dir>/<feature>/next.json`。缺失、损坏或 stale 时，从实例工程 `framework/harness/` 运行 `npx ts-node scripts/assess.ts --project-root <repo-root> --framework-root <repo-root>/framework --feature <feature>` 原子重算（只读巡检加 `--no-write`）；不得手改投影。推荐不构成授权，仍由当前 driver 按 `transition_policy` 裁决。
+真实授权缺口、实质目标/验收变化、秘密或不可逆外部操作仍按既有确认点处理；框架故障本身不制造新人工门禁。能继续的授权工作持续执行，确无可做工作才说明具体producer/对象解除条件。新run无默认轮次/回退/总墙钟配额；显式用户截止、取消和真实工具/设备/owner写保护继续有效。
 
 ---
 

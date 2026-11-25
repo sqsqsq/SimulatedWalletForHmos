@@ -19,10 +19,9 @@ import {
   extractJsonObjectFromText,
   hashImageFile,
   invokeVisualProvider,
-  resolveSpecObservationBudget,
   type VisualProviderInvocation,
 } from './visual-provider-invoke';
-import type { ProviderRef } from './types';
+import { adapterModelBinding, type ProviderRef } from './types';
 
 /** 观察协议版本——形态/prompt 契约变更时 +1，旧 sidecar 自动 stale 重产。 */
 export const VISUAL_OBSERVATION_PROTOCOL_VERSION = 1;
@@ -94,7 +93,7 @@ export function isVisualObservationReusable(
     d.protocol_version === VISUAL_OBSERVATION_PROTOCOL_VERSION &&
     d.image_hash === expected.imageHash &&
     d.provider?.adapter === expected.provider.adapter &&
-    d.provider?.model === expected.provider.model &&
+    adapterModelBinding(d.provider && { ...d.provider, value: d.provider.model }) === adapterModelBinding({ ...expected.provider, value: expected.provider.model }) &&
     Array.isArray(d.observations)
   );
 }
@@ -129,8 +128,9 @@ export function parseVisualObservationPayload(
   body: string,
   expected: { imageHash: string },
 ): { ok: true; observations: VisualObservationEntry[] } | { ok: false; reason: string } {
-  const doc = extractJsonObjectFromText(body);
-  if (!doc) return { ok: false, reason: '正文中没有可解析的 JSON 对象' };
+  let parseError = '';
+  const doc = extractJsonObjectFromText(body, reason => { parseError = reason; });
+  if (!doc) return { ok: false, reason: '正文中没有可解析的 JSON 对象：' + parseError };
   const hashes = doc.image_hashes;
   if (!Array.isArray(hashes) || !hashes.includes(expected.imageHash)) {
     return { ok: false, reason: `image_hashes 未回显当前图片 hash（${expected.imageHash}）` };
@@ -168,7 +168,7 @@ export interface ProduceVisualObservationsInput {
  * spec 期逐图生产 sidecar（**幂等**：三元复用键齐等即跳过）。
  *
  * 失败语义与 OCR 预扫描逐字对齐：单图失败 `continue`，整体异常也只是少几份 sidecar，
- * **绝不抛出、绝不阻断 spec**。批次上限 = min(参考图数, 单 run 封顶)。
+ * **绝不抛出、绝不阻断 spec**。仅处理真实参考图，已有三元有效结果直接复用。
  *
  * 返回：盘上可用的 sidecar 的 project-relative 路径（含本轮新产与既有复用）。
  */
@@ -182,9 +182,7 @@ export async function produceVisualObservationSidecars(
     return listVisualObservationOutputs(input.projectRoot, input.frameworkRoot, input.feature);
   }
 
-  const budget = resolveSpecObservationBudget(input.referenceImages.length);
   const used = new Set<string>();
-  let spent = 0;
 
   for (const imgAbs of input.referenceImages) {
     const base = sanitizeVisualObservationSlug(path.basename(imgAbs, path.extname(imgAbs)));
@@ -206,9 +204,6 @@ export async function produceVisualObservationSidecars(
         /* 坏文件按未命中处理，下面重产覆盖 */
       }
     }
-    if (spent >= budget) continue; // 批次上限：超出部分本轮不产（下轮再补）
-    spent += 1;
-
     const invokeId = `obs-${slug}-${imageHash}`;
     const inv = await invokeVisualProvider({
       projectRoot: input.projectRoot,

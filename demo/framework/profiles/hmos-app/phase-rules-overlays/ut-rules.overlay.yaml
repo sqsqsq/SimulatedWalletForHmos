@@ -83,9 +83,9 @@ structure_checks:
 
   usecase_ui_bindings_nonempty:
     description: >
-      use-cases.yaml 中每个 use_case 的 ui_bindings 至少有 1 条，
-      且全体 user_actions 合起来 ≥ 1 条（否则这条流不涉及 UI 触发，
-      应直接用 dag.yaml 测 Repository 级函数，不应产出 use-cases.yaml）。
+      明确 ui_change=none 且未声明任何 UI 绑定的数据流程不要求 UI 绑定。
+      其余 use_case 的 ui_bindings 至少有 1 条，且全体 user_actions 合起来 ≥ 1 条；
+      UI 声明缺失时不推定为纯数据流程。
     severity: BLOCKER
     rule:
       only_if_exists: "<features_dir>/{feature}/use-cases.yaml"
@@ -347,9 +347,11 @@ structure_checks:
 
   boundaries_all_stubbed:
     description: >
-      当 feature 产出了 use-cases.yaml 时：use-cases.yaml 中声明的每个
-      data_boundary，对应 UT 文件必须 new 出一个 Spy/Fake/Stub 实现
-      并注入业务编排对象（class 命名格式：Spy{type} / Fake{type} / Stub{type}）。
+      当 feature 产出了 use-cases.yaml 时：仅对 type 已登记在
+      contracts.interfaces[].class 中的 data_boundary，要求对应 UT 文件
+      new 出一个 Spy/Fake/Stub 实现并注入业务编排对象
+      （class 命名格式：Spy{type} / Fake{type} / Stub{type}）；
+      未登记类型由 boundary_matches_contracts WARN 披露。
     severity: BLOCKER
     rule:
       only_if_exists: "<features_dir>/{feature}/use-cases.yaml"
@@ -435,7 +437,7 @@ structure_checks:
   ut_unsupported_targets_handled:
     description: >
       testability-audit.md 中 testability_level=L3 的每条记录必须 selected ∈ {option_a, option_b}：
-      option_a → acceptance.yaml 对应条目必须填写 device_focus；
+      option_a → 定义未闭环或 unit 义务仍在时生成 spec 裁定候选，UT 不改 acceptance、不自批降级；
       option_b → 当前 UT 阶段 FAIL，并生成 coding repair candidate；coding 完成源码可测性改造
       且重走 review 后，审计应降为 L1/L2 再继续 UT。
     severity: BLOCKER

@@ -16,6 +16,8 @@ import {
 } from './change-unit-ready-set';
 import { selectNextChangeUnit } from './change-unit-selection';
 import { validateChangeUnitProviderBoundary } from './change-unit-provider-boundary';
+import { loadEffectiveExecutionScope, deliveryCycleView, supersededRunIds } from './goal-run-creation';
+import { executionCompletionPhases } from './execution-scope';
 
 export type ChangeUnitProgressionAction =
   | 'resume_active'
@@ -76,7 +78,6 @@ export interface ChangeUnitProgressLoopOptions {
   inspectActiveRuns?: (projectRoot: string, units: ChangeUnitArtifact[]) => ChangeUnitRunsInspection;
   caller: ChangeUnitGoalCaller;
   buildHandoff?: (projectRoot: string, unit: ChangeUnitArtifact) => ChangeUnitGoalHandoff;
-  maxUnits?: number;
 }
 
 export function inspectActiveChangeUnitRuns(
@@ -89,8 +90,10 @@ export function inspectActiveChangeUnitRuns(
     const featureId = deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id);
     const runsDir = featureFilePath(projectRoot, featureId, 'goal-runs');
     const classified = classifyGoalRunsDir(runsDir);
+    const retired = supersededRunIds(deliveryCycleView(projectRoot, featureId).siblings, false);
     for (const item of classified.corruptRuns) corrupt.push({ featureId, runId: item.runId, reason: item.reason });
     for (const runId of [...classified.runs].reverse()) {
+      if (retired.has(runId)) continue;
       const events = filterAuthoritativeEvents(loadEventsJsonl(path.join(runsDir, runId, 'events.jsonl')));
       if (events.length > 0 && !resolveEffectiveRunEnd(events)) {
         active.push({ featureId, runId });
@@ -135,18 +138,24 @@ export function deriveChangeUnitProgressionDecision(
   return { action: 'blocked', reasons: reasons.length > 0 ? reasons : ['没有 ready CU，且未达到 component closure handoff。'], readySet };
 }
 
-export function buildChangeUnitGoalHandoff(projectRoot: string, unit: ChangeUnitArtifact): ChangeUnitGoalHandoff {
+export function buildChangeUnitGoalHandoff(projectRoot: string, unit: ChangeUnitArtifact, existing?: { runId: string; frameworkRoot?: string }): ChangeUnitGoalHandoff {
+  const request = buildChangeUnitGoalRequest(projectRoot, unit);
+  const scope = existing ? loadEffectiveExecutionScope(projectRoot, request.featureId, existing.runId, existing.frameworkRoot) : undefined;
+  const expected = scope ? { expectedTrack: 'full', expectedChain: executionCompletionPhases(scope) }
+    : resolveChangeUnitExpectedExecution(projectRoot, request.featureId, !existing, existing?.frameworkRoot);
+  return { ...request, ...expected };
+}
+
+/** The exact formal handoff input is also used before a construction scope is available. */
+export function buildChangeUnitGoalRequest(projectRoot: string, unit: ChangeUnitArtifact): Omit<ChangeUnitGoalHandoff, 'expectedTrack' | 'expectedChain'> {
   const loaded = loadCanonicalChangeUnit(projectRoot, unit.blueprint_id, unit.change_unit_id);
   const featureId = deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id);
-  const expected = resolveChangeUnitExpectedExecution(projectRoot, featureId, true);
   const ref = createChangeUnitRef(loaded);
   return {
     featureId,
     canonicalPath: loaded.canonicalPath,
     changeUnitRef: ref,
     componentBlueprintRef: unit.component_blueprint_ref,
-    expectedTrack: expected.expectedTrack,
-    expectedChain: expected.expectedChain,
     requirement: [
       `Implement exactly canonical Change Unit ${loaded.canonicalPath}.`,
       `change_unit_ref=${JSON.stringify(ref)}`,
@@ -156,6 +165,7 @@ export function buildChangeUnitGoalHandoff(projectRoot: string, unit: ChangeUnit
   };
 }
 
+/** One mechanical step; the original-request kernel keeps monitoring and selects the next unit. */
 export async function runChangeUnitProgression(
   projectRoot: string,
   blueprintId: string,
@@ -166,36 +176,33 @@ export async function runChangeUnitProgression(
     const readySet = deriveChangeUnitReadySet(projectRoot, blueprintId, options.ready);
     return { action: 'blocked', reasons: providerBoundary.blockers, readySet };
   }
-  const maxUnits = options.maxUnits ?? Number.MAX_SAFE_INTEGER;
-  let invoked = 0;
-  while (true) {
-    const readySet = deriveChangeUnitReadySet(projectRoot, blueprintId, options.ready);
-    const units = readySet.units.map(item => item.changeUnit);
-    const inspection = (options.inspectActiveRuns ?? inspectActiveChangeUnitRuns)(projectRoot, units);
-    const decision = deriveChangeUnitProgressionDecision(readySet, inspection);
-    if (decision.action !== 'select_one' || !decision.selected || invoked >= maxUnits) return decision;
-    const result = await options.caller((options.buildHandoff ?? buildChangeUnitGoalHandoff)(projectRoot, decision.selected));
-    invoked++;
-    if (result.status !== 'completed') {
-      return {
-        action: result.status === 'paused' || result.status === 'awaiting_human' ? 'resume_active' : 'blocked',
-        activeRun: result.runId ? { featureId: deriveChangeUnitFeatureId(decision.selected.blueprint_id, decision.selected.change_unit_id), runId: result.runId } : undefined,
-        reasons: [result.reason ?? `Goal Mode returned ${result.status}; no second CU was started.`],
-        readySet: deriveChangeUnitReadySet(projectRoot, blueprintId, options.ready),
-      };
-    }
-    const refreshed = deriveChangeUnitReadySet(projectRoot, blueprintId, options.ready);
-    const selectedAfterCall = refreshed.units.find(item => (
-      item.changeUnit.change_unit_id === decision.selected!.change_unit_id
-    ));
-    if (selectedAfterCall?.completion.state !== 'VALID') {
-      return {
-        action: 'blocked',
-        reasons: [
-          `change_unit_no_progress_after_completed:${decision.selected.change_unit_id}:completion=${selectedAfterCall?.completion.state ?? 'MISSING'}`,
-        ],
-        readySet: refreshed,
-      };
-    }
+  const readySet = deriveChangeUnitReadySet(projectRoot, blueprintId, options.ready);
+  const units = readySet.units.map(item => item.changeUnit);
+  const inspection = (options.inspectActiveRuns ?? inspectActiveChangeUnitRuns)(projectRoot, units);
+  const decision = deriveChangeUnitProgressionDecision(readySet, inspection);
+  if (decision.action !== 'select_one' || !decision.selected) return decision;
+  const result = await options.caller((options.buildHandoff ?? buildChangeUnitGoalHandoff)(projectRoot, decision.selected));
+  if (result.status !== 'completed') {
+    return {
+      action: result.status === 'paused' || result.status === 'awaiting_human' ? 'resume_active' : 'blocked',
+      activeRun: result.runId ? { featureId: deriveChangeUnitFeatureId(decision.selected.blueprint_id, decision.selected.change_unit_id), runId: result.runId } : undefined,
+      reasons: [result.reason ?? `Goal Mode returned ${result.status}; no second CU was started.`],
+      readySet: deriveChangeUnitReadySet(projectRoot, blueprintId, options.ready),
+    };
   }
+  const refreshed = deriveChangeUnitReadySet(projectRoot, blueprintId, options.ready);
+  const selectedAfterCall = refreshed.units.find(item => (
+    item.changeUnit.change_unit_id === decision.selected!.change_unit_id
+  ));
+  if (selectedAfterCall?.completion.state !== 'VALID') {
+    return {
+      action: 'blocked',
+      reasons: [
+        `change_unit_no_progress_after_completed:${decision.selected.change_unit_id}:completion=${selectedAfterCall?.completion.state ?? 'MISSING'}`,
+      ],
+      readySet: refreshed,
+    };
+  }
+  return deriveChangeUnitProgressionDecision(refreshed,
+    (options.inspectActiveRuns ?? inspectActiveChangeUnitRuns)(projectRoot, refreshed.units.map(item => item.changeUnit)));
 }

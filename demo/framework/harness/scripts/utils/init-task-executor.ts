@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 
-import { clearFrameworkConfigCache, loadFrameworkConfigWithSources } from '../../config';
+import { clearFrameworkConfigCache, loadFrameworkConfigWithSources, validateArchitectureDsl } from '../../config';
 import { __testing as checkInitTesting } from '../check-init';
 import { detectScan } from '../detect-deveco';
 import { ensurePersonalSetup } from './personal-setup-gate';
@@ -21,6 +21,8 @@ import {
 } from './config-field-merger';
 import { updateLocalConfig } from './framework-local-config';
 import type { FrameworkLocalConfig } from './framework-local-config';
+import type { ProviderRef } from './types';
+import { resolveVisualProviderCliSelection } from './goal-manifest-cli';
 import {
   formatVisualProviderSupportList,
   isVisualProviderSupported,
@@ -74,7 +76,7 @@ export interface InitExecutionContext {
    * 收集后由 Skill 注入）。**agent 不手写 framework.local.json**——写盘唯一走
    * record-visual-provider 任务的 updateLocalConfig。缺省=用户跳过，本轮 blind。
    */
-  visualProvider?: { adapter: string; model: string };
+  visualProvider?: ProviderRef;
   confirmAnswers?: Record<string, boolean>;
   /** CREATE 模式 ensure-config：整文件 JSON（由 Skill 在 S2 收集后注入） */
   configWritePayload?: Record<string, unknown>;
@@ -89,6 +91,20 @@ export interface InitExecutionContext {
 
 function configPath(projectRoot: string): string {
   return path.join(projectRoot, 'framework.config.json');
+}
+
+/** Design publication uses the same validated config payload, backup and write path as init. */
+export function publishArchitectureRevision(projectRoot: string, architecture: Record<string, unknown>): void {
+  const prepared = prepareConfigWriteForTask({ projectRoot, configWritePayload: { architecture } }, 'overwrite');
+  validateArchitectureDsl(prepared.architecture as Parameters<typeof validateArchitectureDsl>[0]);
+  writePreparedConfig(projectRoot, prepared);
+}
+
+function writePreparedConfig(projectRoot: string, prepared: Record<string, unknown>): void {
+  const cfgP = configPath(projectRoot);
+  if (fs.existsSync(cfgP)) backupConfig(projectRoot);
+  fs.writeFileSync(cfgP, `${JSON.stringify(prepared, null, 2)}\n`, 'utf-8');
+  clearFrameworkConfigCache();
 }
 
 function backupConfig(projectRoot: string): string {
@@ -179,6 +195,7 @@ export function preflightValidateHooksConfigTargets(
         const upsert = computeHooksConfigUpsert(
           fs.existsSync(tgAbs) ? fs.readFileSync(tgAbs, 'utf-8') : null,
           fs.readFileSync(tplAbs, 'utf-8'),
+          projectRoot,
         );
         if (upsert.status === 'invalid_json' || upsert.status === 'invalid_schema') {
           seenTargets.add(targetRel);
@@ -238,6 +255,7 @@ function assertStructuredUpsertTargetsMergeable(
     const upsert = computeHooksConfigUpsert(
       fs.existsSync(tgAbs) ? fs.readFileSync(tgAbs, 'utf-8') : null,
       fs.readFileSync(tplAbs, 'utf-8'),
+      ctx.projectRoot,
     );
     if (upsert.status === 'invalid_json' || upsert.status === 'invalid_schema') {
       blocked.push({ targetRel: normalizeTargetRel(f.targetRel), effect: 'blocked' });
@@ -304,6 +322,7 @@ function syncTemplateTarget(
     const upsert = computeHooksConfigUpsert(
       fs.existsSync(tgAbs) ? fs.readFileSync(tgAbs, 'utf-8') : null,
       tplBuf.toString('utf-8'),
+      ctx.projectRoot,
     );
     if (upsert.status === 'invalid_json' || upsert.status === 'invalid_schema') {
       return { targetRel: norm, effect: 'blocked' };
@@ -404,6 +423,7 @@ function writeConfigMerge(
 
 function runHarnessInstall(harnessRoot: string): string {
   const r = spawnSync('npm', ['install'], {
+    windowsHide: true,
     cwd: harnessRoot,
     shell: true,
     encoding: 'utf-8',
@@ -422,6 +442,7 @@ function runGlobalPhases(harnessRoot: string, projectRoot: string): string {
       'npx',
       ['ts-node', 'harness-runner.ts', '--phase', phase, '--feature', '_global'],
       {
+        windowsHide: true,
         cwd: harnessRoot,
         shell: true,
         encoding: 'utf-8',
@@ -478,9 +499,7 @@ export function executeInitTask(
       } catch (e) {
         throw new Error(`ensure-config：config 校验失败：${(e as Error).message}`);
       }
-      if (fs.existsSync(cfgP)) backupConfig(ctx.projectRoot);
-      fs.writeFileSync(cfgP, `${JSON.stringify(toWrite, null, 2)}\n`, 'utf-8');
-      clearFrameworkConfigCache();
+      writePreparedConfig(ctx.projectRoot, toWrite);
       return { message: '已写入 framework.config.json' };
     }
     case 'backfill-config': {
@@ -694,9 +713,11 @@ export function executeInitTask(
           '请重新选择，或跳过并以 blind 模式继续。',
         );
       }
+      const provider = resolveVisualProviderCliSelection({ 'visual-adapter': adapter, 'visual-model': model,
+        'visual-provider': sel?.provider, 'visual-reasoning': sel?.reasoning_effort, 'visual-model-config': sel?.config_source }, ctx.projectRoot, sel);
       updateLocalConfig(ctx.projectRoot, (cur) => ({
         ...cur,
-        vision: { ...cur.vision, visual_provider: { adapter, model } },
+        vision: { ...cur.vision, visual_provider: provider },
       }));
       return {
         message: `已写入 framework.local.json vision.visual_provider=${adapter}:${model}`,

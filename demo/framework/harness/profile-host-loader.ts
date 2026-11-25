@@ -11,15 +11,37 @@ import type { GraphExtractor } from './graph-extractor/types';
 import type { CheckContext, CheckResult } from './scripts/utils/types';
 import type { FileAnalysis } from './scripts/utils/ast-analyzer';
 
+export type ProjectCompileContext = Pick<CheckContext, 'projectRoot' | 'frameworkRoot' | 'harnessRoot' | 'resolvedProfile'> & {
+  feature?: string;
+  reportDir?: string;
+};
+
+export interface ProjectCompileResult {
+  checks: CheckResult[];
+  execution?: {
+    executed?: boolean;
+    exitCode?: number;
+    command?: string;
+    logPath?: string;
+    metaPath?: string;
+    durationMs?: number;
+  };
+}
+
 /** ArkTS / 其它宿主下由 profile 贡献的源码后缀列表（不含点也可，调用方 normalize） */
 export type ProfileCodingHost = {
   readonly sourceFileSuffixes: readonly string[];
+  /** Current validated build output, not a source write attributable to an author. */
+  isGeneratedArtifact?(projectRoot: string, file: string, feature: string): boolean;
   runStructureChecks(ctx: CheckContext, analyses: FileAnalysis[]): CheckResult[];
   runTraceabilityChecks(ctx: CheckContext): CheckResult[];
   /** 真实编译闭环（工具链与失败归因文案由 profile 承担；根 check-coding 仅编排） */
   checkCodingCompile(ctx: CheckContext): CheckResult[];
+  /** 工程级构建与恢复；独立调用必须传宿主报告目录，不依赖 Feature 契约。 */
+  compileProject?(ctx: ProjectCompileContext): ProjectCompileResult;
+  /** Existing profile architecture/export predicates with actual files, without Feature identity. */
+  checkProjectArchitecture?(ctx: ProjectCompileContext & { files: string[]; phaseRule: CheckContext['phaseRule'] }): CheckResult[];
   /**
-   * 可选 lint provider（C1 feature-track：lite exit 门禁派发点）。
    * 未实现 = 宿主无 lint 工具链声明——exit 侧呈现 MAJOR WARN 可见缺项，不阻断闭环。
    */
   checkCodingLint?(ctx: CheckContext): CheckResult[] | Promise<CheckResult[]>;
@@ -61,6 +83,7 @@ export type UtHostImpl = {
     featureNewUtFiles?: Array<{ path: string }>,
     /** plan 5e1c7a93 D1：同次 check-ut 调用内共享的 ohosTest 出包结果（调用方按次创建） */
     builds?: Map<string, unknown>,
+    partition?: Pick<UtFilePartition, 'scopeSources' | 'scopeDiagnostics'>,
   ): CheckResult[];
   checkUtHvigorTest(
     ctx: CheckContext,
@@ -69,7 +92,8 @@ export type UtHostImpl = {
     targetCases?: Array<{ path: string; test: string }>,
     /** plan 5e1c7a93 D1：build 阶段出的包；缺席即走 runHvigorTest 内建出包，行为逐字不变 */
     builds?: Map<string, unknown>,
-  ): CheckResult[];
+    partition?: Pick<UtFilePartition, 'scopeSources' | 'scopeDiagnostics'>,
+  ): CheckResult[] | Promise<CheckResult[]>;
   checkTestRegistration(
     ctx: CheckContext,
     utFiles: Array<{ path: string }>,

@@ -38,6 +38,7 @@ import {
   featurePhaseReportsDir,
 } from '../../../harness/config';
 import { diagnoseInstallBlocking, writeUtInstallDiagJson } from './device-install-diag';
+import { isLibraryFormat, parseJson5, SDK_RESERVED_SCOPE } from './har-export-resolve';
 // type-only：编译期擦除，不构成 hvigor-runner ↔ hdc-runner 运行期 import 环
 // （运行期互调仍走函数内 require，见 runHvigorTest）。
 import type {
@@ -47,6 +48,7 @@ import type {
 } from './hdc-runner';
 import { inferRepoLayout, harnessRootFromLayout } from '../../../harness/repo-layout';
 import { stripTrustAnchorEnv } from '../../../harness/scripts/utils/process-integrity';
+import { computeHapSha256Full } from './build-fingerprint';
 import {
   resolveProductSelection,
   buildProductSelectionUnresolvedGuidance,
@@ -65,14 +67,15 @@ export interface OnDeviceFailureEvidence {
   unsignedPresent?: boolean;
   signSkipped?: boolean;
   signingConfigMissing?: boolean;
-  installDiagnosis?: Pick<HdcFailureDiagnosis, 'kind' | 'summary' | 'suggestion'>;
+  artifactValidation?: StaleSignedSuspect;
+  installDiagnosis?: Pick<HdcFailureDiagnosis, 'kind' | 'summary' | 'suggestion' | 'systemSetup'>;
   /**
    * t1（openspec device-readiness-and-completion）：aa test 阶段诊断的**结构化**透传。
    * 此前该诊断只进 `errors[].message` 的散文（`失败阶段：device_locked；…`），下游分类
    * 只能靠子串匹配判 device_locked——既脆弱又无法参与机器判定，导致锁屏最终兜底成
    * `code_regression`（须改码、可重试）。结构化后由 `kind` 直接驱动分类。
    */
-  runDiagnosis?: Pick<HdcFailureDiagnosis, 'kind' | 'summary' | 'suggestion'>;
+  runDiagnosis?: Pick<HdcFailureDiagnosis, 'kind' | 'summary' | 'suggestion' | 'systemSetup'>;
 }
 
 export interface HvigorRunResult {
@@ -116,6 +119,11 @@ export interface HvigorRunResult {
   signSkipped?: boolean;
   /** 日志命中 `No signingConfigs profile is configured`（signSkipped 的已知原因之一） */
   signingConfigMissing?: boolean;
+  /** 本次实际调用的非秘密环境选择（不代表签名子进程的已观测执行）。 */
+  environment?: ReturnType<typeof describeHvigorEnvironment>;
+  /** 同调用 UT 出包复用所绑定的实际维度与当前包；不套用主应用记录。 */
+  buildInvocation?: HvigorInvocationDims;
+  builtHap?: { path: string; sha256: string } | null;
 }
 
 /**
@@ -160,6 +168,7 @@ export interface HypiumTestResult {
   failed: number;
   skipped: number;
   failures: Array<{ suite: string; test: string; message: string }>;
+  passed_tests?: Array<{ suite: string; test: string }>;
 }
 
 export interface ProjectDependencyIssue {
@@ -332,11 +341,6 @@ const PROJECT_DEPENDENCY_PATTERNS = [
   /Module not found/i,
 ];
 
-// ohpm 物理上**无法声明**的点分 SDK / 系统命名空间（SDK 自带，不进 oh-package.json5）。
-// 只收窄到点分命名空间；@hms-* / @hw-* 等连字符 vendor scope 是真·第三方 ohpm 包，绝不在此过滤
-// （否则会把真实缺声明吞成漏报、并破坏现有单测）。
-const SDK_RESERVED_SCOPE = /^@(?:ohos|kit|system|arkts)(?:\.|$)/i;
-
 /** 版本目录碎片（如 @1.0.0-301/oh_modules）——非包名，来自 .ohpm 缓存路径，物理上不可声明。 */
 function isVersionFragmentDep(scope: string, name: string): boolean {
   return /^@\d/.test(scope) || name === 'oh_modules';
@@ -491,14 +495,30 @@ export function sanitizeLogModuleName(moduleName: string): string {
 /**
  * 识别 hvigor「task 不存在」失败（plan 423e5d0f P0）：
  *   `ERROR: Task 'genOnDeviceTestHap' was not found in project ...`
- * 这是**工程构建配置形态**问题（常见：该模块未注册 ohosTest target，hvigor 因此不挂载
- * 对应 hook task），不是 UT 代码问题——不得引导改 UT 或 ohpm install。
+ * 先核对模块类型对应的任务，再核对真实配置/插件；根 targets 只列 default 不证明 UT 未注册。
  */
 export function detectHvigorTaskNotFound(log: string): { task: string } | null {
   const cleaned = stripAnsi(log);
-  const m = /Task\s+['"]?([\w:@.-]+)['"]?\s+(?:was\s+)?not\s+found/i.exec(cleaned);
+  const m = /Task\s+(?:\[\s*)?['"]?([\w:@.-]+)['"]?(?:\s*\])?\s+(?:was\s+)?not\s+found/i.exec(cleaned);
   if (m) return { task: m[1] };
   return null;
+}
+
+/** Build and execution use the same module declaration; contracts only cross-check it. */
+export function resolveUtBuildTask(projectRoot: string, moduleName: string, contractFormat?: string): string {
+  const module = listBuildProfileModules(projectRoot).find(entry => entry.name === moduleName);
+  if (!module) throw new Error(`UT 构建配置：工程未登记模块 ${moduleName}`);
+  const file = path.join(projectRoot, module.srcPath, 'src/main/module.json5');
+  let type: unknown;
+  try { type = (parseJson5(fs.readFileSync(file, 'utf-8')) as { module?: { type?: unknown } }).module?.type; }
+  catch (error) { throw new Error(`UT 构建配置：无法读取 ${file}：${(error as Error).message}`); }
+  const format = type === 'entry' || type === 'feature' ? 'HAP' : type === 'har' ? 'HAR' : type === 'shared' ? 'HSP' : null;
+  if (!format) throw new Error(`UT 构建配置：${moduleName} 的 module.type 无效：${String(type)}`);
+  const declaredFormat = contractFormat?.trim().toUpperCase();
+  if (declaredFormat && (declaredFormat === 'ATOMICSERVICE' ? 'HAP' : declaredFormat) !== format) {
+    throw new Error(`UT 构建配置：${moduleName} 的 module.type=${String(type)} 与 contracts.format=${contractFormat} 不一致`);
+  }
+  return isLibraryFormat(format) ? 'genOnDeviceTestHap' : 'assembleHap';
 }
 
 /**
@@ -645,6 +665,7 @@ function resolveHvigorCommand(
     : ['hvigorw', 'hvigor'];
   for (const name of globalCandidates) {
     const probe = spawnSync(isWin ? 'where' : 'which', [name], {
+      windowsHide: true,
       encoding: 'utf-8',
       shell: false,
     });
@@ -722,6 +743,66 @@ export function buildChildEnv(projectRoot: string): NodeJS.ProcessEnv {
   }
 
   return env;
+}
+
+/** 只解析本次子进程 PATH，不猜测签名脚本最终执行的 Java 或版本兼容性。 */
+export function describeHvigorEnvironment(env: NodeJS.ProcessEnv, cwd: string) {
+  const pathValue = env[process.platform === 'win32' ? 'Path' : 'PATH'] ?? env.PATH ?? '';
+  const javaName = process.platform === 'win32' ? 'java.exe' : 'java';
+  let pathJava: string | null = null;
+  for (const entry of pathValue.split(path.delimiter)) {
+    if (!entry.trim()) continue;
+    const candidate = path.resolve(cwd, entry.trim().replace(/^"|"$/g, ''), javaName);
+    try {
+      if (fs.statSync(candidate).isFile()) {
+        fs.accessSync(candidate, process.platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK);
+        pathJava = candidate; break;
+      }
+    } catch { /* 下一个 PATH 条目 */ }
+  }
+  return {
+    DEVECO_SDK_HOME: env.DEVECO_SDK_HOME ?? null,
+    JAVA_HOME: env.JAVA_HOME ?? null,
+    pathJava,
+    pathJavaSource: pathJava ? 'child_process_PATH' : 'unknown',
+  };
+}
+
+export interface HvigorVersionProbeResult {
+  ok: boolean;
+  hvigorBin?: string;
+  version?: string;
+  error?: string;
+  command?: string;
+  cwd: string;
+  args: string[];
+  invocationDriver?: string;
+  environment?: ReturnType<typeof describeHvigorEnvironment>;
+  exitCode?: number | null;
+  timedOut?: boolean;
+}
+
+export function runHvigorVersionProbe(projectRoot: string): HvigorVersionProbeResult {
+  const base = { cwd: projectRoot, args: ['--version'] };
+  let facts: Omit<HvigorVersionProbeResult, 'ok'> = base;
+  try {
+    const env = buildChildEnv(projectRoot);
+    const environment = describeHvigorEnvironment(env, projectRoot);
+    const resolved = resolveCodingHvigorSpawnPlan(projectRoot, base.args);
+    if ('toolMissing' in resolved) return { ...base, environment, ok: false, error: buildToolMissingMessage(projectRoot) };
+    const plan = resolved.spawnPlan;
+    facts = { ...base, environment, command: plan.commandDisplay, hvigorBin: plan.hvigorBin,
+      invocationDriver: plan.invocationDriver };
+    const result = spawnSync(plan.spawnFile, plan.useShell ? [] : plan.spawnArgs, {
+      cwd: projectRoot, env, shell: plan.useShell, encoding: 'utf-8', timeout: 60_000, windowsHide: true,
+    });
+    const version = `${result.stdout ?? ''}\n${result.stderr ?? ''}`.match(/(\d+\.\d+\.\d+)/)?.[1];
+    return { ...facts, ok: !result.error && result.status === 0, version,
+      exitCode: result.status, timedOut: (result.error as NodeJS.ErrnoException)?.code === 'ETIMEDOUT',
+      error: result.error?.message ?? (result.status === 0 ? undefined : `hvigor --version exit=${result.status}`) };
+  } catch (error) {
+    return { ...facts, ok: false, error: (error as Error).message };
+  }
 }
 
 /**
@@ -1013,8 +1094,8 @@ export function buildHvigorDiagnostics(log: string): string[] {
     diagnostics.push(
       [
         '检测到 PackageHap/SignHap 阶段 spawn java ENOENT：签名链找不到 java 可执行文件（非 ArkTS 编译错误）。',
-        'Harness 已从 framework.local.json → toolchain.devEcoStudio.installPath 推导 DevEco JBR 并前插 Path/JAVA_HOME。',
-        '真机 testing 在「源码触发重编」前会自动执行 hvigor --stop-daemon，避免旧 daemon worker 沿用无 java 的环境。',
+        'Harness 按现行规则尝试从 framework.local.json → toolchain.devEcoStudio.installPath 派生 JBR/bin 前插 PATH；有效 JAVA_HOME 保留，缺失或失效才回退。',
+        '主应用打包装机使用 --no-daemon 并保留增量；JAVA_HOME 与子进程 PATH 首个 Java 分别记录在元数据中，不能据此推断签名服务根因。',
         '若仍失败：在 DevEco 内 Build Hap 一次，或确认系统 JAVA_HOME 未指向无效目录。',
       ].join(' '),
     );
@@ -1056,6 +1137,7 @@ function parseHypiumOutput(log: string): HypiumTestResult {
   const lines = log.split(/\r?\n/);
 
   let curSuite = '';
+  let pendingTest = '';
   for (const line of lines) {
     // OHOS_REPORT_RESULT 汇总行（hypium）
     //  OHOS_REPORT_RESULT: Tests run: 12, Failure: 2, Error: 0, Pass: 10
@@ -1078,9 +1160,16 @@ function parseHypiumOutput(log: string): HypiumTestResult {
     //  搭配 OHOS_REPORT_STATUS: test=<name> 与 stack=<msg>
     const mTest = line.match(/OHOS_REPORT_STATUS:\s*test=(.+)/);
     if (mTest) {
+      pendingTest = mTest[1].trim();
       // 保存"最近一个 test" 便于配对 stack
       (result as unknown as Record<string, string>).__lastTest = mTest[1].trim();
       continue;
+    }
+
+    const status = line.match(/OHOS_REPORT_STATUS_CODE:\s*(-?\d+)\s*$/);
+    if (status && Number(status[1]) !== 1) {
+      if (Number(status[1]) === 0 && pendingTest) (result.passed_tests ??= []).push({ suite: curSuite, test: pendingTest });
+      pendingTest = '';
     }
 
     const mStack = line.match(/OHOS_REPORT_STATUS:\s*stack=(.+)/);
@@ -1330,6 +1419,7 @@ export function discoverAppHapArtifacts(projectRoot: string, buildProduct?: stri
     for (const segEnt of segEntries) {
       if (!segEnt.isDirectory()) continue;
       const segment = segEnt.name;
+      if (resolvedProduct && segment !== resolvedProduct) continue;
       const outputsRoot = path.join(buildRoot, segment, 'outputs');
       if (!fs.existsSync(outputsRoot)) continue;
       let outEntries: fs.Dirent[];
@@ -1391,38 +1481,50 @@ export function findAppSignedHap(projectRoot: string, buildProduct?: string): st
 }
 
 /**
- * G2（plan d7e4b2a9 t2）：signed HAP 是否可能基于「上一轮」unsigned 产物——纯观测，
- * 不做硬门禁（两家 review round2 一致意见：本批反馈无实锤样本，任意目录 mtime 比较
- * 会误伤其他 target/变体；仅按相同 basename 配对，构建后由调用方带出该字段即可）。
+ * 在同模块/同目录按 basename 验证 signed/unsigned 配对。mtime 只检查陈旧，
+ * 不证明签名因果或完整源码一致性；未知配对不能作为安装依据。
  */
 export interface StaleSignedSuspect {
   staleSuspect: boolean;
   unsignedPath: string | null;
   note?: string;
+  status: 'valid' | 'stale' | 'unknown';
+  signedPath: string;
+  signedMtimeMs?: number;
+  unsignedMtimeMs?: number;
 }
 
 export function detectStaleSignedSuspect(signedPath: string): StaleSignedSuspect {
   const SIGNED_SUFFIX = '-signed.hap';
   if (!signedPath.endsWith(SIGNED_SUFFIX)) {
-    return { staleSuspect: false, unsignedPath: null };
+    return { staleSuspect: false, unsignedPath: null, signedPath, status: 'unknown', note: '缺少配对验证依据：signed 文件名不符合配对约定' };
   }
   const unsignedPath = `${signedPath.slice(0, -SIGNED_SUFFIX.length)}-unsigned.hap`;
   if (!fs.existsSync(unsignedPath)) {
-    return { staleSuspect: false, unsignedPath: null };
+    return { staleSuspect: false, unsignedPath, signedPath, status: 'unknown', note: `缺少配对验证依据：${unsignedPath}` };
   }
   try {
-    const signedMtime = fs.statSync(signedPath).mtimeMs;
-    const unsignedMtime = fs.statSync(unsignedPath).mtimeMs;
+    const signedStat = fs.statSync(signedPath);
+    const unsignedStat = fs.statSync(unsignedPath);
+    if (!signedStat.isFile() || !unsignedStat.isFile()) throw new Error('配对路径不是普通文件');
+    fs.accessSync(signedPath, fs.constants.R_OK);
+    fs.accessSync(unsignedPath, fs.constants.R_OK);
+    const signedMtime = signedStat.mtimeMs;
+    const unsignedMtime = unsignedStat.mtimeMs;
     if (unsignedMtime > signedMtime) {
       return {
         staleSuspect: true,
         unsignedPath,
-        note: 'signed 可能基于上一轮 unsigned，宿主自定义签名任务时序所致，建议核对后重跑构建',
+        signedPath,
+        status: 'stale',
+        signedMtimeMs: signedMtime,
+        unsignedMtimeMs: unsignedMtime,
+        note: `签名产物陈旧/未更新：signed=${signedPath} (${signedMtime}) 早于配对 unsigned=${unsignedPath} (${unsignedMtime})；核对构建和签名任务及原日志，原因尚未确认`,
       };
     }
-    return { staleSuspect: false, unsignedPath };
-  } catch {
-    return { staleSuspect: false, unsignedPath };
+    return { staleSuspect: false, unsignedPath, signedPath, status: 'valid', signedMtimeMs: signedMtime, unsignedMtimeMs: unsignedMtime };
+  } catch (error) {
+    return { staleSuspect: false, unsignedPath, signedPath, status: 'unknown', note: `配对产物读取失败：signed=${signedPath} unsigned=${unsignedPath}；${(error as Error).message}` };
   }
 }
 
@@ -1468,16 +1570,23 @@ export function buildCodingHvigorArgs(
     buildMode?: 'debug' | 'release';
     /** 装依赖后重编译：强制 --no-daemon */
     forceNoDaemon?: boolean;
+    /** 内部打包装机策略：只关闭 daemon，保留正常增量配置。 */
+    daemon?: boolean;
+    /** 仅安装构建：extraArgs 后再次落实已冻结的 product/buildMode。 */
+    freezeDimensions?: boolean;
   },
 ): string[] {
   const c = loadResolvedCodingConfig(projectRoot);
   const task = overrides?.task ?? c.task;
-  const extraArgs = overrides?.extraArgs ?? c.extraArgs;
+  const extraArgs = (overrides?.extraArgs ?? c.extraArgs).filter(arg => overrides?.daemon !== false || arg !== '--daemon');
   const product = overrides?.product?.trim() || detectProduct(projectRoot);
   if (c.driver === 'assemble_app_project') {
     return buildAssembleAppArgs(projectRoot, task, extraArgs, {
       product: overrides?.product?.trim() || undefined,
       buildMode: overrides?.buildMode,
+      daemon: overrides?.daemon,
+      forceNoDaemon: overrides?.forceNoDaemon,
+      freezeDimensions: overrides?.freezeDimensions,
     });
   }
   const args: string[] = ['--mode', c.mode];
@@ -1490,10 +1599,12 @@ export function buildCodingHvigorArgs(
   args.push(
     ...buildHvigorTuningArgs(
       projectRoot,
-      overrides?.forceNoDaemon ? { daemon: false, incremental: false } : undefined,
+      overrides?.forceNoDaemon ? { daemon: false, incremental: false } :
+        overrides?.daemon === undefined ? undefined : { daemon: overrides.daemon },
     ),
   );
   args.push(...extraArgs);
+  if (overrides?.freezeDimensions) args.push('-p', `product=${product}`, '-p', `buildMode=${overrides.buildMode ?? 'debug'}`);
   args.push(task);
   return args;
 }
@@ -1506,6 +1617,9 @@ export interface HvigorSpawnPlan {
   shellCmdLine?: string;
   commandDisplay: string;
   invocationDriver: string;
+  hvigorArgs?: string[];
+  /** Hvigor 入口文件本身；不使用 node.exe 或 shell 命令行冒充。 */
+  hvigorBin?: string;
 }
 
 function buildSpawnPlanFromResolved(
@@ -1523,6 +1637,8 @@ function buildSpawnPlanFromResolved(
       shellCmdLine,
       commandDisplay: shellCmdLine,
       invocationDriver: driverLabel,
+      hvigorArgs,
+      hvigorBin: resolved.cmd,
     };
   }
   return {
@@ -1531,6 +1647,8 @@ function buildSpawnPlanFromResolved(
     useShell: false,
     commandDisplay: `${resolved.cmd} ${hvigorArgs.join(' ')}`,
     invocationDriver: driverLabel,
+    hvigorArgs,
+    hvigorBin: resolved.cmd,
   };
 }
 
@@ -1560,6 +1678,8 @@ export function resolveCodingHvigorSpawnPlan(
         useShell: false,
         commandDisplay: display,
         invocationDriver: 'node_hvigorw_js',
+        hvigorArgs,
+        hvigorBin: nodePair.hvigorwJs,
       },
     };
   }
@@ -1652,6 +1772,7 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
 
   const childEnv = buildChildEnv(opts.projectRoot);
   const childCwd = opts.cwd ?? opts.projectRoot;
+  const environment = describeHvigorEnvironment(childEnv, childCwd);
   const timeoutMs =
     opts.timeoutMs ?? resolveHvigorTimeout(opts.projectRoot, opts.timeoutKind ?? 'ut');
 
@@ -1668,8 +1789,8 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
         errors: [{ message: 'invokeHvigor：必须提供 args 或 spawnPlan' }],
       };
     }
-    const resolved = resolveHvigorCommand(opts.projectRoot);
-    if (!resolved) {
+    const resolved = resolveCodingHvigorSpawnPlan(opts.projectRoot, hvigorArgs);
+    if ('toolMissing' in resolved) {
       return {
         executed: false,
         toolMissing: true,
@@ -1678,7 +1799,7 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
         errors: [],
       };
     }
-    spawnPlan = buildSpawnPlanFromResolved(resolved, hvigorArgs, 'hvigorw_wrapper');
+    spawnPlan = resolved.spawnPlan;
   }
 
   const dir = ensureHvigorLogReportDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot, opts.reportDir);
@@ -1721,14 +1842,9 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
           windowsHide: true,
         });
   } catch (err) {
-    fs.closeSync(logFd);
     const e = err as Error;
-    return {
-      executed: false,
-      durationMs: Date.now() - t0,
-      logExcerpt: `[spawnSync error] ${e.message}`,
-      errors: [{ message: `hvigor 启动失败：${e.message}` }],
-    };
+    fs.writeSync(logFd, `[spawnSync error] ${e.message}\n`);
+    spawnRet = { error: e, status: null, signal: null, pid: 0, output: [], stdout: '', stderr: '' };
   }
 
   fs.closeSync(logFd);
@@ -1745,6 +1861,7 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
 
   const analysisText = readLogTextForAnalysis(logAbs);
   const errors = parseBuildErrors(analysisText);
+  if (spawnRet.error) errors.unshift({ message: `hvigor ${timedOut ? '执行超时' : '启动失败'}：${spawnRet.error.message}` });
   const diagnostics = buildHvigorDiagnostics(analysisText);
   const excerptTail = excerptFromLogFile(logAbs);
 
@@ -1770,6 +1887,9 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
     successMarkerRequired: requireMarker,
     successMarkerFound,
     invocationDriver: spawnPlan.invocationDriver,
+    args: spawnPlan.hvigorArgs ?? opts.args ?? spawnPlan.spawnArgs,
+    daemonArgs: (spawnPlan.hvigorArgs ?? opts.args ?? spawnPlan.spawnArgs).filter(arg => arg === '--daemon' || arg === '--no-daemon'),
+    spawnError: spawnRet.error?.message ?? null,
     envProbe: {
       DEVECO_SDK_HOME: Boolean(childEnv.DEVECO_SDK_HOME),
       // plan a9f3c7d2 A12：既有布尔只说明**变量是否非空**（用户已设时 buildChildEnv 会保留原值，不等于框架派生成功），
@@ -1777,6 +1897,8 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
       // 布尔字段保留不动（既有消费面不变）；路径是本机绝对路径，报告对外共享前须脱敏。
       DEVECO_SDK_HOME_PATH: typeof childEnv.DEVECO_SDK_HOME === 'string' ? childEnv.DEVECO_SDK_HOME : null,
       JAVA_HOME: typeof childEnv.JAVA_HOME === 'string' ? childEnv.JAVA_HOME : null,
+      pathJava: environment.pathJava,
+      pathJavaSource: environment.pathJavaSource,
       DEVECO_STUDIO_HOME: Boolean(process.env.DEVECO_STUDIO_HOME),
       HUAWEI_DEVECO_STUDIO_HOME: Boolean(process.env.HUAWEI_DEVECO_STUDIO_HOME),
     },
@@ -1807,6 +1929,7 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
     diagnostics,
     command: commandDisplay,
     invocationDriver: spawnPlan.invocationDriver,
+    environment,
     signSkipped: signSkip.signSkipped,
     signingConfigMissing: signSkip.signingConfigMissing,
   };
@@ -1815,12 +1938,12 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
 /**
  * 模块级编译。
  *
- * 用于 ut_hvigor_build（`genOnDeviceTestHap`，与 DevEco Run ohosTest 对齐）。
+ * 用于 ut_hvigor_build：HAP 用 assembleHap，HAR/HSP 用 genOnDeviceTestHap。
  * Coding 阶段默认走 `runHvigorAssembleApp`（`toolchain.hvigor.coding`，与 DevEco `--mode module assembleHap` 对齐）。
  *
  * 注意：**HAR / HSP 模块没有 assembleHap task**。如果把 `task` 设为
  * `assembleHap` 同时模块是 library，会报 "Task was not found"；此时应把
- * `task` 改为 `OhosTestCompileArkTS`（ut 目标）或 `assembleHar`（library 出包）。
+ * `task` 改为 genOnDeviceTestHap（ohosTest）或 assembleHar（library 出包）。
  */
 export function runHvigorBuild(
   opts: Omit<HvigorInvokeOpts, 'args' | 'logBasename'> & {
@@ -1828,6 +1951,7 @@ export function runHvigorBuild(
     moduleName: string;
     /** 对应 build 目标；ohosTest 模块用 'ohosTest' */
     target?: 'default' | 'ohosTest';
+    moduleFormat?: string;
     /**
      * t5（plan a7c3f9e2）：本次构建显式 product（由上游单次解析传入）；
      * 缺省时才回落到 detectProduct 薄包装（unresolved 抛错，调用方须已处置）。
@@ -1835,7 +1959,7 @@ export function runHvigorBuild(
     product?: string;
     /**
      * 要执行的 hvigor task 名（unqualified hook task）。
-     * - 默认：default 目标 → 'assembleHap'；ohosTest 目标 → 'genOnDeviceTestHap'。
+     * - 默认：default 目标 → assembleHap；ohosTest 目标依 module.type 选择任务。
      *   两者都是 hvigor 命令行直接接受的 hook task：
      *     · `assembleHap` 触发模块 default target 的完整编译 + 签名；
      *     · `genOnDeviceTestHap` 触发 ohosTest target 的 ArkTS 编译 + 装机包生成
@@ -1858,7 +1982,12 @@ export function runHvigorBuild(
   }
 
   const target = opts.target ?? 'default';
-  const task = opts.task ?? (target === 'ohosTest' ? 'genOnDeviceTestHap' : 'assembleHap');
+  let task: string;
+  try { task = opts.task ?? (target === 'ohosTest' ? resolveUtBuildTask(opts.projectRoot, opts.moduleName, opts.moduleFormat) : 'assembleHap'); }
+  catch (error) {
+    const message = (error as Error).message;
+    return { executed: false, durationMs: 0, logExcerpt: message, errors: [{ message }] };
+  }
   const resolvedProduct = opts.product?.trim() || detectProduct(opts.projectRoot);
 
   if (target === 'ohosTest') {
@@ -1874,7 +2003,7 @@ export function runHvigorBuild(
       };
     }
     const product = resolvedProduct;
-    return applyBuildProbe(
+    const result = applyBuildProbe(
       opts.projectRoot,
       { module: opts.moduleName, target: 'ohosTest', task, product, buildMode: 'test' },
       invokeHvigor({
@@ -1896,6 +2025,13 @@ export function runHvigorBuild(
         },
       }),
     );
+    const module = listBuildProfileModules(opts.projectRoot).find(entry => entry.name === opts.moduleName);
+    const { discoverOhosTestArtifacts } = require('./hdc-runner') as typeof import('./hdc-runner');
+    const artifact = module ? discoverOhosTestArtifacts(opts.projectRoot, module.srcPath, opts.moduleName, product) : null;
+    const sha = artifact?.artifactValidation?.status === 'valid' ? computeHapSha256Full(artifact.signedPath) : null;
+    result.buildInvocation = { module: opts.moduleName, target: 'ohosTest', task, product, buildMode: 'test' };
+    result.builtHap = isHvigorBuildSuccessful(result) && artifact?.signedPath && sha ? { path: artifact.signedPath, sha256: sha } : null;
+    return result;
   }
 
   const args = buildModuleHapArgs(opts.projectRoot, opts.moduleName, 'default', task, resolvedProduct);
@@ -2007,11 +2143,13 @@ export function runHvigorAssembleApp(
     buildMode?: 'debug' | 'release';
     /** 装依赖后重编译：强制 --no-daemon，避免 daemon 缓存漏读新 oh_modules */
     forceNoDaemon?: boolean;
+    daemon?: boolean;
+    freezeDimensions?: boolean;
     /** 自定义日志基名（默认 hvigor-build.log） */
     logBasename?: string;
   },
 ): HvigorRunResult {
-  const { task, extraArgs, product, buildMode, forceNoDaemon, logBasename, ...rest } = opts;
+  const { task, extraArgs, product, buildMode, forceNoDaemon, daemon, freezeDimensions, logBasename, ...rest } = opts;
   if (rest.skipEnvVar && process.env[rest.skipEnvVar]) {
     return {
       executed: false,
@@ -2028,6 +2166,8 @@ export function runHvigorAssembleApp(
     product,
     buildMode,
     forceNoDaemon,
+    daemon,
+    freezeDimensions,
   });
   const resolved = resolveCodingHvigorSpawnPlan(opts.projectRoot, hvigorArgs);
   if ('toolMissing' in resolved) {
@@ -2085,7 +2225,7 @@ export function buildAssembleAppArgs(
   projectRoot: string,
   task: string = 'assembleApp',
   extraArgs?: string[],
-  assembleOpts?: { product?: string; buildMode?: 'debug' | 'release' },
+  assembleOpts?: { product?: string; buildMode?: 'debug' | 'release'; daemon?: boolean; forceNoDaemon?: boolean; freezeDimensions?: boolean },
 ): string[] {
   const product = assembleOpts?.product ?? detectProduct(projectRoot);
   const buildMode = assembleOpts?.buildMode ?? 'debug';
@@ -2093,8 +2233,10 @@ export function buildAssembleAppArgs(
     '--mode', 'project',
     '-p', `product=${product}`,
     '-p', `buildMode=${buildMode}`,
-    ...buildHvigorTuningArgs(projectRoot),
-    ...(extraArgs ?? []),
+    ...buildHvigorTuningArgs(projectRoot, assembleOpts?.forceNoDaemon ? { daemon: false, incremental: false } :
+      assembleOpts?.daemon === undefined ? undefined : { daemon: assembleOpts.daemon }),
+    ...(extraArgs ?? []).filter(arg => assembleOpts?.daemon !== false || arg !== '--daemon'),
+    ...(assembleOpts?.freezeDimensions ? ['-p', `product=${product}`, '-p', `buildMode=${buildMode}`] : []),
     task,
   ];
 }
@@ -2211,11 +2353,12 @@ export function buildOnDeviceSignDiagnosis(
  */
 export function buildOnDeviceFailureEvidence(
   buildRes: Pick<HvigorRunResult, 'signSkipped' | 'signingConfigMissing'>,
-  onDevice: Pick<OnDeviceUtRunResult, 'failedAt' | 'unsignedPresent' | 'install' | 'aaTest'>,
+  onDevice: Pick<OnDeviceUtRunResult, 'failedAt' | 'unsignedPresent' | 'install' | 'aaTest' | 'artifactValidation'>,
 ): OnDeviceFailureEvidence {
   return {
     failedAt: onDevice.failedAt,
     unsignedPresent: onDevice.unsignedPresent,
+    artifactValidation: onDevice.artifactValidation,
     signSkipped: buildRes.signSkipped,
     signingConfigMissing: buildRes.signingConfigMissing,
     installDiagnosis: onDevice.install?.diagnosis,
@@ -2228,6 +2371,7 @@ export function runHvigorTest(
     moduleName: string;
     /** 模块源码相对路径（相对 projectRoot），如 '02-Feature/FeatureAlpha' */
     moduleSrcPath: string;
+    moduleFormat?: string;
     /** t5（plan a7c3f9e2）：本次构建显式 product（由 ut-host 单次解析传入） */
     product?: string;
     /**
@@ -2240,21 +2384,44 @@ export function runHvigorTest(
 ): HvigorRunResult {
   const t0 = Date.now();
 
-  // ① 出包：genOnDeviceTestHap（与 ut_hvigor_build 共享 task）。
+  const resolvedProduct = opts.product?.trim() || detectProduct(opts.projectRoot);
+  // ① 出包：与 ut_hvigor_build 共用模块任务选择。
   //    ohosTest 模块的 task 入口必须用 hook task，不能用 `test`（要 TestAbility）也不能
   //    用 OhosTestCompileArkTS（CLI 拒收的内部 task）。
-  const buildRes = opts.prebuild ?? runHvigorBuild({
+  const prior = opts.prebuild;
+  const priorDims = prior?.buildInvocation;
+  const currentDiscovery = prior ? (require('./hdc-runner') as typeof import('./hdc-runner')).discoverOhosTestArtifacts(
+    opts.projectRoot, opts.moduleSrcPath, opts.moduleName, resolvedProduct) : null;
+  const priorReusable = prior && isHvigorBuildSuccessful(prior) && priorDims?.module === opts.moduleName &&
+    priorDims.product === resolvedProduct && priorDims.target === 'ohosTest' && priorDims.buildMode === 'test' &&
+    priorDims.task === resolveUtBuildTask(opts.projectRoot, opts.moduleName, opts.moduleFormat) &&
+    (prior.builtHap ? currentDiscovery?.artifactValidation?.status === 'valid' &&
+      prior.builtHap.path === currentDiscovery.signedPath && prior.builtHap.sha256 === computeHapSha256Full(currentDiscovery.signedPath)
+      : currentDiscovery?.artifactValidation?.status !== 'valid');
+  const buildRes = (priorReusable ? prior : undefined) ?? runHvigorBuild({
     ...opts,
     moduleName: opts.moduleName,
     target: 'ohosTest',
-    task: 'genOnDeviceTestHap',
-    product: opts.product,
+    product: resolvedProduct,
   });
-  if (!buildRes.executed || (buildRes.exitCode !== undefined && buildRes.exitCode !== 0)) {
+  if (!isHvigorBuildSuccessful(buildRes)) {
     // build 失败/被跳过：直接把 build 结果原样返回，让 check-ut 沿用 ut_hvigor_build 的失败语义。
     return buildRes;
   }
 
+  const { discoverOhosTestArtifacts } = require('./hdc-runner') as typeof import('./hdc-runner');
+  const discovery = discoverOhosTestArtifacts(opts.projectRoot, opts.moduleSrcPath, opts.moduleName, resolvedProduct);
+  if (!discovery.signedPath || discovery.artifactValidation?.status !== 'valid') {
+    const { describeOhosTestSignSkipDiagnosis } = require('./hdc-runner') as typeof import('./hdc-runner');
+    const diagnosis = discovery.artifactValidation?.note ?? describeOhosTestSignSkipDiagnosis(discovery, buildRes) ?? '所选 product 未发现 ohosTest signed HAP，核对构建日志与产物路径';
+    return { ...buildRes, executed: false, exitCode: 1,
+      onDeviceFailureEvidence: { failedAt: 'hap_not_found', unsignedPresent: Boolean(discovery.unsignedPath),
+        signSkipped: buildRes.signSkipped, signingConfigMissing: buildRes.signingConfigMissing,
+        artifactValidation: discovery.artifactValidation },
+      errors: [{ message: `失败阶段：hap_not_found；${diagnosis}` }],
+      logExcerpt: `product=${resolvedProduct} buildMode=test\n${diagnosis}\n命令：${buildRes.command ?? '(未知)'}\n元数据：${buildRes.metaPath ?? '(无)'}\n原构建日志：${buildRes.logPath ?? '(无)'}\n${buildRes.logExcerpt}`,
+    };
+  }
   // 装机前诊断：版本降级 / 设备可用性（与 testing 侧 device-install-diag 共用逻辑）
   const installDiag = diagnoseInstallBlocking(opts.projectRoot);
   writeUtInstallDiagJson(
@@ -2275,7 +2442,7 @@ export function runHvigorTest(
       logPath: buildRes.logPath,
       errors: [{ message: `失败阶段：install_preflight (${installDiag.kind})` }],
       installBlocking: installDiag,
-      command: 'genOnDeviceTestHap + install_preflight',
+      command: `${buildRes.command ?? 'ohosTest build'} + install_preflight`,
     };
   }
 
@@ -2283,7 +2450,6 @@ export function runHvigorTest(
   // 这里通过 require 动态导入，避免 hvigor-runner ↔ hdc-runner 之间形成 import 环。
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { runOnDeviceUt } = require('./hdc-runner') as typeof import('./hdc-runner');
-  const resolvedProduct = opts.product?.trim() || detectProduct(opts.projectRoot);
   // plan d7e4b2a9 t3③④：模块级签名诊断——同函数内直传，不跨阶段传输，防多 ohosTest 模块串诊断。
   // mainAppSignedPath 仅扫描磁盘、不核对来源（codex round5 P1）：不得断言"本轮/本环境
   // 已验证签名链路可用"，只作为"headless 全局不支持签名"这一归因不成立的弱证据，
@@ -2319,7 +2485,7 @@ export function runHvigorTest(
     errors: onDevice.errors.length ? onDevice.errors : (buildRes.errors ?? []),
     testResult: onDevice.report,
     onDeviceFailureEvidence: buildOnDeviceFailureEvidence(buildRes, onDevice),
-    command: 'genOnDeviceTestHap + hdc install -r + hdc shell aa test',
+    command: `${buildRes.command ?? 'ohosTest build'} + hdc install -r + hdc shell aa test`,
   };
   // 用 onDevice.failedAt 标注失败阶段：当 install 失败时仍属于真实执行链路异常，
   // 让 check-ut 把它当 BLOCKER FAIL 报；on_pass=有用例 fail 也是 FAIL。

@@ -1,222 +1,62 @@
-# Goal Mode 运维细则（条件加载：实际启动/监控 goal run 时读）
+# Goal Mode 运维细则
 
-> SSOT 索引见 [`skills/project/goal-mode/SKILL.md`](../project/goal-mode/SKILL.md)。本文承载该 Skill 的可执行命令、host bridge 协议与事故知识；主文档只负责触发与安全边界。
+设备准备沿同一 [device-policy-gate](device-policy-gate.md) 自跑。自动确认弹窗/解锁只限实际出现的弹窗及已登记策略允许的动作；不得绕过设备锁或传递执行权限，PIN 不在对话获取或代输。
+仅当框架实际尝试输入后执行/复验失败，才按设备门规则烧毁该凭据版本；探测、未执行或环境故障不得冒充密码失败。
 
-## 运行身份（RESOLVED_ADAPTER）解析阶梯
+执行契约见 [goal-mode Skill](../project/goal-mode/SKILL.md)，当前事实见 assess/status；本页只说明原有入口与恢复操作。命令由 Agent 执行，不把可恢复的框架故障转成用户手工命令。
 
-本 Skill 正文跨宿主共用；**不得**硬编码 `claude` / `cursor` 等。
+## 可执行命令（从实例工程的 framework/harness 目录运行）
 
-运行身份按 **local-first** 解析，**永不硬猜 / 永不默认 claude·cursor**：先不带 `--select-adapter` 执行 personal setup。已有合法 `framework.local.json agent_adapter` 时，直接采用返回的 `activeAdapter`，来源为 `local_config`；不得构造 `requestedAdapter`，也不得重复询问 `setup.adapter`。无 local 且只有一个候选时，允许 `--ensure` 确定性自动选择。无 local 且有多个候选时，才使用 registry **`setup.adapter`**，再由 personal setup 写盘；来源为 `registry`。用户明确要求切换 adapter 时仍走既有永久切换或 `--override-adapter` 契约。
+有人/无人执行复用同一完成协调器和各工作单元专用作者：
 
-启动入口的 `--adapter` 只传 personal setup 返回的 `activeAdapter`。`--adapter-source` 只传已知的真实来源；无法映射到既有枚举时省略并在 manifest 中保持字段缺省，不得虚构 `unknown` 或把中性 skills-bridge 当成 `entry_declared`。
+- 有人在场：goal-mode-entry.ts --prepare-run --run-mode attended，然后按返回的 --next / --report-result 命令领取和交回真实请求。读取原件并执行返回的 execute_command；observe_command / interrupt_command 只观察或中断该精确请求。
+- 无人值守：goal-runner.ts --feature <feature> --requirement-file <已有需求文件> --detach；使用返回的 startup 结果核启动，不以 pid/目录存在冒充健康。
+- 原授权全权执行由入口明确传递 --authorize-autonomy；日志、never 配置和 Agent 自写说明不构成授权。
+- 仅当用户明示绝对截止时传 --user-deadline-at <UTC ISO-8601>。接回未完任务沿用原截止，不因重启、后继或换运输重置。
+- 公开 check/compile 按适用义务调用；--phase 选择工具检查族，不能要求先生成同名作者或旧阶段闭环。普通只读 assess 默认不写 next.json；显式需要投影才传 --write。
 
-### Personal setup + 确定性写盘（严格顺序）
+原 SID 只从该调用真实结构化流取得：Codex exec resume <准确ID>、Claude --resume <准确ID>、DSH --session-id <准确ID>。不猜 latest/last，不把 root/CU 或独核串入同一原生上下文。SID 缺失/失效或权限改变时，用当前原请求、输入、成果与反馈重建本单元专用上下文并披露，不能回主会话代施工。
 
-1. 执行 [personal-setup-gate](personal-setup-gate.md)：`check-personal-setup.ts --json --ensure --project-root <repo-root>`，首次不得带 `--select-adapter`。
-2. **仅解析 stdout JSON**（`ok`, `code`, `activeAdapter`, `candidates`, `message`, `ensured`）。按 `code` 分流：
+## 停机后继续
 
-| `code` | 行为 |
-|--------|------|
-| `ok` | 已有合法 local 时直接用返回的 `activeAdapter`，`adapterSource=local_config`，不再询问；无 local 的单候选由 `--ensure` 自动写入后继续，来源拿不准时省略 `--adapter-source` |
-| `adapter_conflict` | 仅用户明确要求切换时可能出现；默认尊重 local（X）。永久换走 registry `setup.adapter`+`record-adapter`，仅本次即时换则启动加 `--override-adapter`（会回写 local 留痕）。**不得**静默用 Y 覆盖 |
-| `needs_adapter_choice` | 无 local 且多候选 → registry **`setup.adapter`** 交互选择 → `init-orchestrate --scope personal` 的 **`record-adapter`** 写盘；然后用返回的 `activeAdapter`，`adapterSource=registry`；或 **STOP**→`/framework-init` |
-| `no_materialized_adapter` / `not_in_materialized` / `entry_not_materialized` | 先复核 `--project-root`（须指向含 `framework/` 与 `framework.config.json` 的工程根）→ **STOP**，引导 `/framework-init` |
+收到 `attention` 时先报告原因；仅当 `WAITING_EXTERNAL` / `STALLED` 的返回提示确认同机运行器仍存活且可续等，才在同一主会话用返回游标执行 `--after <cursor>` 续等原请求。`changed` 时先读新状态，尚在运行时用新返回的游标执行 `--after <cursor>` 续等，不签交付完成。
 
-3. 若自动写入了 local.json，须在汇报中说明个人级 `framework.local.json` 已记录 `<X>`；要换别的 adapter 请讲。
+重新发起原请求会先读原 active run、当前范围和真实结果。未知条件未变时保持同一等待，不新增作者、工具、run 或事件；实际 producer/对象/授权条件恢复后重新接入原 run，只补受影响部分。不能把 meta mtime、时间经过或取消终态当业务改善。
 
-同一 run resume 时，若 effective adapter 与 manifest 冻结值相同，`--override-adapter` 只负责
-对账并回写个人级 local，**不得**把 manifest 出生时的 `adapter_provenance` 改成 `override`。
-phase evidence 对历史 3.0.0 事故 manifest 仅容忍该审计字段差异；其它任意字节漂移仍判 stale。
+真实 no_progress_guard 的相同差额保持暂停；明确继续使用原入口的 --force-resume 或受管会话 --force-takeover，仍须真实授权、原生停止确认、owner/fencing、写保护和原用户截止。已完成交付的新需求或明确重新交付按现 successor/范围修订契约处理，不用新目录洗掉失败。
 
-**边界**：写 `framework.local.json`（个人级本地配置）由 `--select-adapter --ensure` 或 `record-adapter` 完成，**允许**；「不写项目产物」指 `.cursor/**`、`framework.config.json`、物化清单——二者不混为一谈。
+run-control.json 的 epoch、原 request、invoke_id、accepted report 与进程绑定仍是原恢复依据。只对精确 owner/PID/root 中断；不能碰其它任务、伪写 native end 或把未确认 quiesce 算结束。手工改 events、正式报告、manifest 身份或证据不构成恢复。
 
-## 可执行命令（从实例工程的 `framework/harness/` 目录运行）
+## 活性与工具期限
 
-无人值守新 run（`activeAdapter` / `adapterSource` 来自上节 personal setup 对账结果）：
+框架无默认作者总时长/总调用额度。真实用户截止和取消继续生效；具体构建、设备 UT、provider 操作保留公开期限。原生调用无真实 stdout/stderr 增长且未观测终态时，静默窗口为 max(90分钟, 现有公开单工具期限+45分钟检查余量)。heartbeat/续租不刷新它；持续真实输出不受该窗口的总时长限制。中断保留未知、原流、成果和准确 SID，不能判产品失败或完成。
 
-```bash
-npx ts-node scripts/goal-runner.ts --feature <feature> --requirement "<requirement>" --adapter <activeAdapter> --adapter-source <adapterSource> --detach
-```
+具体工具已观测终态后沿原有短清理宽限确认退出。长任务用原生异步等待/观察，不以一层 shell 包一层来改变取消身份。进度显示实际 calls/active_ms、当前活性与当前处置；费用未知保未知，不把历史预算剩余额度展示为当前授权。
 
-**需求超过一行、或含中文标点/换行时，改用 `--requirement-file`**（与 `--requirement` 互斥）：
+## 设备、凭据和 adapter
 
-```bash
-npx ts-node scripts/goal-runner.ts --feature <feature> --requirement-file <path/to/需求.md> --adapter <activeAdapter> --adapter-source <adapterSource> --detach
-```
+先读取 adapter/config/profile 实际能力和当前可信模型钉；可用性、可解析与业务验收通过分别报告。能力缺口交原 producer，继续不依赖它的授权工作；确无可做工作才等待。Claude/Codex/DSH 都经相同 executor 和 containment，独立质询/核验保持真实独立。
 
-路径相对**实例工程根**解析，可以直接指向权威需求文件本身（例如
-`<features_dir>/原始需求/<模块>/原始需求.md`（`<features_dir>` 默认 `doc/features`），不必另抄一份。内容在 fresh 启动时读取并**冻结进
-manifest**，`--resume` 只认冻结值、不会重读源文件——所以源文件长期复用是安全的，改了它也
-不会污染已在跑的 run。
+设备安装、真机测试/截图和 PIN 由既有 device readiness/credential gate 处理。不能自行猜密码、绕门、重置设备或复制秘密。DSH 使用同一 DSH_HOME 中真实 headless 路由的已保存凭据或正式环境来源；子工具可能过滤 KEY/PASSWORD/SECRET/TOKEN，不假设它会透传。框架不读取或复制凭据；缺凭据按真实外部条件恢复。模型与视觉 provider 只用当前 adapter 支持的明确钉值，不编造替代能力。
 
-> **不要为启动 goal 写包装脚本。** 之前的做法是把需求抄进临时 txt、再写个 JS launcher 去
-> spawn goal-runner，理由是命令行引号难写。现在这条路已经不需要了：`--requirement-file`
-> 就是为它准备的。包装脚本的实际代价是——每次 run 重新发明一遍、文件名各不相同，下次谁
-> 重跑旧 launcher 就会把**上一轮的旧需求**带进新 run（宿主已出现两份不同名的需求文件）。
+框架 HALT/报错说明本次原件与影响；授权工作仍由共同协调器继续。缺正式完成、部件装配或 release 证据时保持具体未完项，不能以全部 CU 绿、作者退出0或六检查族 PASS 代签原终点。
 
-> **goal 路径零变化（plan c8e5b3f1 t1）**：`derive.requirement` 的 provenance 收紧只影响手动
-> 阶段驱动路径；goal 模式需求来源恒为 manifest，`goal_manifest` provenance 由 goal-runner
-> preflight 与 vision 收紧重建写入，与既有空 deps / `goal_requirement:<fp16>` detail 形态完全
-> 一致，goal run 无需任何调整。
+## 模型选择与费用授权
 
-同一 run 续跑时，非 orphan 的 session↔process 正常转换只走 mailbox handoff。只有 session lease 已过期并落为 `orphaned_session` 时，用户明确授权后才加 `--force-resume` 做 epoch takeover；supervisor 永不得代为触发：
+前台 agent 先判断用户是否在本次任务中明确指定运行模型（业务正文提及模型不算）。对照当前 adapter/provider 的实际模型清单校对缩写、错字或原生别名为正式完整 ID；唯一时直接校对，歧义才列候选请用户确定。启动摘要显示原输入和最终正式 ID、provider、推理设置。框架只精确匹配正式 ID，不模糊匹配、不试发候选。
 
-```bash
-npx ts-node scripts/goal-runner.ts --resume <run-id> --feature <feature> --adapter <activeAdapter> --adapter-source <adapterSource> --detach
-npx ts-node scripts/goal-runner.ts --resume <run-id> --feature <feature> --adapter <activeAdapter> --adapter-source <adapterSource> --force-resume --detach
-```
+显式选择通过 manifest 的 `adapter_model_pin: {adapter,value,provider?,reasoning_effort?,config_source?,route_identity?}` 或 `--adapter-model <完整ID> --adapter-provider <路由> [--adapter-reasoning <设置>] [--adapter-model-config <原生配置路径>]` 转交。模型 ID 中的斜杠保持原样。DSH 无显式模型参数时，从前台 agent shell 的 `DSH_SESSION_ID/DSH_HOME/DSH_PROFILE_DIR` 自动定位准确会话，复用启动时最后一个 `request/header` 及实际 profile 的 `cordis.patch.yml`；不要求人工猜测 seq，不默认取 desktop。三个 `--frontend-request-*` 参数保留为覆盖手段，原生配置来源须准确；Codex 请求 ID 为 turn_id。缺准确来源时保全等待，不从 lastUsed、最近会话、模型自称或后台默认值补齐。
 
-新起 attended run 一律**两步走：先生成范围候选，再创建 run**（两个旗标互斥，须分两次调用）。候选由机器算——主 Agent 只提供四项输入（完成终点、请求结果、明确的请求动作、影响判断及其来源路径），绑定与指纹一律由同一份 `resolveCapabilityInputs` 计算，不接受人工填写；同输入重跑字节不变，候选被手改后重跑只报差异字段，须显式 `--overwrite` 才覆盖：
+DSH 非秘密来源声明摘要保存在既有 pin 的 `route_identity`，最终 dump-config 必须与它一致；同路径 endpoint 改变也不可静默接受。补绑在锁内重读 manifest，既有截止时间等身份漂移须先处置；本次只授权模型字段。历史替代来源不授权新调用。独立视觉 CLI 可使用 `--visual-provider/--visual-reasoning/--visual-model-config`，缺省仅继承已授权的同 adapter 视觉配置；观察 sidecar 与评审回执按完整绑定复用，保留原调用身份。
 
-```powershell
-npx ts-node scripts/goal-mode-entry.ts --prepare-scope --feature <feature> --completion-target feature --requested-results "<result>" --requested-phases coding,review,ut --requirement "<requirement>" [--impact-behavior-change true|false --impact-reason "<why>" --impact-basis <project-relative-path>] [--overwrite] --project-root <repo-root> --framework-root <repo-root>/framework
-```
+DSH 内置 `deepseek-official/deepseek-account` 未在 profile 声明时，以实际 DSH 版本、provider、model 和生效的非秘密 endpoint 计算同一 pin 的路由身份；原生选择、版本与请求核对仍生效。profile 自定义路由继续核对来源声明。detach 子进程保留父进程已经捕获的 pin，当前配置只供核对，不重新授权 endpoint。视觉新建/接回统一裁决，显式改选可在同一锁内与主 pin 一起更新；OpenCode 的前台导出配置目录是来源定位参数，不是要求重复型号的改选参数。
 
-stdout 返回 `scope_candidate_prepared` JSON：核对其中的 `phase_chain`、每条义务的 `applicability` / `reason`、`unresolved` 与一句 `explanation` 之后再继续。请求动作不明确时命令会拒绝并打印每个阶段的既有证据体检——机器不猜动作。
+前台自动捕获仅供新任务或无 pin 的旧任务绑定；已有任务接回及业务后继保持原 pin，不以 UI 改选触发换模型或起后继。仅在接续裁决确认需要绑定时冻结该来源，忽略无需使用的前台选择。
 
-UI 相关的新 run 另需先按 [interactive-vision-canary.md](interactive-vision-canary.md) 完成实测；若 primary 仍 blind，可配置合法 provider，也可保持未配置并由后续 requirement/capability 门禁按严格度裁决。随后由同一入口准备 manifest 与 run-control（不会启动无人值守 runner），再 attach host bridge。**`--requirement` 必须与上一步 `--prepare-scope` 用的是同一份文本**——两处分叉时候选的需求绑定会在冻结时判 `input binding stale` 并拒绝出生：
+主模型唯一真源是 manifest.adapter_model_pin。作者、质询、核验、格式修复、重试与恢复均消费自己的冻结绑定。仅 UI 改选不改变任务；任务明确改选沿既有 --override-manifest 入口，保留成果，重新签发尚未执行的旧绑定请求，排除旧 provider/推理设置的 SID 和能力缓存。原生辅助小模型保留前台原行为。
 
-```powershell
-npx ts-node scripts/goal-mode-entry.ts --prepare-run --run-mode attended --feature <feature> --requirement "<requirement>" --adapter <activeAdapter> --adapter-source <adapterSource> --project-root <repo-root> --framework-root <repo-root>/framework [--run-id <run-id>] [--start <phase>] [--end <phase>]
-```
+DSH 以 headless 启动，先加载前台模型来源配置层，再施加框架权限及模型补丁。付费前以最终 --dump-config 核对 provider/model、baseURL/apiKeyEnv/contextWindow/input。凭据由 DSH 原生读取，框架不复制凭据；MISSING_CREDENTIAL 按既有硬失败交回。approved_models 已停用，每次启动提示一次后忽略任何旧值，不自动替代、不重探候选。
 
-`--allow-blind-visual` 已删除；旧 manifest 字段只读兼容但不参与身份或策略。成功时命令 stdout 返回 `goal_run_prepared` JSON；解析其中 `run_id`，随后执行下面的 host bridge。重复成功的 `--prepare-run` 不覆盖已有 manifest，恢复已有 run 不得再次 prepare。
+当前原生能力不足或无法准确回放时，在付费前等待；实际同类原生主模型字段失配时立即取消并停止后续派发。启动参数、配置核对和请求身份观察分别报告；只有响应后可见的身份不能保证此前零误扣。
 
-有人在场走可执行 host bridge；bridge 自行加载 manifest/workflow、取得 fenced session owner，随后把推进权交给唯一 `GoalPhaseRuntime`，并逐轮输出一行 `phase_execute_request` JSON。权威上下文固定为 `run_id/phase/attempt_id/owner_id/owner_epoch`；runtime 在 executor 前后都复核 owner/epoch，陈旧回包不能写 gate、verdict 或 closure。attach 的 `--adapter` 必须与 manifest adapter 一致。active adapter 必须为每个请求提供一个隔离 phase context，把这五个字段原样显式传给 initializer、harness 与 closure sync；不得由 Skill/host 自建 assess/重试/推进循环、token，或依赖兄弟 shell 继承环境。只有 context-bound `harness-runner --sync-closure` exit 0 后，才可向 stdin 回 `{"status":"passed","phase":"..."}`；未闭环只能回 `failed|waiting`：
-
-```bash
-npx ts-node scripts/goal-mode-entry.ts --run-mode attended --feature <feature> --run-id <run-id> --adapter <activeAdapter> --project-root <repo-root> --framework-root <repo-root>/framework
-```
-
-每个 attended phase 的 harness 与闭环命令均追加同一组参数：
-
-```bash
---goal-run-id <run_id> --goal-attempt-id <attempt_id> --goal-owner-id <owner_id> --goal-owner-epoch <owner_epoch>
-```
-
-**这组参数是 attended 专用。** 无人值守（`--detach`）的 phase 上下文由 runner 注入的 env 与 manifest/events 继承，harness 与闭环命令**不带**它们直接跑（`npx ts-node harness-runner.ts --phase <phase> --feature <feature>`）；detached 下传了这组参数会被判「模式不匹配」当场拒绝——那是**入口拒绝，不是租约过期**，等待不会改变结果。两句边界同样适用：**部分检查通过 ≠ 完整上游验证**；**入口拒绝 ≠ 执行了测试**。
-
-读取状态（**唯一入口 `goal-status`**；`goal-monitor` 是 opt-in 盯守工具，**不得**当状态查询，见「查进度」与「opt-in 盯守细则」）：
-
-```bash
-npx ts-node scripts/goal-status.ts --feature <feature> --run-id <run-id>
-```
-## 启动方式（survival-first）事故背景
-
-goal-runner 是**长任务**（逐 phase 拉起 headless agent，每个数分钟，含重试可达数十分钟），goal 模式的承诺是**无人值守过夜跑完**。**必须纠正的概念错误**：宿主的"后台启动"（Cursor `is_background` / Claude Code `run_in_background`）只让你**立即拿回控制权**，但进程仍是**会话内子进程**——宿主会话结束 / 活跃 agent 轮次收尾时会被宿主回收（实测：用 `is_background` 直挂的 run 在轮次收尾即被杀，留下"显示运行中的尸体"）。**"拿回控制权" ≠ "进程能活过我的会话"。**
-
-`--detach` 是**真正的 OS 脱离**（`detached:true` + `unref()` + stdio 落 `report_dir/detach.log`）：launcher fork 后立即释放日志句柄，再用最多 10 秒核对 manifest、本次新增 events、liveness 与 progress，打印 `{run_id, report_dir, log, pid, startup}` JSON 后退出；它不等待整个任务，也不因握手超时杀仍活跃的 child。`startup.state=failed` 时 launcher 非零退出并保留 `detach.log` 尾部原因；`ready`、快速 `terminal`、`alive_timeout` 分别表示已见权威 `run_start`、已见可信终态、超窗但 child 仍活。宿主若支持后台模式，可再叠加它让 launcher 那一下也不阻塞，但**存活由 `--detach` 保证，不靠 `is_background`**。**解析同一行 JSON 取 `run_id` 和 `startup`；pid/目录单独不算健康。**
-
-**机制级护栏**：`goal-runner` 会**阻断**前台启动的无人值守真跑（`approval_mode=never` 且无 `--detach`，非 dry-run/detached-child）→ BLOCKER 退出，提示改用 `--detach`。确为人工前台 / 短任务时，显式加 `--foreground-ok` 放行（降为警告）。这把"一律 `--detach`"从文档约定升为代码约束。
-
-**存活是环境属性**：对 Cursor / 本机已实测 `--detach` 可活过会话。若换到会**整组/整树杀**进程的敌对宿主（部分公司沙箱 / CI），`--detach` 也可能保不住——那种环境须由宿主调度任务（cron / Windows Task Scheduler）托管 run，不能只靠 `--detach`。
-
-## 无人值守启动后的默认交还（--detach）
-
-**新默认：启动即交还。** 无人值守（`--detach`）run 启动后，执行**有界启动握手**，确认就绪后汇报并**立即结束当前轮次**；不需要用户开口「后台跑」，也不进入 monitor。用户在不在看对话框都不影响 run 独立存活。
-
-- **有界启动握手（唯一合法等待，硬上限 30s）**：由 launcher 自己完成；调用者只消费返回的 `startup`，不得再 sleep/grep events。`terminal` 按真实 status 汇报；`ready` 报已启动；`alive_timeout` 报尚未就绪、进程仍存活并给出 log；仅 `failed` 报启动失败。超时不杀活跃 child，句柄已在等待前释放。
-- **汇报模板（启动即用；亦为 P1-8 熔断后的转出话术，从「熔断后才用」提为「启动即用」）**：①`run_id` 与当前 phase；②预计耗时与依据（阶段超时预算）；③续查指令 `goal-status --feature <f> --run-id <id>`；④说明「后台继续跑，要看进度或让我盯着随时说」→ **结束当前轮次**。
-- **禁事件轮询（BLOCKER）**：禁止**等待 phase / verdict / run_end 的轮询**——不得用 `sleep` / `for` / `grep events.jsonl` 等手搓循环替代 monitor 绕回前台占用（08-14~15 宿主实锤：agent 意识到 monitor 空转后改写手搓轮询，占用反而更失控——多次 monitor + 数十处自制 sleep 轮询，工具等待累计 ≈3.5h）。等待阶段事件的唯一合法途径是下列 **opt-in 盯守**；不盯守就交还轮次。launcher 内部的一次性启动确认是实现细节，不授权调用方追加任何等待。
-
-## 查进度（状态查询唯一入口）
-
-用户问「进度怎样」时，执行**一次** `goal-status`，现查现答，答完交还轮次：
-
-```bash
-npx ts-node scripts/goal-status.ts --feature <feature> --run-id <run-id>
-```
-
-- **不得**用 `goal-monitor`（含 `--max-seconds 0`）当状态查询：monitor 默认游标 `since-event=-1`，会把**最早的历史** phase_verdict 当新事件重放报出，与当前快照混淆（B1）。
-- 读 `progress.json` 时若 `generated_at` 很旧，须降级信任；权威活性用 `goal-status` 实时重算。
-
-## opt-in 盯守细则（仅用户明确要求盯守时进入）
-
-仅当用户明确说「你盯着」或等价表述时，才进入 bounded monitor loop：
-
-```bash
-npx ts-node scripts/goal-monitor.ts --feature <feature> --run-id <run-id> --since-event <last_seen> --max-seconds 240
-```
-
-- **宿主工具 timeout 耦合（BLOCKER）**：**当实际调用** `goal-monitor --max-seconds N` 时，shell/tool 的 timeout 必须显式设置为 `> N`（建议 `N + 60s`；例如 `--max-seconds 240` 对应工具 timeout ≥300s）。如果宿主默认 timeout 更短（如 120s），必须显式提升；无法提升时把 `N` 降到安全值。
-- **循环方式**：monitor 有输出后，向用户汇报，并把输出里的 **`next_since_event` 原样**作为下一段 monitor 的 `--since-event`（该字段就是为此而设，不要自己从 `event_index` 换算，也不要省略）。**漏传或传 0 会让历史事件被反复消费、同一条异常每轮重报**——这正是宿主 stale 误报的成因。未终态且当前轮次仍活跃时，再启动下一段 bounded monitor。**不要**跑 `goal-status --watch` 常驻。
-- **通知自带裁决轴**：输出含 `run_disposition`（`RESUME_READY`/`RECOVERY_PENDING`/`WAITING`/`TERMINAL`）与 `run_wait_kind`（`human`/`external`）。汇报时按它说「在等人 / 在等环境 / 框架正在自动恢复 / 已终局」，**不要**自己按 halt_reason 另判一套。
-- **no-op**：若到 `--max-seconds` 仍无通知事件，monitor 会 no-op 退出；agent 可继续下一段 bounded monitor，不得误判 runner 卡死。
-- **heartbeat**：低频运行中摘要按事件时间累计 `SOFT_STALL_MS = 10min` 判断，并去重；不是每个 240s monitor 都汇报一次。
-- **硬 liveness 异常**：monitor 返回 `notification_kind=liveness`（`STALLED` / `ORPHAN_SUSPECTED`）时，向用户汇报一次并**停止** bounded monitor loop，升级让用户决策（查 `detach.log`、决定是否 `--force-resume` 或停 run）；**不要**继续轮询。monitor 已对同一异常去重（无新事件不复报），硬卡死/孤儿继续 loop 没有意义。
-- **跨轮次接管**：如果当前轮次被中断或上下文切换，新轮 agent 必须从 run 目录重新读取 `events.jsonl` / `goal-status` 推导当前状态和最近 verdict；不要假设内存里的 `last_seen` 仍可靠。
-- **monitor 熔断（P1-8，plan 7c4f2e9b——07-17 实测宿主被 monitor 循环占用 2h05m）**：以下任一条件命中，宿主**必须**主动停止 monitor 并交还对话轮次，不得继续轮询：
-  1. 连续 **3 轮** bounded monitor（≈12–15min）phase/substep 无推进（same phase + same substep）；
-  2. 单 phase 的 monitor 累计等待超过 **30 分钟**；
-  3. 单轮对话内 monitor 总时长超过 **30 分钟**（硬上限——2h+ 的占用对用户是事故不是服务）。
-  转出话术模板：向用户交代 ①`run_id` 与当前 phase/attempt；②预计耗时与依据（phase 超时预算）；③续看指令（`goal-status --feature <f> --run-id <id>`）；④说明「后台继续跑，完成/求人时可随时用上述命令查看」，然后结束当前轮次。用户后续追问时按 status 现查现答。
-- **禁自建长驻桥**：不得自建 `tail detach.log` 之类长驻桥接进程变相恢复 stdout 监听——`--detach` 下 runner stdout 已全进 `detach.log`，不是事件通道；若未来存在非 detached、有活 stdout 的路径再按 L4 声明式设计，不在话术层保留。
-- 读 `progress.json` 时若 `generated_at` 很旧，须降级信任；权威活性用 `goal-status` / `goal-monitor`（实时重算锁 pid）。
-- 软窗口 `SUSPECTED_STALL` = 安静但可能活着；硬 `STALLED` = 超时/锁孤儿等真异常。
-- **活性信号唯一权威 = `goal-status` / `progress.json` / events 心跳（每 ~60s 一拍）；判断「是否卡死」只看这些。**
-- **BLOCKER（chrys / opencode 等无流式 headless adapter）**：`phases/<phase>/agent-output.log` 在该 phase **结束前恒为空**（chrys 结束才一次性写 stdout、opencode 流式但中途可长时间静默）——**禁止** tail 该日志判断进度或卡死；看到它空 ≠ runner 卡住。误把空日志当卡死会触发错误的 `--resume` / 重复起 run（chrys 实测坑）。
-
-**边界**：bounded monitor 不是跨轮次唤醒能力。它只能在主 agent 当前轮次仍活着时尽力汇报；若主对话已经结束，真正的推送/唤醒属于宿主或 adapter 增强（如 Claude `ScheduleWakeup` / cron 定时唤醒）。
-
-## manifest 关键字段
-
-- `feature`：feature slug（**必填**）
-- `start_phase` / `end_phase`：起止 phase（默认 spec→testing）
-- `dependency_policy`：哪些外部阻塞可 DEFERRED 续行（非 completed）
-- `unattended`：写权限/审批/超时（preflight BLOCKER）
-- 运行证据：`<features_dir>/<feature>/goal-runs/<run-id>/`（manifest、events、progress.json、每 phase prompt/输出、goal-report）
-
-## 设备策略与就绪门（openspec device-readiness-and-completion）
-
-**事故背景**：2026-07-28 bc-openCard run —— agent 在 ut 阶段发现真机锁屏后自行处置，对用户手机**枚举了 10 组常见 PIN** 致设备锁定；随后它自拉一个模拟器作为**自己的**后台终端，该常驻进程钉住 cursor-agent 不退出，框架空等 84 分钟到 hard timeout（而超时后 gate 只用 13 秒就判了 PASS）。
-
-框架侧的三条结论：
-
-1. **结构性阻断优于行为禁令**。`AGENTS.md` 空白处按"允许"理解，框架拦不住 agent 用绝对路径调 `hdc`——所以"禁止猜密码"只能是指导。真正有效的是**未取得 READY 就不产生 `agent_invoke_start`**：agent 根本不进入"发现锁屏后自行处置"的场景。
-2. **长驻进程一律框架托管**。模拟器由 runner 以 detached 独立进程组 + `stdio:'ignore'` 启动（继承管道正是钉死 agent 的根因），会话记 `device-session.json`，只回收本 run 启动的实例。
-3. **完成证据可用就别空等**。receipt 四条件在盘即收口，记 `completion_observed`（与 `timed_out`/`agent_failed` 互斥）。
-
-### 就绪门三态
-
-| 态 | 含义 | 后果 |
-|----|------|------|
-| `READY` | 目标可用 | `{serial,targetKind,sessionId}` 经 `extraEnv` 注入子进程（**不写全局 env**，防多 run 串 target） |
-| `BLOCKED` | 设备不可用/仍锁屏 | 走既有 `externalBlocked`/`device_blocked` 契约（可 defer、指引修环境），**无 `agent_invoke_start`** |
-| `AMBIGUOUS` | 多设备且未配 `target_serial` | HALT 求人——绝不赌"第一个"，凭据/操作打到别人手机上不可接受 |
-
-门的执行范围由 profile `device_capabilities` 派生（不硬编码 phase），因此 spec/plan/coding 不会去动手机。
-
-### 解锁授权的安全边界（逐条说准，不笼统宣称）
-
-| 层级 | 内容 |
-|------|------|
-| **强保证** | 框架只使用用户登记的凭据；**仅当实际尝试输入后**执行/复验失败才**机器级** `disabled`（跨 goal / 项目 / 并发进程），唯一出路是重新登记生成新 `credential_version`；零输入分支（未登记 / 形态不支持 / 并发占用 / 布局未就绪）不烧毁 |
-| **允许（正道）** | 登记 `credential` 且凭据 `ready` 时，重跑设备阶段由框架自动解锁（PIN 全程不经对话与 agent）；交互态同一条解锁链由 agent 调 `device:ready`（`device-policy.ts --ready --json`，无需 feature / bundle）或即席 CLI（**仍须 `--bundle`**，无 bundle 直接 exit 2；只是不需要 feature / acceptance）触发；冻结上下文内 `--ready` 沿用原目标与原授权，不重解析、不切目标 |
-| **防御性指导** | agent 运行期只应调 framework 的 readiness 入口，prompt 明确禁止直接输入 PIN、直接启动模拟器 |
-| **不宣称** | 在没有 OS 沙箱的前提下，硬阻断恶意或偏航 agent 的直接 shell 操作 |
-
-口令由 Windows 凭据管理器托管（`CredRead`/`CredWrite`），`framework.local.json` 只存 opaque `credential_ref`。登记只能在真实 TTY 隐藏输入（`npm run device:enroll`），非 TTY 一律拒绝。
-
-### 模拟器降级不得冒充真机
-
-`ut` 允许在模拟器上 PASS；`testing` 在 `target_kind ∈ {emulator, unknown}` 时由 runner 依可信 device session **封顶 PARTIAL/DEFERRED**——不看 agent summary 自报（自报即可绕过）。`unknown` 与 `emulator` 同等对待：判不出机型绝不等于是真机。
-
-## 效率优先入口（3.0.0 · plan 07a41ec6）
-
-公共入口只有三个新命令，其余机器化步骤全部内部化（从实例工程的 `framework/harness/` 运行）：
-
-| 命令 | 作用 | 不做什么 |
-|---|---|---|
-| `harness-runner.ts --revalidate --feature <f> [--from <phase>]` | 检查执行器：按链找 stale 阶段，逐个重跑脚本门禁并按既有闭环路径收口；FAIL 即停并打印 blocker 与改法；账本 `<feature>/revalidation.json` | 不推进阶段、不建第二套状态机、不重跑 verifier（材料未变复用既有报告，材料变了但历史有 PASS 标 `completed_with_prior_review`，结果标 `script_revalidated` / `semantic_not_reverified`） |
-| `harness-runner.ts --force-device --phase testing --feature <f>` | 忽略同执行键复用，强制真机真跑（fresh / N 轮稳定性） | 不改变报告与门禁口径 |
-| `harness-runner.ts --measure --feature <f> [--screen <id>]` | 视觉量测：bounds/间距/重叠/与参考图差值/取色 → `device-screenshots/measure-<screen>.json`，并补 visual-diff.json 的 defects[].note | 不裁决、不改 ui-spec、不改 verdict；geometry PASS 不解除 visual/release block |
-
-配套纪律：
-
-- **恢复归属与复用**：优先 `--resume` 原 run；只有既有 successor 条件成立时才创建关联 successor。下游缺口携带 `upstream_producer` 时回该 owner，未知 owner 时停止猜测并报告缺失来源；不得把普通 absent 叫 framework bug。相同检查 ID 若材料指纹真实变化可继续修复，无新事实则沿既有无进展结论停止，不用同输入 fresh run 重置。UT 自身返修保留 fresh 的 plan/coding/review；源码、契约变化或用户明确要求重跑时不得复用遮盖。
-
-- **phase executor**：Claude 原生 `/goal` 路径下主会话是薄 driver，每个阶段最多派发一个 `subagent_type: phase-executor`（模板 `agents/claude/templates/agents/phase-executor.md`），只投递最小输入、收回 summary 路径与终态块；与本 Skill 的 GoalPhaseRuntime 互斥，不同时推进同一任务。
-- **子代理等待**：同步等待或先做无关工作；禁止 sleep / 轮询 / 后台等待器；verifier 未返回前不改其输入材料。
-- **闭环判据**：harness PASS + verifier 一次 PASS + `check-receipt` 通过；回执是 harness 只读投影（receipt_schema 2.1），备注写 `<phase>/notes.md`；harness 输出末尾 `NEXT:` 行即下一步。
-- **verifier 结论**：只有 BLOCKER 级 FAIL 触发修正与重审；WARN/UNKNOWN 记 notes.md 带到下一阶段。
-- **漂移分级**：review 后源码变化按类型给一次复核（文档不复审；测试代码只跑相关测试；逻辑做 scoped diff review；布局/资源做真机截图或 `--measure`；多类同时变化做一次最终合并 diff review），`review_closure_attestation` / `ut_no_src_mutation` 以 WARN 列出所需复核并如实标注。
+原生来源路径约定：DSH 为 `DSH_HOME/profiles/<profile>/cordis.patch.yml`，Codex 为 `CODEX_HOME/config.toml`，Claude 为 `CLAUDE_CONFIG_DIR/settings.json`，OpenCode 当前为 `<home>/.config/opencode`。OpenCode 可从准确 session 的原生 export JSON 读取指定消息 ID 的 provider/model/variant；需同时提供前台原生配置目录。额外配置层无法准确绑定时先等待。独立视觉 pin 可在原有 `adapter/model` 中补充 `provider/reasoning_effort/config_source`，运输复用同一组字段，不继承主模型的路由。

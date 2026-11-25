@@ -7,6 +7,50 @@ import { checkAcceptanceUtLayerComplete } from './check-acceptance';
 import { collectDeviceScopeIds, collectUnitScopeIds, hasUnknownPerformanceLayer } from './acceptance-layering';
 
 export type ObligationApplicability = 'required' | 'not_applicable' | 'unknown';
+
+export type DeliveryScale = 'trivial' | 'small' | 'medium' | 'complex';
+export type IntakeTruth = true | false | 'unknown';
+export interface IntakeFact { value: IntakeTruth; reason: string; sources: string[] }
+export interface DeliveryFacts {
+  design_tradeoff: IntakeFact;
+  unclosed_impact: IntakeFact;
+  irreversible_data: IntakeFact;
+  dependent_results: IntakeFact;
+  cross_component: IntakeFact;
+  expectations_clear: IntakeFact;
+  unique_approach: IntakeFact;
+}
+export interface DeliveryPolicy {
+  recommended: DeliveryScale | 'unknown';
+  selected: DeliveryScale | 'unknown';
+  source: 'rule' | 'user';
+  unknown: string[];
+  blueprint: 'none' | 'compact' | 'full' | 'shared' | 'unknown';
+  change_units: 'none' | 'single' | 'multiple' | 'unknown';
+}
+
+/** The outer design frame, independent of check-family names and file counts. */
+export function resolveDeliveryPolicy(facts: DeliveryFacts, userSelection?: DeliveryScale): DeliveryPolicy {
+  const value = (key: keyof DeliveryFacts): IntakeTruth => {
+    const fact = facts[key];
+    return fact?.reason.trim() && fact.sources.length ? fact.value : 'unknown';
+  };
+  const complex = [value('dependent_results'), value('cross_component')];
+  const risks = [value('design_tradeoff'), value('unclosed_impact'), value('irreversible_data')];
+  const unknown = (Object.keys(facts) as Array<keyof DeliveryFacts>).filter(key => value(key) === 'unknown');
+  let recommended: DeliveryPolicy['recommended'];
+  if (complex.includes(true)) recommended = 'complex';
+  else if (complex.includes('unknown')) recommended = 'unknown';
+  else if (risks.includes(true)) recommended = 'medium';
+  else if (risks.includes('unknown')) recommended = 'unknown';
+  else if (value('expectations_clear') === true && value('unique_approach') === true) recommended = 'trivial';
+  else if (value('expectations_clear') === 'unknown' || value('unique_approach') === 'unknown') recommended = 'unknown';
+  else recommended = 'small';
+  const selected = userSelection ?? recommended;
+  return { recommended, selected, source: userSelection ? 'user' : 'rule', unknown,
+    blueprint: ({ trivial: 'none', small: 'compact', medium: 'full', complex: 'shared', unknown: 'unknown' } as const)[selected],
+    change_units: ({ trivial: 'none', small: 'none', medium: 'single', complex: 'multiple', unknown: 'unknown' } as const)[selected] };
+}
 export interface ScopeEvidenceRef {
   phase: string;
   /** D1 §4.2.4：feature 载体（无 run）没有 run 身份——**不伪造**，此处缺省。 */
@@ -14,6 +58,9 @@ export interface ScopeEvidenceRef {
   evidence_manifest_aggregate: string;
 }
 export type EvidenceOrInputRef = InputBinding | ScopeEvidenceRef;
+export function acceptsDefinitionInputProof(kind: string): boolean {
+  return kind === 'acceptance-context' || kind === 'design-context';
+}
 export interface ExecutionObligation {
   id: string;
   kind: string;
@@ -86,6 +133,8 @@ export interface ExecutionScopeInput {
      * 校验走 §4.1.0 既有的 `resolved.basis` 通道，不另建第二套。
      */
     requirement_basis?: InputBinding;
+    /** Native user locator bound to this existing run; no writable approval or replacement goal. */
+    user_control?: ScopeUserControlSource;
   };
   facts: Array<Omit<ExecutionObligation, 'owner_phase'>>;
   /** Conditional control facts; an information producer is not automatically a predecessor. */
@@ -125,11 +174,159 @@ export function hasNoTestingObligation(scope: ExecutionScope): boolean {
  * `kind` through `OBLIGATION_PROVIDERS`.
  * `not_applicable -> required` is an upgrade and stays legal; `required -> anything else` does not.
  */
-export function findSubtractedRequiredObligations(previous: ExecutionScope, next: ExecutionScope): string[] {
+export function findSubtractedRequiredObligations(previous: ExecutionScope, next: ExecutionScope, allowed: ReadonlySet<string> = new Set()): string[] {
   return previous.obligations
     .filter(old => old.applicability === 'required'
-      && !next.obligations.some(fact => fact.id === old.id && fact.kind === old.kind && fact.applicability === 'required'))
+      && !next.obligations.some(fact => fact.id === old.id && fact.kind === old.kind && (fact.applicability === 'required'
+        || allowed.has(old.id) && fact.applicability === 'not_applicable')))
     .map(old => old.id);
+}
+
+const SCOPE_CONTROL_FAMILIES: Readonly<Record<string, string>> = { 'code-review': 'review', 'unit-evidence': 'ut', 'device-evidence': 'testing', 'visual-evidence': 'testing' };
+
+export interface ScopeUserControlSource {
+  session_ref: string; feature: string; run_id: string;
+  /** Filled by the native reader at acceptance, retained in the existing revision event. */
+  user?: { id: string; text: string; sha256: string; at?: string };
+  excluded?: string[];
+  included?: string[];
+  fixed?: string;
+}
+export type VerifiedScopeUserControlSource = ScopeUserControlSource & {
+  user: NonNullable<ScopeUserControlSource['user']>; excluded: string[]; included: string[];
+};
+type ScopeUserControlIdentity = { feature: string; runId: string };
+
+function assertScopeControlIdentity(source: ScopeUserControlSource, context?: ScopeUserControlIdentity): void {
+  if (!source || typeof source.session_ref !== 'string' || !source.session_ref.includes('#') || !source.feature || !source.run_id
+    || context && (source.feature !== context.feature || source.run_id !== context.runId)) {
+    throw new Error('[execution-scope] user控制来源必须绑定当前project/feature/run与精确原生user');
+  }
+}
+function scopeControlLocator(source: ScopeUserControlSource): string {
+  return executionScopeFingerprint({ session_ref: source.session_ref, feature: source.feature, run_id: source.run_id });
+}
+
+/** New caller input always reads native storage; caller-filled snapshots do not confer authority. */
+export function readScopeUserControlSource(source: ScopeUserControlSource,
+  context: ScopeUserControlIdentity & { projectRoot: string }): VerifiedScopeUserControlSource {
+  assertScopeControlIdentity(source, context);
+  const native = require('../../../agents/shared/native-request.cjs') as {
+    readNativeSession(ref: string, root: string): { file: string; request: { id: string; text: string; at?: string }; userControlVerified?: boolean };
+    userControl(text: string): { excluded: string[]; included: string[]; fixed?: string };
+  };
+  const session = native.readNativeSession(source.session_ref, context.projectRoot), user = session.request;
+  if (session.userControlVerified === false) throw new Error('[execution-scope] 原生包装的用户控制授权未核，不能接受覆盖或豁免');
+  const directive = native.userControl(user.text);
+  return { session_ref: `${session.file}#${user.id}`, feature: context.feature, run_id: context.runId,
+    user: { id: user.id, text: user.text, sha256: crypto.createHash('sha256').update(user.text).digest('hex'), ...(user.at ? { at: user.at } : {}) },
+    excluded: [...directive.excluded], included: [...directive.included], ...(directive.fixed ? { fixed: directive.fixed } : {}) };
+}
+
+/** Only authoritative event readers call this on an already accepted source, never on a new proposal. */
+export function readAcceptedScopeUserControlSource(source: ScopeUserControlSource,
+  context?: ScopeUserControlIdentity): VerifiedScopeUserControlSource | undefined {
+  assertScopeControlIdentity(source, context);
+  if (!source.user) return undefined; // Legacy locator-only events still need their original source once.
+  const user = source.user, fragment = source.session_ref.slice(source.session_ref.lastIndexOf('#') + 1);
+  const families = (value: unknown): value is string[] => Array.isArray(value)
+    && value.every(item => typeof item === 'string' && ['review', 'ut', 'testing', 'compile', 'architecture'].includes(item));
+  if (typeof user.id !== 'string' || user.id !== fragment || typeof user.text !== 'string'
+    || user.sha256 !== crypto.createHash('sha256').update(user.text).digest('hex')
+    || !families(source.excluded) || !families(source.included)
+    || source.fixed !== undefined && !['特别简单', '小型', '中型', '复杂'].includes(source.fixed)) {
+    throw new Error('[execution-scope] 已接受的user控制原文/消息身份/指令不完整或失配');
+  }
+  return structuredClone(source) as VerifiedScopeUserControlSource;
+}
+
+export interface ScopeRevisionAuthorityContext {
+  projectRoot: string; feature: string; runId: string;
+  events?: readonly { type?: string; phase?: string; verdict?: string; blocking_class?: string; revision_input?: unknown; execution_scope?: ExecutionScope }[];
+  completedPhases?: ReadonlySet<string>;
+  failedPhases?: ReadonlySet<string>;
+}
+export interface ScopeRevisionUserControl {
+  allowedSubtractions: ReadonlySet<string>;
+  includedObligations: ReadonlySet<string>;
+  exclusionSources?: ReadonlyMap<string, string>;
+  inclusionSources?: ReadonlyMap<string, string>;
+  newSource: boolean;
+  source?: NonNullable<ExecutionScopeInput['request']['user_control']>;
+}
+
+/** New controls are native-verified; replay inherits the accepted bytes in this run's revision_input. */
+export function readScopeRevisionUserControl(previous: ExecutionScope, input: Pick<ExecutionScopeInput, 'request'> | undefined,
+  context?: ScopeRevisionAuthorityContext, acceptedSource?: ScopeUserControlSource): ScopeRevisionUserControl {
+  const empty = (): ScopeRevisionUserControl => ({ allowedSubtractions: new Set(), includedObligations: new Set(), newSource: false });
+  const revisions = (context?.events ?? []).filter(event => event.type === 'scope_revised');
+  const history = revisions.flatMap(event => { const source = (event.revision_input as ExecutionScopeInput | undefined)?.request?.user_control; return source ? [source] : []; });
+  const latest = history.at(-1);
+  const supplied = input?.request?.user_control ?? latest;
+  if (!supplied) return empty();
+  type Source = NonNullable<ExecutionScopeInput['request']['user_control']>;
+  const cache = new Map<string, { source: VerifiedScopeUserControlSource; control: VerifiedScopeUserControlSource }>();
+  const read = (ref: Source, accepted?: Source) => {
+    assertScopeControlIdentity(ref, context);
+    const key = scopeControlLocator(ref);
+    let found = cache.get(key);
+    if (!found) {
+      const recorded = accepted && scopeControlLocator(accepted) === key ? readAcceptedScopeUserControlSource(accepted, context) : undefined;
+      if (!recorded && !context) throw new Error('[execution-scope] 未接受的user控制缺少当前project核源上下文');
+      const source = recorded ?? readScopeUserControlSource(ref, context!);
+      found = { source, control: source };
+      cache.set(key, found);
+    }
+    return found;
+  };
+  const recorded = acceptedSource ?? (!input?.request?.user_control ? latest
+    : supplied.user ? history.find(prior => scopeControlLocator(prior) === scopeControlLocator(supplied)) : undefined);
+  let actual = read(supplied, recorded);
+  const meaningful = actual.control.excluded.length || actual.control.included?.length || actual.control.fixed;
+  const seen = history.some(prior => scopeControlLocator(prior) === scopeControlLocator(actual.source));
+  if ((!meaningful || seen && latest && scopeControlLocator(latest) !== scopeControlLocator(actual.source)) && latest) actual = read(latest, latest);
+  else if (!meaningful) return empty();
+  const exclusions = new Map<string, string>(), inclusions = new Map<string, string>(), cutIds = new Set<string>();
+  const applyDirective = (value: ReturnType<typeof read>): void => {
+    for (const family of value.control.excluded) { exclusions.set(family, value.source.session_ref); inclusions.delete(family); }
+    for (const family of value.control.included ?? []) { exclusions.delete(family); inclusions.set(family, value.source.session_ref); }
+  };
+  for (const event of revisions) {
+    const proposed = event.revision_input as ExecutionScopeInput | undefined, ref = proposed?.request?.user_control;
+    if (!ref) continue;
+    applyDirective(read(ref, ref));
+    for (const after of event.execution_scope?.obligations ?? []) {
+      const before = Array.isArray(proposed?.facts) ? proposed.facts.find(fact => fact.id === after.id && fact.kind === after.kind) : undefined;
+      if (before && before.applicability !== 'not_applicable' && after.applicability === 'not_applicable' && exclusions.has(SCOPE_CONTROL_FAMILIES[after.kind])) cutIds.add(after.id);
+      if (after.applicability === 'required') cutIds.delete(after.id);
+    }
+  }
+  applyDirective(actual);
+  const failedPhases = new Set(context?.failedPhases ?? []), protectedPhases = new Set(context?.completedPhases ?? []);
+  for (const event of context?.events ?? []) if (event.type === 'phase_verdict' && event.phase) {
+    if (event.verdict === 'PASS') protectedPhases.add(event.phase);
+    if (event.verdict === 'FAIL' && !['externalBlocked', 'framework_internal'].includes(event.blocking_class ?? '')) failedPhases.add(event.phase);
+  }
+  for (const phase of failedPhases) protectedPhases.add(phase);
+  if (previous.obligations.some(obligation => obligation.applicability === 'required' && failedPhases.has(obligation.owner_phase) && exclusions.has(SCOPE_CONTROL_FAMILIES[obligation.kind]))) {
+    throw new Error('[execution-scope] 用户调整只减少未来工作，不能核销已有真实FAIL；保留失败与原责任。');
+  }
+  const allowed = new Set(previous.obligations.filter(obligation => !obligation.satisfied_by?.length && !protectedPhases.has(obligation.owner_phase)
+    && exclusions.has(SCOPE_CONTROL_FAMILIES[obligation.kind])).map(obligation => obligation.id));
+  const included = new Set(previous.obligations.filter(obligation => obligation.applicability === 'not_applicable' && cutIds.has(obligation.id)
+    && inclusions.has(SCOPE_CONTROL_FAMILIES[obligation.kind])).map(obligation => obligation.id));
+  return { allowedSubtractions: allowed, includedObligations: included, exclusionSources: exclusions, inclusionSources: inclusions, source: actual.source,
+    newSource: !history.some(prior => scopeControlLocator(prior) === scopeControlLocator(actual.source)) };
+}
+
+/** Retain obligation identity/history; an explicit unexecuted exclusion is NA, never a test PASS. */
+export function applyScopeUserControl(scope: ExecutionScope, workflow: WorkflowSpec, control: ScopeRevisionUserControl): ExecutionScope {
+  if (!control.allowedSubtractions.size && !control.includedObligations.size) return scope;
+  const obligations = scope.obligations.map(obligation => control.allowedSubtractions.has(obligation.id) && obligation.applicability !== 'not_applicable' && !obligation.satisfied_by?.length
+    ? { ...obligation, applicability: 'not_applicable' as const, reason: `真实user排除本run尚未执行的验证（${control.exclusionSources?.get(SCOPE_CONTROL_FAMILIES[obligation.kind]) ?? control.source?.session_ref}）；不是验证PASS。` }
+    : obligation.applicability === 'not_applicable' && control.includedObligations.has(obligation.id)
+      ? { ...obligation, applicability: 'required' as const, reason: `真实user恢复本run验证（${control.inclusionSources?.get(SCOPE_CONTROL_FAMILIES[obligation.kind]) ?? control.source?.session_ref}）。` } : obligation);
+  return projectScopeSchedule({ ...scope, obligations }, workflow);
 }
 
 /**
@@ -154,8 +351,8 @@ export function hasNewSourcedFact(previous: ExecutionScope, facts: ExecutionScop
 }
 
 /** Runtime-side form: throws with the offending ids. Same predicate, one implementation. */
-export function assertRevisionKeepsRequiredObligations(previous: ExecutionScope, next: ExecutionScope): void {
-  const subtracted = findSubtractedRequiredObligations(previous, next);
+export function assertRevisionKeepsRequiredObligations(previous: ExecutionScope, next: ExecutionScope, allowed: ReadonlySet<string> = new Set()): void {
+  const subtracted = findSubtractedRequiredObligations(previous, next, allowed);
   if (subtracted.length) throw new Error(`[execution-scope] 修订不得删除或降级 required 义务：${subtracted.join(', ')}`);
 }
 
@@ -171,10 +368,10 @@ export const EXECUTION_SOURCE_KINDS: ReadonlySet<string> = new Set([
   'design-decision', 'acceptance-definition',
 ]);
 
-/** Birth-only code observations; current outputs remain bound by phase evidence. */
-export function isExecutionSourceBasis(projectRoot: string, scope: ExecutionScope, obligation: ExecutionObligation, dependency: ResolutionDependency): boolean {
+/** Run-bound work units may write deferred outputs; runless research retains frozen source inputs. */
+export function isExecutionSourceBasis(projectRoot: string, scope: ExecutionScope, obligation: ExecutionObligation, dependency: ResolutionDependency, runId?: string): boolean {
   return isInsideProjectRoot(projectRoot, resolveDependencyPath(projectRoot, dependency.path, inferLegacyProjectRoot(projectRoot, scope))) && dependency.role === 'derive'
-    && (scope.phase_chain.includes(obligation.owner_phase) || !!obligation.satisfied_by?.some(proof => 'evidence_manifest_aggregate' in proof))
+    && (Boolean(runId) && obligation.applicability === 'required' || scope.phase_chain.includes(obligation.owner_phase) || !!obligation.satisfied_by?.some(proof => 'evidence_manifest_aggregate' in proof))
     && EXECUTION_SOURCE_KINDS.has(obligation.kind);
 }
 
@@ -346,8 +543,11 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
   for (const { kind, provider } of DERIVED_EVIDENCE_KINDS) {
     if (!inPlay(provider)) continue;
     const derivation = derivations.get(kind)!;
-    const existing = input.facts.filter(fact => fact.kind === kind);
+    const existing = input.facts.filter(fact => fact.kind === kind && !workflow.artifacts.some(artifact =>
+      artifact.obligation_provider_id === provider && request.requested_phases.includes(artifact.id)
+      && fact.id === `${kind}:request:${artifact.id}`));
     if (existing.length) {
+      // Request markers express user duties; they cannot replace the derived source fact.
       // Override every candidate fact of this kind — not just the same-id one. Original basis is
       // kept (it may carry real sources), except the acceptance binding that this derivation owns:
       // a spec revision must replace that generation rather than retain old+new acceptance truth.
@@ -364,7 +564,9 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
     const hasRealSource = kind === 'visual-evidence' ? resolved !== undefined : acceptance !== undefined;
     const phaseRequested = workflow.artifacts.some(a => a.obligation_provider_id === provider && request.requested_phases.includes(a.id));
     if (hasRealSource) {
-      input.facts.push({ id: `${kind}:${derivation.source}`, kind, applicability: derivation.applicability, reason: derivation.reason, basis: [...derivation.basis] });
+      const fact = { id: `${kind}:${derivation.source}`, kind, applicability: derivation.applicability, reason: derivation.reason, basis: [...derivation.basis] };
+      const markerAt = input.facts.findIndex(item => item.kind === kind);
+      if (markerAt < 0) input.facts.push(fact); else input.facts.splice(markerAt, 0, fact);
     } else if (request.completion_target === 'feature' && kind !== 'visual-evidence' && !phaseRequested) {
       input.facts.push({ id: `${kind}:pending`, kind, applicability: 'unknown', reason: '验证责任尚缺验收或影响依据', basis: [] });
     }
@@ -405,15 +607,15 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
     if (!kinds) fail(`phase ${artifact.id} 缺少已注册义务 provider`);
     const applicableFacts = input.facts.filter(fact => kinds.includes(fact.kind));
     for (const fact of applicableFacts) obligations.push({ ...structuredClone(fact), owner_phase: artifact.id });
-    if (request.requested_phases.includes(artifact.id) && !applicableFacts.some(f => f.applicability === 'required')) {
+    if (request.requested_phases.includes(artifact.id)) {
       const id = `${kinds[0]}:request:${artifact.id}`;
       // A request marker states what the USER asked for; it is not a candidate observation. When a
       // revision carries one forward it arrives as a fact of an evidence kind and the derivation
-      // above rewrites it — re-assert it here instead of pushing a second obligation with the same
-      // id (which `validateExecutionScope` rejects outright). At birth this branch simply creates it.
+      // above must not rewrite it. Re-assert a carried marker independently of derived facts;
+      // create one only when the request has no other required duty of this provider.
       const carried = obligations.find(o => o.id === id && o.owner_phase === artifact.id);
       if (carried) Object.assign(carried, { applicability: 'required', reason: `用户明确请求 ${artifact.id}` });
-      else obligations.push({ id, kind: kinds[0], owner_phase: artifact.id, applicability: 'required', reason: `用户明确请求 ${artifact.id}`, basis: [] });
+      else if (!applicableFacts.some(f => f.applicability === 'required')) obligations.push({ id, kind: kinds[0], owner_phase: artifact.id, applicability: 'required', reason: `用户明确请求 ${artifact.id}`, basis: [] });
     }
   }
   for (const fact of input.facts) if (!obligations.some(o => o.id === fact.id)) fail(`未知义务：${fact.kind}`);
@@ -421,8 +623,24 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
   if (request.completion_target === 'feature' && implementation && !obligations.some(o => o.kind === 'code-review' && o.applicability === 'required')) {
     const reviewer = workflow.artifacts.find(a => a.obligation_provider_id === 'obligations.review');
     if (!reviewer) fail('实现交付缺少审查责任 provider');
-    obligations.push({ id: 'code-review:implementation', kind: 'code-review', owner_phase: reviewer.id, applicability: 'required', reason: '本次实现交付需要审查', basis: [...implementation.basis] });
+    const existing = obligations.find(obligation => obligation.id === 'code-review:implementation' && obligation.kind === 'code-review');
+    const required = { id: 'code-review:implementation', kind: 'code-review', owner_phase: reviewer.id, applicability: 'required' as const, reason: '本次实现交付需要审查', basis: [...implementation.basis] };
+    if (existing) Object.assign(existing, required); else obligations.push(required);
   }
+  return projectScopeSchedule({ schema_version: '1.0', completion_target: request.completion_target, requested_results: [...request.requested_results], obligations, phase_chain: [], reused_phases: [], unresolved: [],
+    policy_fingerprint: executionScopeFingerprint({ workflow, contracts: input.contract_fingerprints }),
+    ...(input.control_edges ? { control_edges: structuredClone(input.control_edges) } : {}),
+    ...(request.impact ? { request_impact: structuredClone(request.impact) } : {}) }, workflow);
+}
+
+/** One schedule projection for initial resolution and current effective obligations. */
+export function projectScopeSchedule(scope: ExecutionScope, workflow: WorkflowSpec, _dependencyContext: Pick<ScopeDependencyContext, 'inputOwners' | 'inputEdges'> = {}): ExecutionScope {
+  const obligations = structuredClone(scope.obligations);
+  const phases = new Map(workflow.artifacts.map(a => [a.id, a]));
+  // Existing material reads govern evidence invalidation, not producer-check completion order.
+  // Only declared controls/proofs may constrain which check can execute first.
+  const dependencies = scopeDependencyEdges(scope, workflow);
+  const definitionKinds = new Set<string>([...OBLIGATION_PROVIDERS['obligations.spec'], ...OBLIGATION_PROVIDERS['obligations.plan']]);
   const needed = new Set(obligations.filter(o => o.applicability === 'required' && !o.satisfied_by?.length).map(o => o.owner_phase));
   const unresolved: ExecutionScope['unresolved'] = obligations.filter(o => o.applicability === 'unknown').map(o => ({ obligation_id: o.id, owner: o.owner_phase, reason: o.reason, needed_by: [o.owner_phase] }));
   const investigation = new Set(workflow.artifacts.filter(a => ['obligations.spec', 'obligations.plan'].includes(a.obligation_provider_id ?? '')).map(a => a.id));
@@ -448,17 +666,32 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
       for (const o of obligations.filter(o => o.owner_phase === gap.owner && o.applicability === 'required' && !o.satisfied_by?.length)) unresolved.push({ obligation_id: o.id, owner: gap.owner, reason: gap.reason, needed_by: [gap.owner] });
     }
   }
-  const edges = (input.control_edges ?? []).filter(edge => needed.has(edge.after));
+  // If an unknown duty removes its owner, its actual downstream consumers cannot remain executable.
+  const unavailable = new Map<string, ExecutionScope['unresolved'][number]>();
+  for (const gap of unresolved) for (const blocked of gap.needed_by) {
+    if (!needed.has(blocked)) unavailable.set(blocked, gap);
+  }
+  let removed: boolean;
+  do {
+    removed = false;
+    for (const phase of [...needed]) {
+      const predecessors = dependencies.filter(edge => edge.after === phase).map(edge => edge.before);
+      const missing = predecessors.find(before => unavailable.has(before)
+        && obligations.some(o => o.owner_phase === before && o.applicability !== 'not_applicable' && !o.satisfied_by?.length));
+      if (!missing) continue;
+      const cause = unavailable.get(missing)!;
+      needed.delete(phase); unavailable.set(phase, cause); removed = true;
+      for (const obligation of obligations.filter(o => o.owner_phase === phase && o.applicability === 'required' && !o.satisfied_by?.length)) {
+        unresolved.push({ obligation_id: obligation.id, owner: cause.owner, reason: cause.reason, needed_by: [phase] });
+      }
+    }
+  } while (removed);
+  const edges = (scope.control_edges ?? []).filter(edge => needed.has(edge.after));
   for (const edge of edges) if (!phases.has(edge.before) || !phases.has(edge.after) || !edge.basis.length) fail('控制边缺少合法阶段或真实依据');
   for (const edge of edges) if (!needed.has(edge.before) && !obligations.some(o => o.owner_phase === edge.before && o.satisfied_by?.some(ref => 'evidence_manifest_aggregate' in ref && ref.phase === edge.before))) fail(`真实控制前置尚未满足：${edge.before} → ${edge.after}`);
-  for (const edge of edges) for (const obligation of obligations.filter(o => o.owner_phase === edge.after && o.applicability === 'required')) obligation.basis.push(...edge.basis);
+  for (const edge of edges) for (const obligation of obligations.filter(o => o.owner_phase === edge.after && o.applicability === 'required')) for (const binding of edge.basis) if (!obligation.basis.some(prior => executionScopeFingerprint(prior) === executionScopeFingerprint(binding))) obligation.basis.push(binding);
   const defaults = [...new Set([...(workflow.auto_chain ?? []), ...phases.keys()])];
-  const chain: string[] = [];
-  while (needed.size) {
-    const next = defaults.find(phase => needed.has(phase) && edges.every(edge => edge.after !== phase || !needed.has(edge.before)));
-    if (!next) fail('适用控制依赖存在环');
-    chain.push(next); needed.delete(next);
-  }
+  const chain = orderScopePhases(needed, defaults, dependencies);
   const reused: ExecutionScope['reused_phases'] = [];
   for (const phase of phases.keys()) {
     const obligationsForPhase = obligations.filter(o => o.owner_phase === phase && o.applicability === 'required');
@@ -467,14 +700,250 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
       if (refs.length) reused.push({ phase, obligation_ids: obligationsForPhase.map(o => o.id), evidence_refs: refs });
     }
   }
-  return validateExecutionScope({ schema_version: '1.0', completion_target: request.completion_target, requested_results: [...request.requested_results], obligations, phase_chain: chain, reused_phases: reused, unresolved,
-    policy_fingerprint: executionScopeFingerprint({ workflow, contracts: input.contract_fingerprints }), ...(edges.length ? { control_edges: structuredClone(edges) } : {}),
-    // Carried so every revision rebuild inherits the sourced impact judgement instead of
-    // silently dropping it (which would send device back to `unknown` on each revision).
-    ...(request.impact ? { request_impact: structuredClone(request.impact) } : {}) });
+  return validateExecutionScope({ ...scope, obligations, phase_chain: chain, reused_phases: reused, unresolved });
 }
 
 export function executionCompletionPhases(scope: ExecutionScope): string[] {
   validateExecutionScope(scope);
   return [...new Set([...scope.reused_phases.map(p => p.phase), ...scope.phase_chain])];
+}
+
+/** Derived only from existing workflow, conditional controls and input/evidence ownership. */
+export interface ScopeDependencyContext {
+  scope?: Pick<ExecutionScope, 'obligations' | 'control_edges'>;
+  workflow?: WorkflowSpec;
+  inputOwners?: ReadonlyMap<string, string>;
+  inputEdges?: ReadonlyArray<{ before: string; after: string }>;
+}
+
+function orderScopePhases(phases: ReadonlySet<string>, preferred: readonly string[], dependencies: ReadonlyArray<{ before: string; after: string }>): string[] {
+  const pending = new Set(phases);
+  const ordered: string[] = [];
+  while (pending.size) {
+    const next = preferred.find(phase => pending.has(phase) && dependencies.every(edge => edge.after !== phase || !pending.has(edge.before)));
+    if (!next) fail('适用控制依赖存在环');
+    ordered.push(next); pending.delete(next);
+  }
+  return ordered;
+}
+
+export function scopeDependencyEdges(scope?: ScopeDependencyContext['scope'], workflow?: WorkflowSpec, inputOwners?: ReadonlyMap<string, string>, inputEdges?: ScopeDependencyContext['inputEdges']): Array<{ before: string; after: string }> {
+  const edges = new Map<string, { before: string; after: string }>();
+  const add = (before: string, after: string): void => { if (before !== after) edges.set(`${before}\0${after}`, { before, after }); };
+  for (const artifact of workflow?.artifacts ?? []) for (const before of artifact.requires) add(before, artifact.id);
+  for (const edge of scope?.control_edges ?? []) add(edge.before, edge.after);
+  for (const edge of inputEdges ?? []) add(edge.before, edge.after);
+  for (const obligation of scope?.obligations ?? []) {
+    for (const proof of obligation.satisfied_by ?? []) if ('phase' in proof) add(proof.phase, obligation.owner_phase);
+    for (const binding of [...obligation.basis, ...(obligation.satisfied_by ?? []).filter((ref): ref is InputBinding => 'input_id' in ref)]) {
+      for (const file of [...binding.source_refs, ...binding.dependencies.map(dependency => dependency.path)]) {
+        const owner = inputOwners?.get(file);
+        if (owner) add(owner, obligation.owner_phase);
+      }
+    }
+  }
+  return [...edges.values()];
+}
+
+/** A revision revokes its real owner and consumers, never a suffix of the preferred order. */
+export function scopeRevisionInvalidations(previous: ExecutionScope, next: Pick<ExecutionScope, 'obligations'> & Partial<Pick<ExecutionScope, 'control_edges'>>, order: readonly string[], completed: ReadonlySet<string> = new Set(), workflow?: WorkflowSpec, dependencyContext: Pick<ScopeDependencyContext, 'inputOwners' | 'inputEdges'> = {}): string[] {
+  const roots = next.obligations.filter(after => {
+    if (after.applicability !== 'required') return false;
+    const before = previous.obligations.find(item => item.id === after.id && item.kind === after.kind);
+    if (!before || before.applicability !== 'required') return !after.satisfied_by?.length;
+    return !after.satisfied_by?.length && (!!before.satisfied_by?.length
+      || completed.has(before.owner_phase) && executionScopeFingerprint(before.basis) !== executionScopeFingerprint(after.basis));
+  }).map(item => item.owner_phase);
+  const owners = new Set([...previous.obligations, ...next.obligations].map(item => item.owner_phase));
+  return affectedScopePhases(roots, order, { ...dependencyContext, scope: { ...previous, ...next }, workflow }).filter(phase => owners.has(phase));
+}
+
+export function affectedScopePhases(roots: readonly string[], order: readonly string[], context: ScopeDependencyContext = {}): string[] {
+  const affected = new Set(roots);
+  const edges = scopeDependencyEdges(context.scope, context.workflow, context.inputOwners, context.inputEdges);
+  let added: boolean;
+  do {
+    added = false;
+    for (const edge of edges) if (affected.has(edge.before) && !affected.has(edge.after)) { affected.add(edge.after); added = true; }
+  } while (added);
+  return order.filter(phase => affected.has(phase));
+}
+
+/** Original duties authorize their responsible phases independently of the current queue. */
+export function authorizedScopePhases(birth: ExecutionScope, workflow: WorkflowSpec): string[] {
+  const existing = new Set([...birth.phase_chain, ...birth.reused_phases.map(reuse => reuse.phase),
+    ...birth.requested_results.filter(result => workflow.artifacts.some(phase => phase.id === result)),
+    ...birth.obligations.filter(obligation => obligation.applicability !== 'not_applicable'
+      && !(acceptsDefinitionInputProof(obligation.kind) && obligation.satisfied_by?.length
+        && obligation.satisfied_by.every(ref => 'input_id' in ref))).map(obligation => obligation.owner_phase)]);
+  const implementation = birth.obligations.some(obligation => obligation.kind === 'implementation' && obligation.applicability === 'required');
+  const phaseResultsOnly = birth.requested_results.length > 0 && birth.requested_results.every(result => workflow.artifacts.some(phase => phase.id === result));
+  return workflow.artifacts.filter(phase => phase.scope === 'feature' && (existing.has(phase.id)
+    || birth.completion_target === 'feature' && !phaseResultsOnly
+    || (implementation && ['obligations.coding', 'obligations.review', 'obligations.ut', 'obligations.testing'].includes(phase.obligation_provider_id ?? '')))).map(phase => phase.id);
+}
+
+export interface ScopeHistoryEvent {
+  type?: string;
+  phase?: string;
+  verdict?: string;
+  action?: string;
+  advance_blocked?: boolean;
+  execution_scope?: ExecutionScope;
+  invalidated_phases?: unknown;
+  to_phase?: string;
+  from_phase?: string;
+  ts?: string;
+  applied_at?: string;
+}
+
+export function isEffectivePhasePass(event: ScopeHistoryEvent): boolean {
+  return event.type === 'phase_verdict' && event.verdict === 'PASS' && !event.advance_blocked
+    && (event.action === undefined || event.action === 'advance');
+}
+
+/** Derived causal state only: history remains immutable and file mtimes never establish a PASS. */
+export function scopeProofHistory(birth: ExecutionScope, events: readonly ScopeHistoryEvent[], order: readonly string[], currentPhasePass?: string, workflow?: WorkflowSpec, dependencyContext: Pick<ScopeDependencyContext, 'inputOwners' | 'inputEdges'> = {}) {
+  let scope = birth;
+  const definitionProofs = new Map<string, InputBinding[]>();
+  const inputProofs = (obligation?: ExecutionObligation): InputBinding[] | undefined =>
+    obligation && obligation.applicability === 'required' && acceptsDefinitionInputProof(obligation.kind)
+      && obligation.satisfied_by?.length && obligation.satisfied_by.every(ref => 'input_id' in ref)
+      ? obligation.satisfied_by as InputBinding[] : undefined;
+  for (const obligation of birth.obligations) {
+    const inputs = inputProofs(obligation);
+    if (inputs) definitionProofs.set(obligation.id, structuredClone(inputs));
+  }
+  const invalidated = new Set<string>();
+  const passed = new Set<string>();
+  const invalidatedAt = new Map<string, string>();
+  const revisions = new Map<number, string[]>();
+  const observed = currentPhasePass ? [...events, { type: 'phase_verdict', phase: currentPhasePass, verdict: 'PASS', action: 'advance' }] : events;
+  observed.forEach((event, index) => {
+    let revoked: string[] = [];
+    if (event.type === 'scope_revised' && event.execution_scope) {
+      revoked = scopeRevisionInvalidations(scope, event.execution_scope, order, passed, workflow, dependencyContext);
+      const explicitlyWithdrawn = scope.obligations.some(before => inputProofs(before)
+        && !event.execution_scope!.obligations.find(after => after.id === before.id)?.satisfied_by?.length);
+      for (const [id, inputs] of definitionProofs) {
+        const after = event.execution_scope.obligations.find(obligation => obligation.id === id);
+        if (!after || after.applicability !== 'required' || !inputs.every(proof => after.basis.some(binding =>
+          binding.input_id === proof.input_id && binding.content_fingerprint === proof.content_fingerprint
+            && executionScopeFingerprint(binding.source) === executionScopeFingerprint(proof.source)))) definitionProofs.delete(id);
+      }
+      for (const obligation of event.execution_scope.obligations) {
+        const inputs = inputProofs(obligation);
+        if (inputs) definitionProofs.set(obligation.id, structuredClone(inputs));
+      }
+      if (explicitlyWithdrawn) for (const [id] of definitionProofs) {
+        if (revoked.includes(event.execution_scope.obligations.find(obligation => obligation.id === id)!.owner_phase)) definitionProofs.delete(id);
+      }
+      scope = event.execution_scope;
+      revisions.set(index, revoked);
+    } else if (event.type === 'phase_backtrack_requested') {
+      revoked = affectedScopePhases([...Array.isArray(event.invalidated_phases) ? event.invalidated_phases.filter((p): p is string => typeof p === 'string') : [], ...(event.to_phase ? [event.to_phase] : [])], order, { ...dependencyContext, scope, workflow });
+    } else if (event.type === 'phase_invalidated' && event.phase) revoked = affectedScopePhases([event.phase], order, { ...dependencyContext, scope, workflow });
+    else if (event.phase && (event.type === 'phase_halt' || (event.type === 'phase_verdict' && event.verdict === 'FAIL'))) {
+      // A failed observation withdraws this phase's PASS; downstream proof validity is checked from its actual inputs.
+      revoked = [event.phase];
+    }
+    for (const phase of revoked) {
+      invalidated.add(phase); passed.delete(phase);
+      // Observations and ordinary waits may withdraw PASS, but only an actual
+      // revision or invalidation requires a result produced after that boundary.
+      if (event.type === 'scope_revised' || event.type === 'phase_invalidated' || event.type === 'phase_backtrack_requested') {
+        invalidatedAt.set(phase, event.ts ?? event.applied_at ?? '');
+      }
+      if (event.type === 'phase_invalidated' || event.type === 'phase_backtrack_requested') {
+        for (const [id] of definitionProofs) if (scope.obligations.find(obligation => obligation.id === id)?.owner_phase === phase) definitionProofs.delete(id);
+      }
+    }
+    if (event.type === 'phase_verdict' && event.phase && event.action !== 'retry') {
+      if (isEffectivePhasePass(event)) { invalidated.delete(event.phase); passed.add(event.phase); }
+      else passed.delete(event.phase);
+    }
+  });
+  return { scope, invalidated, passed, invalidatedAt, revisions, definitionProofs };
+}
+
+/** One qualification for current proof and reuse; undefined keeps an unknown repair-time boundary unknown. */
+export function phaseEvidenceIsCurrent(input: { fresh: boolean; generatedAt?: string; invalidatedAt?: string }): boolean | undefined {
+  if (!input.fresh) return false;
+  if (input.invalidatedAt === undefined) return true;
+  const generated = Date.parse(input.generatedAt ?? ''), invalidated = Date.parse(input.invalidatedAt);
+  if (!Number.isFinite(generated) || !Number.isFinite(invalidated)) return undefined;
+  return generated > invalidated;
+}
+
+/** The queue is a view of effective duties; historical outcomes cannot independently skip it. */
+export function effectiveScopeView(input: {
+  birth: ExecutionScope; events: readonly ScopeHistoryEvent[]; workflow: WorkflowSpec;
+  proofs?: ReadonlyMap<string, ScopeEvidenceRef>;
+  /** Existing accepted definition inputs, revalidated by the read action; never a new proof claim. */
+  definitionProofs?: ReadonlyMap<string, readonly InputBinding[]>;
+  stalePhases?: readonly string[];
+  reopen?: string;
+  inputOwners?: ScopeDependencyContext['inputOwners'];
+  inputEdges?: ScopeDependencyContext['inputEdges'];
+}): ExecutionScope {
+  if (input.reopen && !authorizedScopePhases(input.birth, input.workflow).includes(input.reopen)) throw new Error(`[execution-scope] recovery target outside authorization: ${input.reopen}`);
+  const order = [...new Set([...(input.workflow.auto_chain ?? []), ...input.workflow.artifacts.map(a => a.id)])];
+  const history = scopeProofHistory(input.birth, input.events, order, undefined, input.workflow, input);
+  const scope = structuredClone(history.scope);
+  const invalid = new Set([...history.invalidated].filter(phase => !input.proofs?.has(phase)));
+  const reopened = affectedScopePhases(input.reopen ? [input.reopen] : [], order, { ...input, scope });
+  for (const phase of [...affectedScopePhases(input.stalePhases ?? [], order, { ...input, scope }), ...reopened]) invalid.add(phase);
+  for (const obligation of scope.obligations) {
+    if (obligation.applicability !== 'required') continue;
+    const definition = input.definitionProofs?.has(obligation.id) ? history.definitionProofs.get(obligation.id) : undefined;
+    if (definition?.length && !reopened.includes(obligation.owner_phase)) obligation.satisfied_by = structuredClone([...definition]);
+    else if (invalid.has(obligation.owner_phase)) delete obligation.satisfied_by;
+    else if (input.proofs?.has(obligation.owner_phase)
+      && !(acceptsDefinitionInputProof(obligation.kind) && obligation.satisfied_by?.length
+        && obligation.satisfied_by.every(ref => 'input_id' in ref))) {
+      // A validated definition binding is the fulfilled duty itself. Do not replace it with
+      // a broader phase report whose unrelated implementation/context inputs may later change.
+      obligation.satisfied_by = [input.proofs.get(obligation.owner_phase)!];
+    }
+  }
+  for (const phase of [...invalid]) {
+    const duties = scope.obligations.filter(obligation => obligation.owner_phase === phase && obligation.applicability !== 'not_applicable');
+    if (!reopened.includes(phase) && duties.length && duties.every(obligation => obligation.applicability === 'required'
+      && history.definitionProofs.has(obligation.id) && input.definitionProofs?.has(obligation.id))) invalid.delete(phase);
+  }
+  const projected = projectScopeSchedule(scope, input.workflow, input);
+  // A direct authorized backtrack is itself an existing instruction to re-run the owner,
+  // even when its former duties were not_applicable. Resume derives it from the same event.
+  const recoveryTargets = [...input.events.filter(event => event.type === 'phase_backtrack_requested'
+    && event.to_phase && invalid.has(event.to_phase)).map(event => event.to_phase!), ...(input.reopen ? [input.reopen] : [])]
+    .filter(phase => authorizedScopePhases(input.birth, input.workflow).includes(phase));
+  const effective = recoveryTargets.length ? validateExecutionScope({ ...projected,
+    phase_chain: orderScopePhases(new Set([...projected.phase_chain, ...recoveryTargets]), [...projected.phase_chain, ...order],
+      scopeDependencyEdges(scope, input.workflow)),
+    reused_phases: projected.reused_phases.filter(item => !recoveryTargets.includes(item.phase)),
+  }) : projected;
+  const request = [...input.events].reverse().find(event => event.type === 'phase_backtrack_requested');
+  const owner = request?.to_phase;
+  const reporter = request?.from_phase ?? request?.phase;
+  if (!owner || !reporter) return effective;
+  const { repairWindowCompleted } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
+  if (repairWindowCompleted(input.events, owner)) return effective;
+  const reporterIndex = effective.phase_chain.indexOf(reporter);
+  const ownerIndex = effective.phase_chain.indexOf(owner);
+  if (reporterIndex < 0 || ownerIndex <= reporterIndex) return effective;
+  const dependencies = scopeDependencyEdges(scope, input.workflow);
+  if (affectedScopePhases([reporter], order, { scope, workflow: input.workflow }).includes(owner)) return effective;
+  // Reorder the existing obligation view only: an independent owner repairs first, then the reporter adjudicates.
+  const chain = [...effective.phase_chain]; chain.splice(ownerIndex, 1);
+  const neededPredecessors = new Set<string>();
+  const pending = [owner];
+  while (pending.length) {
+    const phase = pending.pop()!;
+    for (const edge of dependencies.filter(edge => edge.after === phase)) {
+      if (!neededPredecessors.has(edge.before)) { neededPredecessors.add(edge.before); pending.push(edge.before); }
+    }
+  }
+  const lastPredecessor = Math.max(-1, ...chain.map((phase, index) => neededPredecessors.has(phase) ? index : -1));
+  chain.splice(Math.max(reporterIndex, lastPredecessor + 1), 0, owner);
+  return validateExecutionScope({ ...effective, phase_chain: chain });
 }

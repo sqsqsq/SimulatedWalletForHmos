@@ -170,7 +170,7 @@ doc/features/<feature>/
 | `summary.json`          | agent / CI / 调试          | 稳定读取 verdict、blockers、run_statuses、next_action，替代 grep 控制台 |
 | `merged-report.md`      | 人类                      | 排查"为什么 FAIL"                                       |
 | `ai-prompt.md`          | verifier 子 agent（自读） | 本轮要审的材料全文。**不作为 Task prompt 投递**——verifier 按 request 里的 `prompt_path` 自己 Read（可达上百 KB，刻意不走传输面）。仅在该 phase 的 verifier 能力 enabled 时生成 |
-| `verifier.request.<subject>.json` | 调用方（phase executor / 主 agent） | **唯一调用侧凭证**（几十行）：整段作为 Task prompt 投给 `subagent_type=verifier`。`subject_id` 由其余字段重算，手抄/改写/前后夹带即失配 |
+| `verifier.request.<subject>.json` | 调用方（phase executor / 主 agent） | **唯一调用侧凭证**（几十行）：整段作为 prompt 投给专用 verifier 角色（Task 宿主显式选 `subagent_type=verifier`，原生 verifier 工具直接调用）。`subject_id` 由其余字段重算，手抄/改写/前后夹带即失配 |
 | `verifier.report.<subject>.md` | check-receipt / 全部机器消费者 | verifier 的**唯一机器真源**（plan d2f7a9c4）。**写者是调用方**：把 verifier 回复原样全文写到 `summary.verifier_report` 指向的这个路径（verifier 自己只读，不写盘）。文件**按 subject 分区**，`summary.verifier_subject_id` 单独决定当前证据是哪一份，旧 subject 的遗留文件不在任何读取面内、也不清理。校验只三条：文件在、终态块回显 subject 相符、verdict 与 blocker_count 自洽。**不进 evidence manifest、不进 closure attestation 哈希**——报告刻意不做防篡改，不能同时充当 stale 绊线 |
 | `trace.json`            | harness 内部 / 调试       | 记录本次进入 phase 时的 git HEAD（供 `ut_no_src_mutation` 的 **git fallback 域**用；review 已正式闭环时该门禁基线=review closure attestation，不看 trace/HEAD） |
 
@@ -179,9 +179,25 @@ doc/features/<feature>/
 `summary.json` 的稳定契约见 `framework/harness/schemas/summary.schema.json`。关键字段：
 
 - `run_statuses`：阶段状态面板，例如 `coding_run_status` / `ut_run_status` / `testing_run_status`。
+  testing 的阻断只剩能力缺席（视觉 provider / OCR 不可用，`blocking_class=externalBlocked`、`failure_kind=capability_missing`）时：`testing_run_status` 降为 WARN 并写 `partial_readiness: capability_missing`，
+  `test-report.md` 写「有条件达标」+ 暂缓 gap（P0 视觉用例留在分母、状态「跳过」、备注"未验证（能力缺席）"），阶段 verdict 为 `INCOMPLETE`；仍有真实产品失败或无效证据时照旧 `FAIL`（plan c3f8a2d7）。
+  授权切换视觉 provider 的正式恢复会记录 `manifest_identity_rebase`；业务依据有效时，旧自动 run-manifest 字节依赖不再使 coding/review/ut 假失效。freshness、facts、闭环与只读评估使用同一解释；显式业务 manifest、需求/源码变化和完整性失败仍严格核对。facts 入场失败若存在更早链内 gap，先沿原恢复动作给责任阶段机会，不在当前阶段重复空 gate；原记录和哈希无需手工迁移（plan 8d4e6a21）。
 - `readiness_signals`：非 BLOCKER 但代表"尚未就绪"的信号，例如 catalog/glossary 空骨架、docs freshness 无法判定。
-- `blocking_warnings` / `blocking_skips`：`severity=BLOCKER` 但状态为 `WARN/SKIP` 的检查项，避免被 verdict PASS 掩盖。
+- `blocking_skips`：`severity=BLOCKER` 但状态为 `SKIP` 的检查项（已确认不适用的除外），避免被 verdict PASS 掩盖。`blocking_warnings` 已停写：schema 保留该属性，旧 summary 带着它照常可读，新 summary 不再出现。
+- `verdict` / 退出码 / `blocker_count`：阶段结论只算一次（脚本阻断、报告合法性、质量轴与能力解析取更严一侧），控制台、合并报告与进程退出码都用它；`blockers` 与 `blocker_count` 是同一个有效阻断集合（聚合的运行状态项在源失败已列出时不重复计入）。
+- `disclosed_failures`：失败但按处置表只披露、不阻断的检查（账本与形状类，如 `schema_version_present`）；条数计入完成缺口，完成标签为 `COMPLETE_WITH_GAPS`。
+- **Feature 普通完成与发布资格分开读**（plan 6fd6c8c1）：普通完成只拒绝 `repair / wait / verify`
+  类当前问题；视觉/资源轴的软降级与开放债务是披露，保留 `release_readiness=BLOCKED` 与债务，
+  但不撤销普通完成、不重排作者阶段、不把轴改成 PASS。真实 hard 失败、能力/执行缺口、证据过期、
+  closure 不完整与已核实未处置发现仍阻断完成。`quality_axis_verified` 只在完成阻断时出现在
+  `collectCleanPassIssues`；披露项用 `collectDisclosedCompletionIssues`（展示结构，不含 `kind`，
+  不得喂给 `classifyCleanPassIssues`）。
 - `next_action`：给 agent / Stop hook 的下一步建议；同会话未闭环时，Stop hook 会把最近一次 `summary.json.next_action` 带入阻断文案。
+- `repair_candidates[].evidence_refs`：可选的只读 native 交接定位（trace_path/case_id/step_index，以及派生/失败边界路径）；
+  `files`/`affected_files` 仍仅是修复目标。补证据不会改变 native 旧指纹、拒修或无进展判定；旧候选缺此字段仍可读。
+- `readiness_signals` 中 `id=verifier_repair_diagnosis`：点明 review 的具体漏行/冲突/错绑定，以及当前 request 资格。
+  已签发当前 request 才走 `run_verifier_for_repair`；carried/disabled/混合失败不虚构 request，先修可合法修复的资格原因。
+  合法 refuted/unclear 不按格式坏重投，旧负面结论与拒修依据保留，产品 FAIL/open 不被诊断或人签洗绿。
 - `closure_status`：`open` | `closed`；`closed` 当且仅当 `check-receipt.ts` 会通过（与 `receipt_status=passed` 对齐）。closed 时 `next_action=phase_closed_wait_user`。
 - **跨会话恢复**：`cd framework/harness && npx ts-node harness-runner.ts --sync-closure --phase <phase> --feature <feature>` 或单独跑 `check-receipt.ts`（PASS 时也会回写 `.current-phase.json`）。见 `AGENTS.md` §5.2。
 
@@ -287,9 +303,18 @@ framework/docs/skills/feature/business-ut.md (doc_ts=2026-04-25T10:00:00+08:00):
 
 ### 6.5 退出码语义
 
-- 全部 PASS / 仅 SKIP（如非 git 仓库） → 0
-- MAJOR FAIL（doc 可能过期 / source 路径失效）→ 1
-- 不会有 BLOCKER（docs phase 设计上不阻塞 CI）
+- 阶段结论 PASS → 0；结论 FAIL / INCOMPLETE 或执行出错 → 非零。只有 SKIP（如非 git 仓库，`doc_freshness` 判定不了）时结论仍是 PASS。
+- MAJOR 失败（`doc_files_exist`、`source_paths_resolvable`、`profile_skill_assets_resolvable`、`doc_freshness`：文档缺失、可能过期、source 路径失效）写进报告，**不单独改变退出码**。
+- BLOCKER 失败让结论为 FAIL。完整清单以报告里 `severity` 为 BLOCKER 的检查项为准；下面是常见来源：
+  - `check-docs.ts` 自己产出的阻断检查：
+    - `inventory_exists`：`DOC_INVENTORY.yaml` 缺失或结构不合法（此时其余检查不跑；`inventory_schema_valid` 只在读取成功时报 PASS）；
+    - `requested_docs_present`：`--path` 指定的文档不在 inventory 里；
+    - `skill_body_max_lines`：某个 `skills/**/SKILL.md` 主干行数超预算；
+    - `forced_full_read_blacklist`：出现未登记的无条件强制全读句式；
+    - `correction_layer_unconditional_confirm`：skills / templates 仍引用已退役的 correction.layer 人签闸；
+    - `entry_template_budget`：`templates/AGENTS.md.template` 缺失、超行数预算或缺骨架标记。
+  - 不带 `--path` 时还会跑三组文档 lint，各自的失败也是阻断级：确认交互写法（[`check-skills-confirmation-ux.ts`](../../harness/scripts/check-skills-confirmation-ux.ts)；其中 registry 引用缺失与条目偏少只是 MINOR 警告）、编号式 skill 路径（[`check-no-numbered-skill-paths.ts`](../../harness/scripts/check-no-numbered-skill-paths.ts)）、编号式 skill 文案（[`check-no-numbered-skill-prose.ts`](../../harness/scripts/check-no-numbered-skill-prose.ts)）。
+- 在 CI 里用 docs phase 卡门时：退出码只反映阻断级失败；要让"文档可能过期"也挡 CI，需读报告里的 MAJOR 失败自行判断。
 
 ---
 
@@ -394,139 +419,15 @@ hmos-app **专用排障表**见 [`../profiles/hmos-app-harness-toolchain.md`](..
 
 ---
 
-## 10. 中断 / 切换会话 / 放弃阶段（v2.8 起）
+## 10. 中断、切换会话与Stop hook
 
-### 10.1 背景
+当前Stop hook仅触发既有只读共同完成查询并呈现其结果，不从state、阶段PASS/closed、回执或连续阻挡次数另算完成。它读取当前feature及真实run_id，调用公开assess.ts（默认无--write）；普通Feature使用feature_assessment.current_disposition，受管初建设计使用原root current_disposition。源码故障/缺原件仍按原错误和未知呈现，不能用hook退出0签通过。
 
-Stop hook 会读 `framework/harness/state/.current-phase.json` 判断当前 cli 会话能不能结束消息。
-该状态文件是**全局单槽**：任何时刻最多一份，跨 cli 重启不自动清理。这种设计在以下场景容易"误伤"：
+能继续的已授权工作回原goal-mode-entry --next，执行原execute_command，再沿observe/interrupt和report-result交回。真正只剩等待可停下并说明具体producer/对象条件；未完成不冒充完成。阶段方法不是作者排队，主会话不代施工，独核保持独立。
 
-- Ctrl+C 中断 harness，状态停留在 `status='running'`；
-- cli 崩溃 / 重启，没机会跑 receipt 校验；
-- 切换 feature 而旧 feature 的阶段还没收尾；
-- 跨天 / 跨周回来接着干，但记不清上次到哪一步。
+旧state_machine.max_consecutive_blocks不再回填或参与次数放行；state的session/grace/TTL只识别是否属于当前会话，不能代替业务事实或阻断其它无关会话。--clear-state只清历史提示文件，不撤销原run/授权/失败或签发完成，也不是暂停恢复方案。接回原任务先读原run和当前事实，不因删state重做有效工作。
 
-v2.8 起 hook 引入"会话边界判定"避免上一会话遗留拦下一会话。详细矩阵见
-实例根**全局入口** §5.1.1（与 `AGENTS.md.template` 渲染结果一致）；下面只列日常操作动作。
-
-> **本节针对 feature 维度阶段**（spec / plan / coding / review / UT / testing）。
-> 所有在 **当前 [`active_workflow`](../../workflows/spec-driven.workflow.yaml)** 中声明为 **`scope: global`** 的阶段（默认含 `extensions` / `init` / `catalog` / `glossary` / `docs`）：**不写** `.current-phase.json`（runner v2.8.1+），也没有 feature 维度完成回执模板。
-> 实例 **Stop hook** 对残留的「全局 phase」state 兜底放行——与 `agents/claude/templates/hooks/check-phase-completion.mjs` 内 **`GLOBAL_PHASES`** 常量一致（若你本地 hook 落后于 framework 模板请重新下发）。因此跑 `--phase init` / `extensions` 等不会套用 §5.1 的 feature 阶段闭环判定。
-
-### 10.2 配置：`framework.config.json > state_machine`
-
-```jsonc
-{
-  "state_machine": {
-    "grace_period_minutes": 5,     // runner 写 state → hook 第一次盖 session_id 的容忍窗口
-    "ttl_hours": 12,               // payload 缺 session_id 时的兜底过期阈值
-    "max_consecutive_blocks": 3,   // Stop hook 逃生阀：连续 N 次零进展后放行(exit 0)交还用户
-    "schema_version": "1.1"
-  }
-}
-```
-
-| 字段 | 范围 | 默认值 | 说明 |
-|------|------|--------|------|
-| `grace_period_minutes` | (0, 60] | `5` | runner 写完 state 到 hook 第一次"盖章"之间允许的间隔。窗口内 state.session_id=null 视为"刚跑完 harness 还没来得及盖章"，hook 会用本会话 sid 给它盖章；超出窗口再来一个未盖章 state 视为前一会话遗留。 |
-| `ttl_hours`            | [1, 168] | `12` | 极端兜底：payload 没传 session_id 时，仅用 `state.updated_at` 与 ttl 比较。常规路径走 session_id 比对，ttl 是"防止历史 state 永久缠住"的保险栓。 |
-| `max_consecutive_blocks` | [1, 20] | `3` | **Stop hook 逃生阀阈值**。同一阶段连续 N 次拦到「同一组 blocker + `last_run_at` 未变（harness 未重跑）+ 零进展」后，第 N 次不再 `exit 2` 拦截，改为 `exit 0` 放行并给「重跑 / `--clear-state`」二选一，把控制权交还你/用户——防弱模型（空回复）在死局里被永久 nag。**放行不改 verdict/receipt，state 仍 `FAIL`/`missing`，下游阶段门禁照常拦截，不绕过闭环。** 只对"根本没重跑 harness 的重复 stop"生效；agent 真重跑（`last_run_at` 变）即归零。 |
-
-非法值（缺字段 / 超范围 / 非数字）：
-- runner 端（`framework/harness/config.ts > validateStateMachine`）→ 抛错；
-- hook 端（实例根 Stop hook 内 `readStateMachineFromConfig`）→ 安静回退默认值，不 fail。
-
-### 10.3 三类常见操作
-
-#### A. 我想继续上次的阶段
-
-不需要任何额外动作——只要本次仍是同一 cli 会话（同一 session_id），Stop hook 会照常按 §5.1
-判定。把 harness 求解出的 required 证据（trace / 脚本 verdict / verifier — 仅当其 plan 为
-enabled / receipt）补齐再 stop 即可。
-
-跨 cli 会话怎么办？参考 §10.4。
-
-#### B. 我想放弃这个阶段，换去做别的事
-
-```bash
-cd framework/harness && npx ts-node harness-runner.ts --clear-state
-```
-
-行为：
-- 删除 `framework/harness/state/.current-phase.json`（无确认）；
-- 历史 verdict / 报告 / 回执仍保留在 `doc/features/<feature>/<phase>/reports/`（或 legacy：`framework/harness/reports/<feature>/<phase>/`）与
-  `doc/features/<feature>/<phase>/` 下，用于审计；
-- 下次 stop hook 找不到 state 文件 → 直接放行；
-- 想接着这个 feature/phase 干，按对应 SKILL.md 重新进入即可（state 会被 `harness-runner.ts` 重新写起来）。
-
-`--clear-state` 是"放弃已有进度"，不是"暂停"：
-- 它**不会**回滚已写到磁盘的 spec / plan / 代码 / receipt 等内容；
-- 它**只**删 state file 这个判定开关。
-
-#### C. 我刚问个无关问题，hook 却跳出"未闭环"提示
-
-如果提示文案是：
-
-```
-[Stop Hook 提示] 检测到一个旧的阶段状态文件，但与当前会话无关：
-  ...
-  原因 = state 由另一个会话（session_id=...）记录，本次会话 session_id=...
-  ...
-本次 stop 已放行；上面这条状态不会拦截你。
-```
-
-→ 这是 **advisory + exit 0**：hook 已经放行，agent **不应**接管旧任务，继续做用户当前问的事。
-
-如果不想再看到这条提示，按 §10.3-B 跑一次 `--clear-state` 即可。
-
-如果提示文案是：
-
-```
-[Stop Hook 提示] 当前会话存在未闭环阶段：
-  ...
-未满足的闭环条件（全局入口 §5.1）：
-  - ...
-如果你打算【继续这个阶段】，按下面顺序补齐：
-  ...
-如果你想【放弃这个阶段，转去做别的事】，先执行：
-       cd framework/harness && npx ts-node harness-runner.ts --clear-state
-```
-
-→ 这是 **block + exit 2**：当前会话内确有未闭环阶段，按提示二选一即可。
-
-### 10.4 跨天 / 跨 cli 重启回来接着干
-
-例：周一跑了一半 coding，周二重启 cli 回来想接着干同一个 feature。
-
-- 直接进入对应 Skill / Slash，重新触发 harness-runner.ts；
-- runner 会重写 state（保留 prev started_at），同会话内继续；
-- 周一遗留的 `state.session_id="<old>"` 会在新 cli 的 Stop hook 中被识别为
-  `stale-cross-session` → advisory + exit 0；
-- 当 runner 重新跑过后，`writeCurrentPhaseState` 不会主动改 session_id，
-  保留前会话的 sid——直到本次 cli 的第一次 Stop hook 触发，hook 会用新 sid 覆盖；
-- 如不想看到 advisory，先 `--clear-state` 再重新进入对应 Skill。
-
-### 10.5 如何看 state 当前是什么状态
-
-```bash
-cat framework/harness/state/.current-phase.json
-```
-
-关键字段：
-
-| 字段 | 含义 |
-|------|------|
-| `phase` / `feature` | 当前阶段是哪个 feature 的哪一步 |
-| `status`            | `running`（harness 跑到一半）/ `harness_finished` |
-| `verdict`           | 最近一次 harness verdict |
-| `blocker_count`     | 最近一次 BLOCKER 数 |
-| `receipt`           | check-receipt.ts 输出 |
-| `session_id`        | 第一次 Stop hook 命中时由 hook 回填，标记本 state 归属哪个 cli 会话 |
-| `session_id_recorded_at` | session_id 被盖章的时刻 |
-| `last_seen_session_id` / `last_seen_at` | 最近一次 Stop / SubagentStop 触发时的 sid 与时刻（用于审计） |
-| `last_verifier_report.recorded_in_session` | verifier 子 agent 那次跑的 sid（验证 verifier 也属于同会话） |
-
----
+Ctrl+C、原生中断、工具超时或进程崩溃时保留events、owner/request、原流和合法成果；只对精确绑定停止/接管，不伪造native结束。显式用户UTC截止不因切换会话重置。具体操作见[Goal运行手册](goal-mode-runbook.md)及[操作命令](../../skills/reference/goal-mode-operations.md)。
 
 ## 11. 历史注记
 
@@ -571,3 +472,9 @@ cat framework/harness/state/.current-phase.json
       last_seen_session_id / last_seen_at 字段（向后兼容：缺失即按"未盖章"处理）；
     - 与全局入口 §5.1.1 协同。
 -->
+
+### Goal 检查与正式收口
+
+goal 执行者自检与外层 gate CLI 都只产检查事实和 proposal；PASS/open 表示当前检查通过、等待 runtime 正式 gate 与 finalizer。check-receipt 和 --sync-closure 在 goal 中只校验，不能抢先提交阶段或 Feature completion。独立无 goal 入口保留原闭环。自检 PASS/closed 不触发 invocation 结束，四个内置 adapter 按终态或自然退出走已有 grace/管道有界收尾。
+
+goal 的全部 visual rounds 写现有 journal，runtime 在 gate 前后顺序、幂等收编。device evidence 先组装同一个 holder/doc供同 gate native/legacy 检查与 verifier preview 消费，再由 runtime 核 gate 窗口、attempt/device/HAP/trace 后提交正式文件。legacy checkpoint 仍 WARN；绑定或提交失败保持 FAIL/open。旧 gate flag 不授予正式写入职责。

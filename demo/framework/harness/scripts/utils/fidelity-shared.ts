@@ -1,3 +1,4 @@
+import { ArtifactSchemaError, resolveArtifactContent } from './artifact-content';
 // ============================================================================
 // fidelity-shared.ts — fidelity_target / asset_acquisition_mode / severity ratchet
 // ============================================================================
@@ -5,6 +6,7 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { isDeepStrictEqual } from 'util';
 import { createRequire } from 'module';
 import type { CheckContext, VisionMode } from './types';
 import { parseVisualHandoffYamlRoot, parseUiChangeFromSpecMarkdown, UI_CHANGE_REQUIRES_UI_SPEC } from './ui-spec-shared';
@@ -42,6 +44,7 @@ export interface FidelityDeferralEntry {
 export interface RefElementEntry {
   element_id: string;
   screen_ref_id?: string;
+  ref_id?: string;
   zone?: string;
   type?: string;
   text?: string;
@@ -52,6 +55,7 @@ export interface RefElementEntry {
   /** plan c4e7a9b2 A2：`excluded` = 需求明文排除（非质量义务、非债务），须带 requirement_quote 逐字引自需求原文 */
   disposition: 'implement' | 'defer' | 'excluded';
   requirement_quote?: string;
+  note?: string;
   /** structured | vl — 第二刀双写优先级 */
   provenance?: 'structured' | 'vl';
 }
@@ -59,6 +63,7 @@ export interface RefElementEntry {
 export interface RefElementsDoc {
   schema_version?: string;
   elements: RefElementEntry[];
+  shape_issues?: string[];
 }
 
 export function parseFidelityTargetFromHandoffDoc(
@@ -434,36 +439,81 @@ export function collectRequirementIntentText(
  *  · 无 run：身份匹配（`phase:<feature>:spec`）的 explicit_cli fidelity-intent SSOT 所记单个
  *    requirement_source_files 原文，且按原文重算 requirement_sha256 须等于签发值（`--requirement-file` 路径）。
  * 其余一律空串——spec.md / 宽泛意图文本 / 行内 `--requirement`（未落原文）都不能授权。
+ * `runIdOverride`：runner 自身进程没有 `MAISON_GOAL_RUN_ID` 时显式给出 run（语义同 env）。
  */
 export function collectCurrentRequirementText(
   projectRoot: string,
   feature: string,
   featuresDirRel = 'doc/features',
+  runIdOverride?: string,
 ): string {
   const excludePrefixes = [`${featuresDirRel.replace(/\\/g, '/')}/${featureRelativePath(feature)}/`];
-  const readSource = (p: string): string => {
-    try {
-      return fs.readFileSync(path.isAbsolute(p) ? p : path.join(projectRoot, p), 'utf-8').replace(/^﻿/, '').trim();
-    } catch {
-      return '';
-    }
-  };
-  const runId = process.env.MAISON_GOAL_RUN_ID?.trim();
+  const source = resolveCurrentRequirementSource(projectRoot, feature, featuresDirRel, runIdOverride);
+  if (!source) return '';
+  if (source.kind === 'runless') {
+    return dereferenceRequirementDocs(projectRoot, source.text, { featuresDirRel, excludePrefixes }).combined;
+  }
+  try {
+    const parts = source.requirement.trim()
+      ? [dereferenceRequirementDocs(projectRoot, source.requirement, { featuresDirRel, excludePrefixes }).combined]
+      : [];
+    for (const f of source.sourceFiles) parts.push(readRequirementSourceFile(projectRoot, f));
+    return parts.join('\n\n');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 需求引文核对的唯一实现（plan 33784ed1 §4.2）：非空，且逐字出现在当前目标文本
+ * （collectCurrentRequirementText 的产出）。`ref_elements_excluded` 与拒修核验共用。
+ */
+export function checkRequirementQuote(quote: unknown, requirementText: string): 'ok' | 'missing' | 'not_verbatim' {
+  const q = typeof quote === 'string' ? quote.trim() : '';
+  if (!q) return 'missing';
+  return requirementText.includes(q) ? 'ok' : 'not_verbatim';
+}
+
+function readRequirementSourceFile(projectRoot: string, p: string): string {
+  try {
+    return fs.readFileSync(path.isAbsolute(p) ? p : path.join(projectRoot, p), 'utf-8').replace(/^﻿/, '').trim();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 当前执行身份与需求来源的唯一解析（collectCurrentRequirementText 与目标简报共用，plan 33784ed1 §3.2）：
+ *  · 有 run 身份（缺省取 `MAISON_GOAL_RUN_ID`）：须是权威 run，返回其冻结的 manifest.requirement 原文
+ *    （未解引用）与 requirement_source_files 清单；run 不权威或 manifest 不可读 → null（不回落无 run 分支）；
+ *  · 无 run：身份匹配的 explicit_cli SSOT 所记单个源文件原文，且重算 requirement_sha256 等于签发值；否则 null。
+ */
+export function resolveCurrentRequirementSource(
+  projectRoot: string,
+  feature: string,
+  featuresDirRel = 'doc/features',
+  runIdOverride?: string,
+):
+  | { kind: 'run'; runId: string; requirement: string; sourceFiles: string[] }
+  | { kind: 'runless'; text: string }
+  | null {
+  const runId = (runIdOverride ?? process.env.MAISON_GOAL_RUN_ID)?.trim();
   if (runId) {
-    if (!listAuthoritativeGoalRuns(projectRoot, feature, featuresDirRel).runs.includes(runId)) return '';
+    if (!listAuthoritativeGoalRuns(projectRoot, feature, featuresDirRel).runs.includes(runId)) return null;
     try {
       const m = JSON.parse(fs.readFileSync(
         path.join(projectRoot, featuresDirRel, featureRelativePath(feature), 'goal-runs', runId, 'manifest.json'), 'utf-8',
       )) as { requirement?: unknown; requirement_source_files?: unknown };
-      const parts = typeof m.requirement === 'string' && m.requirement.trim()
-        ? [dereferenceRequirementDocs(projectRoot, m.requirement, { featuresDirRel, excludePrefixes }).combined]
-        : [];
-      if (Array.isArray(m.requirement_source_files)) {
-        for (const f of m.requirement_source_files) if (typeof f === 'string') parts.push(readSource(f));
-      }
-      return parts.join('\n\n');
+      return {
+        kind: 'run',
+        runId,
+        requirement: typeof m.requirement === 'string' ? m.requirement : '',
+        sourceFiles: Array.isArray(m.requirement_source_files)
+          ? m.requirement_source_files.filter((f): f is string => typeof f === 'string')
+          : [],
+      };
     } catch {
-      return '';
+      return null;
     }
   }
   const ssot = loadFidelityIntentSsot(projectRoot, feature);
@@ -472,44 +522,35 @@ export function collectCurrentRequirementText(
     ssot?.requirement_provenance !== 'explicit_cli' ||
     ssot.execution_identity !== `phase:${feature}:spec` ||
     sources.length !== 1
-  ) return '';
-  const text = readSource(sources[0]);
-  if (!text || computeRequirementShaFromText(projectRoot, feature, text, featuresDirRel) !== ssot.requirement_sha256) return '';
-  return dereferenceRequirementDocs(projectRoot, text, { featuresDirRel, excludePrefixes }).combined;
+  ) return null;
+  const text = readRequirementSourceFile(projectRoot, sources[0]);
+  if (!text || computeRequirementShaFromText(projectRoot, feature, text, featuresDirRel) !== ssot.requirement_sha256) return null;
+  return { kind: 'runless', text };
 }
 
 /**
- * 需求 SSOT 引用文档路径集（codex 六轮 P0-5：manifest.requirement 引用的原始需求/
- * 解引用文档必须进阶段血缘，否则改原始需求后上游 closure 仍判 fresh）。扫全部
- * goal-run manifest 的 requirement，返回项目根相对路径去重集（供 evidence extraInputs）。
+ * 当前需求引用的原始文件/解引用文档进入内容血缘；run manifest 只负责运行控制。
  * ux-reference 目录下的参考图同样纳入（UI feature 的视觉 SSOT）。
  */
 export function collectRequirementSsotPaths(
   projectRoot: string,
   feature: string,
   featuresDirRel = 'doc/features',
+  current?: { runId?: string; requirement?: string; requirementSourceFiles?: string[] },
 ): string[] {
   const out = new Set<string>();
   const featureRel = featureRelativePath(feature);
-  const runsDir = path.join(projectRoot, featuresDirRel, featureRel, 'goal-runs');
-  if (fs.existsSync(runsDir)) {
-    // T1d：权威枚举单一入口（.dry/残留不入阶段血缘——更晚 dry run 不得改变 lineage）。
-    for (const runId of listAuthoritativeGoalRuns(projectRoot, feature, featuresDirRel).runs) {
-      const manifestPath = path.join(runsDir, runId, 'manifest.json');
-      // codex 七轮 P0-2：manifest.json 本身入血缘——内联 manifest.requirement 被改
-      //（不解引用任何文件）也必须使上游 closure stale。此前只收解引用文件，纯内联
-      // 需求改写对 closure 隐形。
-      out.add(path.join(featuresDirRel, featureRel, 'goal-runs', runId, 'manifest.json').split(path.sep).join('/'));
-      try {
-        const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { requirement?: string };
-        for (const rel of dereferenceRequirementDocs(projectRoot, m.requirement, {
-          featuresDirRel,
-          excludePrefixes: [`${featuresDirRel.replace(/\\/g, '/')}/${featureRel}/`],
-        }).resolvedPaths) {
-          out.add(rel);
-        }
-      } catch { /* 单 manifest 损坏跳过 */ }
-    }
+  const source = resolveCurrentRequirementSource(projectRoot, feature, featuresDirRel, current?.runId);
+  const requirement = current?.requirement ?? (source?.kind === 'run' ? source.requirement : source?.text);
+  const sourceFiles = current?.requirementSourceFiles ?? (source?.kind === 'run' ? source.sourceFiles
+    : source?.kind === 'runless' ? loadFidelityIntentSsot(projectRoot, feature)?.requirement_source_files ?? [] : []);
+  for (const file of sourceFiles) {
+    out.add(path.relative(projectRoot, path.resolve(projectRoot, file)).replace(/\\/g, '/'));
+  }
+  if (requirement !== undefined) {
+    for (const rel of dereferenceRequirementDocs(projectRoot, requirement, {
+      featuresDirRel, excludePrefixes: [`${featuresDirRel.replace(/\\/g, '/')}/${featureRel}/`],
+    }).resolvedPaths) out.add(rel);
   }
   // ux-reference 参考图
   const uxDir = path.join(projectRoot, featuresDirRel, featureRel, 'ux-reference');
@@ -1043,11 +1084,16 @@ export function writeCapabilitySnapshot(
   snap: Omit<CapabilitySnapshot, 'schema_version' | 'created_at'>,
 ): string {
   const p = capabilitySnapshotPath(projectRoot, feature);
+  const payload = { schema_version: '1.0', ...snap };
+  const previous = loadCapabilitySnapshot(projectRoot, feature);
+  if (previous && isDeepStrictEqual({ ...previous, created_at: undefined }, {
+    ...JSON.parse(JSON.stringify(payload)), created_at: undefined,
+  })) return p;
   fs.mkdirSync(path.dirname(p), { recursive: true });
   const tmp = `${p}.${process.pid}.tmp`;
   fs.writeFileSync(
     tmp,
-    `${JSON.stringify({ schema_version: '1.0', ...snap, created_at: new Date().toISOString() }, null, 2)}\n`,
+    `${JSON.stringify({ ...payload, created_at: new Date().toISOString() }, null, 2)}\n`,
     'utf-8',
   );
   fs.renameSync(tmp, p);
@@ -1205,18 +1251,12 @@ export function assetManifestAbsPath(projectRoot: string, feature: string): stri
 export function loadRefElementsFile(absPath: string): RefElementsDoc | null {
   if (!fs.existsSync(absPath)) return null;
   try {
-    const doc = YAML.parse(fs.readFileSync(absPath, 'utf-8')) as RefElementsDoc;
-    if (!doc || typeof doc !== 'object' || !Array.isArray(doc.elements)) return null;
-    // plan c4e7a9b2 返修#3：读兼容——缺省/非法 disposition 按 implement（旧口径 `!== 'defer'` 的等价），
-    // 下游一律严格 `=== 'implement'`，旧条目不得因此静默移出分母。
-    return {
-      ...doc,
-      elements: doc.elements.map(e => (e && typeof e === 'object' && e.disposition !== 'defer' && e.disposition !== 'excluded'
-        ? { ...e, disposition: 'implement' as const }
-        : e)),
-    };
-  } catch {
-    return null;
+    const parsed = resolveArtifactContent('ref-elements@1', YAML.parse(fs.readFileSync(absPath, 'utf-8')));
+    return { ...(parsed.value as RefElementsDoc ?? { elements: [] }),
+      ...(parsed.issues.length ? { shape_issues: parsed.issues.map(issue => `${issue.path}: ${issue.message}`) } : {}) };
+  } catch (error) {
+    if (error instanceof ArtifactSchemaError) throw error;
+    return { elements: [], shape_issues: [`ref-elements YAML 解析失败：${String(error)}`] };
   }
 }
 

@@ -1,392 +1,63 @@
-# Goal 模式运行手册（维护者 / agent 参考）
+# Goal Mode 运行手册
 
-> **宿主入口 SSOT**：[goal-mode/SKILL.md](../../skills/project/goal-mode/SKILL.md)（slash `/goal-mode` 或自然语言「目标模式 / 全自动」；**禁止**要求用户手跑 harness）。
-> 裁决 SSOT：[phase-transition-policy.ts](../../harness/scripts/utils/phase-transition-policy.ts)（`goal_mode` **优先于** `batch_authorized`）
+同一原请求持续到其真实终点。执行由一个协调器选择当前可做工作；原始请求、root/CU/request 的专用作者、真实检查和独立核验共用现有 run/owner/request 原件。有人/无人只改变运输和呈现。
 
-## 概述
+## 入口与原件
 
-`GoalPhaseRuntime` 是 Maison 工具无关的唯一 phase 生命周期：按 workflow 派生 chain，统一负责 owner/epoch、assess、attempt、runtime facts、receipt/gate、verdict、回退与封口。`goal-runner` 只是 detached CLI/process shell；有人在场与无人值守仅在 executor transport（宿主回调 / adapter spawn）上不同。运行证据落在 `doc/features/<feature>/goal-runs/<run-id>/`。
+使用 [统一入口](project-entry.md) 和 [Goal Mode 操作命令](../../skills/reference/goal-mode-operations.md)。在实例 framework/harness 运行原 goal-mode-entry / goal-runner，不创建第二运行器或状态库。请求范围、已签发 execution_scope、现有输入绑定与原完成终点不因新会话重新选择。
 
-## 3.0 调和模型：一个循环、两个运行方式
+有人执行领取原 request 后读取原件，使用 execute_command，经原 --report-result 交回；观察/中断也使用原返回命令。无人执行 --detach，消费返回 startup 的有界启动确认：alive_timeout 保留 child 并报告尚未就绪，早退保留 detach.log，不等另一个心跳来制造健康结论。--attach-created、--resume、manifest、--run-id 必须指向同一 run。
 
-interactive session 与 detached `goal-runner` 现在共用：
+新完整正式请求先按原始需求进入受管设计；canonical CU 尚不存在时不造平面 Feature/scope。初始设计、真实独立质询、正式发布、CU readiness、所有适用 CU 与原部件终点由同一 root 协调器持续处理。设计 ready、select_one 或子 run 出生均不是交付。
 
-- 冻结的 `PhaseExecutionContext`（run/workflow/track/chain/phase/attempt/owner fence/baseline）；
-- 同一个 `GoalPhaseRuntime` 生命周期与 owner 前后 fence；
-- 生产纯函数 `projectCanonicalLifecycle(events)` 的规范投影（executor/stdio/lease 遥测不入投影）。
+从宿主 `framework/harness` 调用 `npx ts-node scripts/goal-runner.ts --project-root <宿主根> --feature <原请求id> --requirement-file doc/requirements/request.md --adapter <当前adapter> --dry-run` 可先看同一入口的下一步、范围与已知缺口。需求路径相对宿主根；fresh 完整交付不要求先有 feature.yaml。dry-run 不签发设计、不创建真实 run、不启动模型或子进程；确认入口后沿原授权去掉 `--dry-run` 进入同一 runtime。
 
-```text
-assess@1 → GoalPhaseRuntime authorize/guard → executor transport → gate/verdict → reassess
-```
+## 当前差额与反馈
 
-`assess@1` 是唯一跨 phase 推荐源；`GoalPhaseRuntime` 保留 timeout、预算/backoff、cleanup、pass-snapshot、device、source-write、trust、monitor、usage 与 detach 存活等 guard。executor 只传输 phase 调用。详见 [reconcile-loop.md](../concepts/reconcile-loop.md)。
+readCurrentDispositionInput 组装当前适用义务、真实工具结果和独立发现，resolveCurrentDisposition 是唯一处置。assess、NEXT、report、status、progress 与 Feature/CU/component/release 消费同一结果；瞬时 currentResults/disposition 可在本次调用透传，不另存第二完成状态。
 
-用户只选择：
+作者负责本单元授权内的设计细化、实现与测试输入；spec/plan/coding/review/UT/testing 是方法和检查族，不是六个独立作者排队。检查沿原作者 request/owner/fence 执行，保原工具实际身份。正式报告/截图/独核/完成原件由原 producer 发布，作者不能自签。
 
-| 运行方式 | 行为 |
-|---|---|
-| 有人在场 | 自动推进；遇到 human-only waiting item 立即询问 |
-| 无人值守 | 自动推进；waiting item 停放，run 可 detach/resume |
+首次适用反馈包含全部当时可判定问题。一个读取故障或环境缺口不遮住已有真实 repair；错误原文保留并成为 verify/wait 缺口。当前 unknown 不变时自然 WAITING、无新调用；具体 producer/对象条件恢复后只补受影响工具或独核，验证出的真实 must_fix 交原作者。
 
-明确自然语言意图直接映射；歧义走 registry `goal.run_mode`；CLI `--detach` 恒为无人值守。菜单不得出现 `in-session`、`headless` 或 capability tier。
+独核读取前次公开结论、真实 diff/依赖、当前源与完整拒修原文。作者拒修是论据而非结案；新拒修补入实际材料并更换 subject，不重跑无影响工具/作者，旧请求保留。相同有效材料复用原独核，变化材料不得借历史 PASS。
 
-### Adapter capability 与降级
+## 恢复与控制
 
-adapter root `goal_capability` 新增：
+设备执行使用最低 Hylyre 0.5.0，正式 trace schema 为 `0.4-p0`，`result_protocol` 为 `hylyre.step-outcome/1`。StepResult 从 `outcome.status` 读取状态；失败原因读取嵌套的 `outcome.failure`、`outcome.cause`、`outcome.reason`，选择器请求与实际解析分别读取 `selector.request`、`selector.resolution`。保留原 trace 与截图，不能把平面字段或工具退出码替代步骤验收。
 
-- `in_session_reconcile`
-- `phase_context_isolation`
-- `supports_resume`
-- `handoff: none | to_detached | bidirectional`
+已有 testing trace/plan/timing/meta 只需重算报告时，使用 `harness-runner --phase testing --feature <feature> --report-reconcile-only`。原 producer 读取真实执行原件并重建报告门禁，不调用设备/provider/视觉/lifecycle hook，不要求作者先写顶层 `test-report.md`；缺执行原件仍保留缺口。
 
-in-session 自治必须同时声明 reconcile 与 phase context isolation；缺失时降级为手动 harness+assess。无人值守仍要求 external runner preflight。handoff 还要求 resume 能力。
+普通重发先接原 active run。真实 no_progress_guard 表示可比验证已完成且验收无改善；旧重复报告、元数据变化、同条件重入不能购买新窗口。明确继续沿原 force-resume/force-takeover 与授权/owner/写保护处理；原未完用户截止不重置。
 
-### Run control 与 handoff
+框架默认 budget/max_turns/阶段重试或回退数/总墙钟均不再控制新 run。仅显式 --user-deadline-at UTC 约束用户截止；取消、真实原生终态、具体工具期限、设备门、native stdout/stderr 静默保护和 fenced writer 保留。静默窗口为 max(90分钟, 现有公开Hvigor构建或设备UT期限+45分钟检查余量)；2小时配置对应165分钟，6小时对应405分钟。heartbeat/lease不延长该窗口；持续真实输出不受总时长限制。未确认停止/超时结果保持未知和可续，不可伪 seal。
 
-每个权威 run 持久化 `run-control.json`（`run-control@1`）。`current_epoch` 单调递增且 owner 释放后保留；所有 assess、phase invoke、harness/finalizer、event/progress/manifest 写入与终态发布都须通过 fencing。
+run-control epoch 与真实 request/accepted report 防重复和旧 owner 迟报。强制接管先确认精确旧绑定停止；缺失/不可核实绑定不得扩大授权。只清理目标 owner/PID/root，保 events、run-control、manifest、requests、原生流和合法成果。没有本次真实 grant 的调用截止保持未知，不能从历史默认 timeout 猜当前截止。
 
-非 orphan 的 session 与 detached process 切换使用原子 mailbox。requester 只写 request；当前 owner 在 phase verdict 边界写 `handoff_requested`、quiesce、释放；新 owner 以 `epoch+1` CAS 后写 `handoff_accepted`。两者继续使用同一 `run_id` 和 events ledger。仅 `orphaned_session` 可由用户显式授权 force takeover；supervisor 永不得触发该例外。
+## 状态与终点
 
-原生 Claude/Codex `/goal` 仅为可选加速层；闭环裁决以 harness `summary.json` + runner 为准。
+活性（原调用是否运行/结束）与业务完成分开显示。events-only 历史可读并展示 elapsed/activity，但缺 manifest/原件时业务未知；读取错误不能签 PASS。calls/active_ms 是统计，不是配额。历史 budget 仅可标注历史。
 
-## 宿主怎么用（产品面）
+启动时在原主会话报告任务、`started_at` 和 run ID，随后执行 detach 回执的 `wait_command`，或 `npx ts-node scripts/goal-status.ts --feature <原请求id> --run-id <原run> --wait --json`。该命令单次默认观察60分钟，在原请求终态或需外界处理时提前返回；显式正数 `--timeout-ms <毫秒>` 可调长或调短本段。到期返回 `timeout`、最近状态及绑定 `cursor`，用 `--after <cursor>` 接续同一请求，不签任务失败、不停止或重启后台。初次无游标且仍在运行时建立基线后等待，心跳、子 CU 结束或普通阶段不重复唤醒模型；观察进程随终端退出后，下次会话仍用原 run ID/游标核对。无 `run_end` 时沿既有 goal-progress 的3分钟观察新鲜度及匹配同机锁/PID判孤儿，观察者刷新不续命；跨机或可靠锁缺失保持未知并有界等待，活着但安静不冒认死亡。90分钟锁接管阈值不变。只读观察不停止后台进程，不自动 force-resume。`--watch` 保留终端每两秒重画用途。Claude、Codex、OpenCode、deepseek-harness、CodeAgent、Cursor、chrys 和 generic 均消费同一公共 status/回执协议；前台工具续等、stdout 展示与主动回报的覆盖范围按各客户端实测记录。CodeAgent 内网、chrys、generic 和 Cursor 的真实前台体验须分别记录，不能由其它客户端代签。初始设计的 `last_invocation.call_status=passed` 只表示正常交回；`result_usable`、`questioning.blockers/open_decisions` 和原件 `source` 分别说明结果可消费性与业务结论，下一责任方由当前 disposition 决定。机器读取加 `--json`，观察不得另派作者或重置 run。
 
-| 入口 | 说明 |
-|------|------|
-| `/goal-mode <feature> [需求]` | Claude slash（路由到 Skill） |
-| 自然语言 | 「目标模式 / 全自动 / 无人值守全自动」→ agent 读 goal-mode Skill |
-| Codex/Cursor/generic | skills-bridge 跳板（skill id `goal-mode`）→ 完整 Skill |
+已收到活着的 `WAITING_EXTERNAL` / `STALLED` 后，用返回的游标显式续等，同一关注状态不重复返回；新障碍、需人工处理、孤儿或终态仍及时报告。原障碍解除或切到健康后继时返回 `changed` 及新游标，沿新游标继续等待；不带确认信息的旧游标仍先报告关注状态。
 
-「全链路 / 从 spec 到真机」等属于 **batch_authorized**（对话内多 phase），不是 goal 模式触发词。
+DSH `invoke_end.usage` 只合计本次调用原生 step_end，按 session/turn/step 去重；新增 `input_tokens` 与 `observed_cache_read_tokens` 分开，后者仅合计实际公开的缓存字段。部分缺失通过 `missing_reason` 说明，全缺失保持 null；中断仅计已观测步骤，不推费用、不因缺计数停机。其它 adapter 保留既有用量采集口径，字节、逻辑输入及缓存读取均不等于新增计费 token。
 
-用户**不**直接执行 `goal-runner`；主 agent 按 Skill 内「Agent 必须执行」自跑。
+Feature/CU 需要适用义务和正式完成原件；部件还需其装配及正式 closure 原件，release 使用同一事实的发布条件。全部 CU 完成或 evaluate 条件绿不代签 component：原机器 writer 正式写出、重读校验后才可使用。普通完成与发布就绪分开，未知保持未知。
 
-## 维护者 / CI 调试（非宿主默认路径）
+## Adapter 与现场边界
 
-```bash
-cd framework/harness && npx ts-node scripts/goal-runner.ts \
-  --feature <feature-slug> \
-  --requirement "需求描述" \
-  --adapter claude \
-  --dry-run
-```
+Codex、Claude、DSH 只准确续接本单元原生ID；会话不存在或权限改变时重建专用上下文并披露。独核不继承作者SID。DSH使用真实headless profile/路由凭据，框架不复制秘密，不假定工具shell透传凭据。设备/PIN/安装/截图都沿原 device gate。
 
-去掉 `--dry-run` 前须确认 `unattended` 契约（manifest 或 adapter `goal_capability.external_runner.unattended`）。
+## DeepSeek Harness（dsh）
 
-续跑：`--resume <run-id> --feature <feature-slug>`（或 `--manifest <path>`）。
+独立视觉使用已冻结的 `visual_provider_pin`，包含准确 provider、完整 model ID、来源和适用推理设置，沿公共模型回放与原生请求核对。先加载该模型来源，最后加载发布件内 `visual-readonly-patch.yaml`；开发继续使用 `headless-patch.yaml`，两种用途不共享权限档位。视觉固定 `read-only/never`，关闭写入、shell、PTC、子 agent/workflow、插件管理及工程入口/技能加载，最终工具面只保留必要读取；同时关闭图片卸载和自动摘要，超限如实失败。
 
-证据：`doc/features/<feature>/goal-runs/<run-id>/manifest.json`、`events.jsonl`、`goal-report.{md,json}`。
+DSH 视觉只采信退出 0 的最后一条完整 `final.text`，不要求额外的 turn_end；每张本次图片均须有 `read_image` 调用及其成功结果，能力错误、漏图和残缺终稿沿现有 unavailable/invalid 返回。身份回显、图片哈希、逐屏载荷与工作区变化继续走现有校验。
 
-### Run 出生与 diff 基线
+2026-11-06 实测桌面 `0.2.2-rc.1`：默认内置 `deepseek-official / deepseek-flash / high` 路由读取随机图与仓内截图成功；较早 overlay 的不同模型被最后视觉 patch 覆盖，原生会话确认只读权限，项目文件清单与哈希不变。该版 `read_image` 的参数为 `file_path`。 工具面结论以本次已验证的实际配置组合为界；模型来源若新增 MCP 或扩展工具，应重新验证组合，不承诺任意扩展自动具有只读约束。同一真实 stdout 经修正后的正式消费入口回放通过身份、图像哈希、观察载荷和随机颜色核对；没有为重算投影再次购买看图调用。随后开发在独立工程经 Windows guardian 成功写入指定文件，原生记录仍为 `danger-full-access/never`。
 
-新 run 统一由 `createGoalRun` 创建：先写 `manifest.json`，再写且仅写一条
-`run_created`。只有这两项完整存在，attended bridge、detached runner、supervisor 和
-recent-run 投影才会把它当成可运行实例。仅有 manifest、事件损坏或 `run_created` 重复均为
-`CREATION_INCOMPLETE`：不可 attach/resume，也不构成同 feature 的 HALTED/PARTIAL 占位者；
-检查既有 GC 报告后人工清理残留即可，不会自动补造出生事件。
+目标模型的图像/上下文上限未在本次可见非秘密元数据中声明，记为未知；不静默卸载图片或切换模型。凭据仅由 DSH 自己解析；本轮按用户约束未读取、复制或哈希凭据文件，因此未验证其前后哈希。DSH 正常会话、附件和日志会落盘，不宣称进程零写入。模型/认证不可用时如实披露，保留开发能力，不伪造视觉通过。实测详情见开发验收记录，不能扩称宿主业务已交付。
 
-实际 chain 含 `coding` 或 `ut` 时，出生必须把当时 exact Git HEAD 冻结为
-`manifest.run_base_sha`；取不到 HEAD 就在零 agent 派发前拒绝创建。goal 内 UI/UT diff
-只认该字段，忽略并从子进程环境剥离 `HARNESS_DIFF_BASE_REF`。没有 `run_created` 的旧 run
-仍可只读旧 `run_start + coding-base`；一旦 `run_created` 在场便永不回退旧锚。
-
-`run_base_sha` 是 write-once 身份：同 run 的 `--override-manifest`、identity rebase 和 resume
-均不能改写。自动 successor 继承 lineage 的最早可信基线，不重新读取 HEAD。确需放弃旧
-lineage 时，只能由操作者在 goal runtime 外运行：
-
-```bash
-cd framework/harness && npx ts-node scripts/goal-runner.ts \
-  --feature <feature-slug> --requirement "<新问责需求>" --adapter <adapter> \
-  --supersede <old-run-id> --rebaseline-to <当前-exact-40hex-HEAD> --detach
-```
-
-两个参数必须同时提供，`--rebaseline-to` 必须等于执行瞬间 HEAD；goal execution env
-（即使带 `MAISON_GOAL_GATE_HARNESS=1`）一律拒绝。审计只追加到新 run：
-`run_created.rebaseline_from_run_id` 与 `supersede` 的 target/superseding/base/event 引用；
-不回写旧 run。这个管理命令建立新的问责边界，不是质量豁免，也不构成密码学真人证明。
-
-### Runtime-owned blocker 与契约扩展
-
-`run_base_sha` 缺失、损坏或与出生摘要不一致属于 runtime-owned framework blocker：runtime
-必须在 executor 前停止，且 actionability 归 operator/toolchain，不得把“补锚”“改 manifest”或
-重试同一 prompt 回喂给 agent。现代 run 不允许用 `trace.start_commit`、当前裸 HEAD 或
-`coding-base.json` 临时补救；旧 reader 只服务没有 `run_created` 的迁移期 run。
-
-plan closure 会把 `resource_keys[*].path`、`media`、页面/路由注册点以及 HAR build/export
-路径统一解析，并要求每个文件引用都已列入 `contracts.files`。例如 contracts 引用了 20 枚
-logo、但顶层 `files` 未声明时，应回到 plan 扩充 `contracts.files` 并重新 closure；不得在
-coding 后绕过 UI scope、按字节一致自动授权或另建 asset 豁免表。`contracts.yaml` 始终是唯一
-持久输入，closure 只产生内存规范化视图。
-
-## 状态语义（goal-fakepass-hardening 后）
-
-| 最终状态 | 含义 |
-|----------|------|
-| `CHAIN_SLICE_COMPLETED` | **本 run 的链切片**全 PASS——不等于需求完成；feature 级只认 `verify-feature-completion`（goal-status 尾行 `feature_status=`） |
-| `AWAITING_HUMAN_REVIEW` | legacy 读取兼容；新 run 不再写出。旧质量人签等待在恢复时按当前机器事实重投影为 repair、capability defer、optional advisory 或诊断，不能靠签名 resume |
-| `DEFERRED_CAPABILITY_MISSING` | 当前 provider/profile 缺少冻结需求所需能力（含 strict 视觉或 P0 native CaseResult.steps[]）；配置可用能力后重跑/恢复，不能用 fidelity receipt 降低目标 |
-| `DEFERRED` | 到达 end 但存在外部阻塞未闭环 |
-| `PARTIAL` | 中途停止或未到 end 且有 DEFERRED |
-| `HALTED` | 预算/收敛熔断、完整性持续不稳定、真正外部权限边界或 framework defect 等诚实终止；可修质量 FAIL 走责任阶段重跑，P0 skip/档位/视觉证据不得靠 waiver 放行 |
-| `COMPLETED` | legacy（旧 run 事件读取兼容），新 run 不再写出 |
-
-**任何 run 级状态 ≠ 需求完成**：feature 完成唯一判据 = `assessFeature`（feature-assessment）
-返回 `complete`（记录可信 + 义务逐条覆盖 + 无 blocking；伪造/缩链判记录 broken，世界后变
-判对应义务 uncovered）。截断链 run（`--start` 非链首）启动前会机器核验上游各阶段
-closure（phase-evidence-manifest staleness + review attestation），manifest 文本断言不作数。
-废弃 HALTED 旧 run 用 `--supersede <run_id>`（写审计事件，completion 只认经审计的 supersede）；
-只有需要切断旧 diff lineage 时才同时使用上节的 `--rebaseline-to`。completed 源 run 的 successor 重算范围（只跑未覆盖义务的责任阶段）。
-
-**DEFERRED ≠ 完成**：不得宣称 UT/真机已闭环。
-
-## Testing evidence 与报告重算（testing-stepresult-evidence-consumption）
-
-- testing 不得把旧 case 状态当作 `verification=passed`；无 `CaseResult.steps[]` 的未执行 case 保持 testing FAIL，不按 TC 名称或报告散文自动投 coding。只有既有 capability resolution 给出 provider 缺失的机器事实时，才走 capability defer。历史产物里的 `explicit_skip_tc_ids` 只作只读诊断，与「未执行」同等对待——不贡献 PASS、不产 coding candidate，新计划与派生器禁止写入。
-- testing 只消费 authoritative trace 的 `CaseResult.steps[]`；Maison 根据 acceptance/checkpoint 自算 coverage。最低契约为 Hylyre `0.5.0`、trace `schema_version=0.4-p0`、`result_protocol=hylyre.step-outcome/1`（Step Outcome v1），并需通过 release manifest → ready meta → trace environment 版本链与必需字段门禁。native trace 同时绑定实际 derived plan、top plan、trace 路径/SHA，并核对 StepResult count/index/kind；`execution`、`verification`、`evidence`、`expected_check_mode` 与 StepResult 的 `outcome` 是机器消费字段：状态读 `outcome.status`，失败事实读 `outcome.failure.domain/code/facts`，blocked 原因读 `outcome.cause`，skipped 原因读 `outcome.reason`，selector 读 `selector.request`/`selector.resolution`；flat `status`/`failure_kind`/`failure_code` 已退役，也不从 `diagnostic` 文本重建。
-- 顶层 `test-plan.md` 每条 TC 声明唯一 `execution_channel`（`hylyre|visual|manual:<gap_class>|provider:<capability-id>`）；known manual gap / inactive provider 才是 `unsupported_gap`，裸/未知 manual、未登记或 active 无 producer 的 provider 在跑机前 `invalid_test`。派生器只编译 `channel=hylyre` 的精确集合，不得新增/删除/改写通道。责任路由只消费实际执行且 `outcome.status=failed` 的步骤；`blocked/capability` 与 `blocked/infrastructure` 各投影 1 次 disposition 而非伪造 failure route，`blocked/prior_step` 与 `skipped/policy` 零 route 零 defer。
-- native StepResult 在场时不再调用旧 runtime telemetry monkey-patch；历史 telemetry 仅作具体 checkpoint 的有限兼容或一致性 WARN，不得合成第二套 CaseResult/StepResult 状态。goal 仍保留 run/attempt/HAP/device identity binding。
-- run 已产 trace 后即可执行 `--report-reconcile-only --phase testing --feature <feature>`（harness 自己生成报告，**不要求** agent 预先写好顶层 `test-report.md`）。该模式只读最终 trace、test-plan、`device-test-timing.json` 与 build/install/run meta，完整重算既有 report/static checks、summary、quality axes 与 repair candidates；不调用 hvigor、hdc、Hylyre、设备或视觉采集，也不修改 trace 字节。
-- 报告必须保留 skip 并计入正确分母（P1/P2 的未执行 case 也不能绕过 testing FAIL），使用最终 build/install reused 状态、最终 timing，并回填每个 case duration；native timing 直接汇总 StepResult duration，legacy 才回退日志算法；不得把首轮真编或旧轮数据写成最终执行轮数据。
-
-## Adapter 选择与 personal setup（goal 入口）
-
-**运行身份权威 = `framework.local.json agent_adapter`（SSOT）**。解析阶梯（用户显式 > 跳板/入口声明 > registry 交互，**永不默认 claude/cursor**）只产 `requestedAdapter`；effective 以合法 local 为准——`requestedAdapter` 仅在「首启无 local」或 `--override-adapter` 时才生效。goal-runner 在写 manifest 到盘前对账：`--adapter` 与合法 local 冲突 → **BLOCKER STOP**（不静默覆盖、不写 manifest），除非 `--override-adapter`（按请求回写 local 并留痕）。manifest 记 `adapter_provenance`（user_explicit|entry_declared|local_config|registry|override）供回溯。
-
-`adapter_provenance` 记录 run **出生时**的 adapter 来源：resume 的 effective adapter 未变化时，
-即使本次需要 `--override-adapter` 对账 local，也保留出生值，不改冻结 manifest。3.0.0 曾有旧
-runner 把该字段改成 `override`，造成 phase evidence 全文件 hash 假 stale；兼容读取只在两份
-manifest 除 `adapter_provenance` 外逐字一致时视为 fresh，requirement、adapter、预算等任何
-真实字段变化仍 fail-closed。
-
-1. goal-mode Skill 启动 runner **前**跑 `check-personal-setup.ts --json --ensure --select-adapter <requested>`（见 [personal-setup-gate.md](../../skills/reference/personal-setup-gate.md)）；用返回的 `activeAdapter` 作 `--adapter`。
-2. 多 adapter 且 local 未设 → `needs_adapter_choice` → registry `setup.adapter` → `init-orchestrate --scope personal` → `record-adapter`（写 `framework.local.json`，非项目产物）。
-3. **`adapter_conflict`**（local 已记录 X、本次请求 Y≠X）→ 默认尊重 X；确要换 Y：永久走 `record-adapter`，本次即时换加 goal-runner `--override-adapter`。
-4. 双缺（无 requested、local 也无合法 `agent_adapter`）→ preflight/reconcile BLOCKER，**永不默认**。
-
-### 排障：adapter 误选（如 cursor 记录却跑成 claude）
-
-根因（2026-06 宿主实测）：旧链路把 agent 的 `--adapter` 猜测置于 local SSOT 之上（`argv.adapter ?? cfg.agent_adapter`），`--adapter` 一来又 `delete('agent_adapter')` 跳过 local 校验，且 `check-personal-setup` 静默吞掉 select≠既有 的冲突 → agent 猜的 claude 一路覆盖了你记录的 cursor。现已根治：local 权威化（reconcileRunAdapter）+ `adapter_conflict` 码 + manifest 前置对账（冲突不写 manifest）。
-
-- **触发面（Cursor）· G6 已修**：根因是多 adapter 同名产物（`.cursor/skills`·`.claude/commands`·`.codex/skills` 都有 goal-mode）+ cursor 原 `commands: null`（无 `.cursor/commands` 产物）→ Cursor runtime 误读同名 `.claude/commands/goal-mode.md`(claude) 当 `/goal-mode`。G6 已给 cursor 生成 `.cursor/commands/goal-mode.md`（`RESOLVED_ADAPTER: cursor`），让 Cursor 的 Command 通道解析到 cursor 产物。**范围**：只修 goal-mode（唯一携带运行身份的 slash）；其它同名命令路由到 adapter 无关 skill、无误路由。
-- **Cursor 手工验证项（仓内证不了）**：`.cursor/commands/goal-mode.md` 存在且内容 `RESOLVED_ADAPTER: cursor`（仓内单测已锁）；但「Cursor 是否优先读 `.cursor/commands/` 而非 `.claude/commands/`」属 Cursor 产品行为——须在 Cursor 里实测：Settings → Commands 看 `/goal-mode` 指向 `.cursor/commands/`，必要时禁用/移除 `.claude/commands/goal-mode.md`。**无论 Cursor 行为如何，G1/G2 仍是硬兜底**（错 adapter 会被 goal-runner STOP）。
-- **恢复**：① 核对 `framework.local.json agent_adapter` 确是你要的；② 重跑（冲突会被 STOP 并提示）；③ 真要换：本次用 `--override-adapter`，永久用 `record-adapter`。
-
-## 视觉金丝雀缓存（`framework.local.json vision.canary`）与升级模型
-
-UI 相关 goal 首跑会真实探测一次 adapter 的读图能力（几何/颜色四题），结果缓存进
-`vision.canary`（个人级本地配置）。**升级 framework 时不要删 `framework.local.json`**
-——删除会连 `agent_adapter`/DevEco 路径一并丢掉；缓存有完整的自动生命周期
-（plan c7d2e9a4）：
-
-- **协议版本自愈**：缓存带 `probe_version`；framework 升级改了探测协议后旧缓存自动判
-  stale，下一次 UI goal 重探原位覆写——用户零操作；
-- **TTL 分层**：goal 来源 `tool_read` 7 天、`none/ocr_capable` 24 小时（模型路由/额度/
-  权限会静默变，不永久采信）；interactive 来源恒 24 小时；
-- **探测失败不落缓存**：invoke 失败（非零退出/超时/静默被杀）或输出非有效答卷
-  （空输出/额度错误文本/prompt 回显/残卷）一律不写盘——盘上有新鲜缓存则沿用
-  （stale-if-error，runner 日志如实注明），否则本次 run 回退 adapter 声明路径、下次自动重探；
-- **强制重探**：换模型/账号后想立即刷新，goal-runner 加 `--refresh-vision-probe`
-  （自然语言对 agent 说「强制刷新视觉探测」即映射此 flag）；或手删 `vision.canary` 节点
-  （只删该节点，勿删整个 local 文件）；
-- **模型钉绑定（`--adapter-model`）**：pinned run 的 canary receipt 记 pin 模型值，采信/跳过
-  须 run + 模型同时命中（resume 改 pin 同 run_id 的旧模型缓存、并发窗口切走模型的旧缓存
-  都会自动失效重探）；未 pin 的 run receipt 仍记 `unknown`、采信行为与现状一致。
-
-## 两级校验
-
-- **check-init**：`goal_capability` 缺失仅 WARN
-- **goal-runner 运行身份对账（写 manifest 前）**：`reconcileRunAdapter` 以 `framework.local.json agent_adapter` 为权威——`--adapter` 与合法 local 冲突 / 双缺 / `--override-adapter` 无 requested → BLOCKER STOP（不写 manifest）；override 经 `recordAdapterToLocal` 回写留痕
-- **goal-runner preflight**：`manifest.adapter` ∈ materialized + 入口产物 + `goal_capability`/`unattended` + **provenance**（仅 `fallback` 拦 personal setup）+ 无头 CLI 可解析（`--dry-run` 降级 WARN）
-
-## Headless 路径（MVP 硬化）
-
-**全权限契约（plan a8e5c3f9）**：用户主动启动 Goal/headless 即授权 agent 无人值守全权限执行
-（non-interactive + no approval prompt + full filesystem/tool execution）；adapter 只把该语义翻译成
-自家 CLI 参数，不得降级。全权限=执行能力，不是业务裁决权——phase 权责、integrity、runner-owned
-gate、receipt/人签、设备与凭据规则不变；agent 自跑 harness 只是快速反馈，runner 的正式 gate 仍是
-唯一裁决真源。headless 下**无须也不应**再为单个命令（npx/npm/node/hvigor/hdc…）做预批准。
-
-- Claude：`claude -p --dangerously-skip-permissions`（结构化 argv，不经 shell tokenize；不再用
-  `--permission-mode dontAsk`——那是"不询问、未批准即拒绝"而非 bypass，也不再传 `--allowedTools`。
-  2026-08-17 宿主实跑验收：该 argv 组合下真实执行 `npx ts-node --version` 成功、`permission_denials=[]`）
-- CodeAgent：**当前不支持 Goal/headless**——argv 与 Claude 共用（`codeagentcli -p
-  --dangerously-skip-permissions`），但该 bypass 旗标在 codeagentcli 上未经宿主实测（2026-07-29 家族
-  等价实证只覆盖旧旗标集），preflight 以 `adapter_headless_permission_unsupported` 明确拒绝。解锁路径：
-  宿主跑 `codeagentcli --help` 确认旗标存在并实跑一条 shell 命令，然后删除 agent-invoke.ts
-  `assertAdapterHeadlessFullPermission` 的 codeagent 分支（argv 无须再改）。宿主身份 env=`CODEAGENT=1`，
-  hook 进程注入 `CODEAGENT3_PROJECT_DIR`
-- Codex：`codex --ask-for-approval never exec --sandbox danger-full-access`（恒定，不随 manifest 摇摆；
-  审批旗标为**顶层旗标**，必须放 `exec` 之前）
-- Cursor：`cursor-agent`（回落 `agent`）`-p --force --trust`（恒定）+ prompt stdin。**禁止**
-  `cursor agent --print`。Windows `.cmd` 垫片经 **cross-spawn** spawn（`harness` 依赖 `cross-spawn`）。
-- Chrys：**当前不支持 Goal/headless**——其非交互全权限（bypass）参数未经宿主核实，preflight 以
-  `adapter_headless_permission_unsupported` 明确拒绝（不静默以未知/残权限启动）。解锁路径：宿主跑
-  `chrys run --help` 把等价旗标带回来，接入 agent-invoke.ts 与 agents/chrys/adapter.yaml。
-  （原调用形态存档：`chrys run --task <PROMPT_FILE> -C <PROJECT_ROOT> --agent Code --json`；文件传
-  prompt；CLI 在 PATH 或 `%LOCALAPPDATA%\chrys\bin`；无流式输出；退出码 0/1(stderr JSON)/124/130。）
-- OpenCode：`opencode run --dangerously-skip-permissions --dir <PROJECT_ROOT>` + **stdin 灌 prompt**（**勿用 `-p`**，其为 `--password`）。前置：`npm i -g opencode-ai`，bin 名 `opencode`；模型/凭据由 opencode config/auth 提供，先手跑 `opencode run "hi"` 验证。**skill 落 opencode 自有原生目录 `.opencode/skill/<id>/SKILL.md`**（opencode 长期稳定的主 skill 目录，兼容当前版本及传统原生目录；不依赖较新的 `.agents` 外部 skill 发现）。`AGENTS.md` 仍在项目根（opencode 原生读为 instructions）。opencode **自动加载的只有** `AGENTS.md` + `.opencode/{skill,skills}/**/SKILL.md`；`.opencode/rules/*` 不自动加载（引用可达，非有效规则入口），maison 不碰用户 `.opencode/opencode.json`。默认开关全开（勿设 `OPENCODE_DISABLE_PROJECT_CONFIG` 等禁用 bundle 的 env）。Windows `.cmd` 经 cross-spawn。
-
-**模型钉（`--adapter-model <id>`）**：并发多窗口跑不同模型、或要钉住本 run 模型时，启动 goal run 传 `--adapter-model`，该值是**权威输入**并随 headless argv 回放（codex/claude/codeagent/cursor 用 `--model <id>`，opencode 用 `-m <id>`），写入 manifest `adapter_model_pin`。`chrys`/`generic` **不支持**（传了即 BLOCKER fail-fast）。CLI、loaded manifest、successor 继承**均无 pin** 时 = 现状零变化；pinned run 的 resume 不传 flag 仍继承并回放冻结 pin。**仅 headless/unattended（含 `--detach`）；有人在场 in-session 不适用**。
-
-**只读视觉 provider（`--visual-adapter <a> --visual-model <id>`，plan ab072691）**：主模型无视觉时，
-可为本 run 指定**第二个只读 endpoint**——它只看图产逐屏结构化评审，物理上不写工程；正式产物唯一写者
-仍是主模型。两个旗标**成对必填**，单给任一即 fail-fast；值写入 manifest `visual_provider_pin` 并条件
-进身份哈希，resume 只认冻结值（不重读个人配置），successor 出生输入可覆盖。优先级 **CLI > manifest
-冻结值 > 个人级 `framework.local.json` 的 `vision.visual_provider`**。
-
-**视觉能力不足不再使用人工盲跑 waiver**：`--allow-blind-visual` 已删除，新 manifest 不写
-`allow_blind_visual`；旧字段只读兼容但无运行语义。运行策略只由冻结 requirement 的目标/严格度和
-当前 capability facts 决定：`pixel_1to1 + hard` 等必需视觉能力不足时，在 content invoke 前投影
-`DEFERRED_CAPABILITY_MISSING`；非 strict、非发布必需的视觉证据按既有 advisory/UNVERIFIED 策略继续。
-配置合法 provider 后，新 run 可直接使用；当前 run 若要变更冻结 provider pin，仍按既有
-`--visual-adapter` + `--visual-model` 与 manifest override 规则处理。
-
-- **支持哪些 adapter 由 adapter catalog 派生**——运行时扫 `agents/<adapter>/adapter.yaml` 的
-  `visual_provider` 完整声明；本文**不另写一份名单**（要看当前支持项，跑一次带不支持 adapter 的
-  `--visual-adapter`，错误会列出）。
-- 显式传了**不受支持**的 adapter → 启动处 BLOCKER fail-fast 并列出支持项；框架**不自动改选**、
-  **不在多个 provider 之间 fallback**。
-- 无人值守读到已失效/不可读的旧 local 配置 → WARN + 忽略；后续 requirement/capability preflight
-  决定 defer 或按 advisory 继续，不询问、不自动改选。
-- provider 调用失败/载荷不可信时：本轮视觉反馈降级为盲档，`visual_diff` 出 `{BLOCKER, SKIP}`，
-  required 轴保持 FAIL/UNVERIFIED 并重试或 defer，optional 轴才可 advisory；不得伪造 PASS。
-- 当前 attempt/hash/identity 绑定的 deterministic/native/delegated 机器证据直接决定视觉轴，
-  不再要求真人逐屏签名。
-
-```bash
-# 只读视觉 provider 示例（主模型盲 + 第二个能看图的 endpoint）
-cd framework/harness && npx ts-node scripts/goal-runner.ts \
-  --feature <feature-slug> --requirement "需求" --adapter codex --adapter-model <coding-model> \
-  --visual-adapter claude --visual-model <vision-model> --detach
-```
-
-```bash
-# Chrys dry-run 示例
-cd framework/harness && npx ts-node scripts/goal-runner.ts \
-  --feature <feature-slug> --requirement "需求" --adapter chrys --dry-run
-
-# OpenCode dry-run 示例
-cd framework/harness && npx ts-node scripts/goal-runner.ts \
-  --feature <feature-slug> --requirement "需求" --adapter opencode --dry-run
-```
-
-### 无人值守存活：`is_background` ≠ 活过会话（survival-first · 概念纠正）
-
-宿主的"后台启动"（Cursor `is_background` / Claude Code `run_in_background`）只让 agent **立即拿回控制权**，进程仍是**会话内子进程**——宿主会话结束 / 活跃 agent 轮次收尾即被回收（2026-06 实测：`is_background` 直挂的 run 在轮次收尾被杀，`progress.json` 长期显示"运行中的尸体"）。**"拿回控制权" ≠ "活过我的会话"。**
-
-故**无人值守一律用真 `--detach`**（真 OS 脱离：`detached:true`+`unref()`+stdio 落 `detach.log`），实测能**活过 Cursor 完全关闭再重开**。宿主有后台模式可叠加用来不阻塞 launcher，但**存活靠 `--detach`，不靠 `is_background`**。启动与存活结果以 launcher 返回的 `startup` 为准，调用方不追加握手：`failed` 报启动失败，其余三态按真实状态汇报。
-
-**存活是环境属性**：会**整组/整树杀**进程的敌对宿主（部分公司沙箱 / CI；Node `detached:true` 不设 `CREATE_BREAKAWAY_FROM_JOB`，挡不住 `taskkill /T` / kill-on-close Job）下 `--detach` 也保不住，须用 OS 调度任务（cron / Windows Task Scheduler）托管 run。下面 chrys / opencode 是"阻塞型宿主"的具体落地。
-
-**本次实测（2026-08-18，Windows Claude Desktop 工具环境；措辞仅限定该宿主环境，不概括"Claude Code 一律必死"）**：工具 shell、会话后端、detached 探针的 `IsProcessInJob` 全部为 `true`，且 `detached:true` 无法请求 breakaway——该环境下 `--detach` 的 runner 三次在宿主轮次交还后的延迟回收中被硬杀（无部分退出钩子足迹，进程整体消失）。教训：**只要宿主进程在 kill-on-close Job Object 里，--detach 就是临时存活；真无人值守必须脱离该宿主进程的生命周期**。
-
-### 恢复路线分级（真无人值守 ≠ 用户终端临跑）
-
-| 路线 | 级别 | 说明 |
-|------|------|------|
-| **Task Scheduler（推荐，真无人值守）** | `goal-supervise --install-schtasks --feature <f> --every-minutes 5` | OS 计划任务独立于宿主会话/进程树；supervisor 自愈（run 崩溃/被杀后按 beacon×run_disposition 决策自动 `--resume`，且在有 Job 守卫下确认旧 owner 死亡后才受控拉起）。**显式手动执行才安装**，框架绝不自动写持久计划任务；`goal-supervise --uninstall-schtasks --feature <f>` 卸载 |
-| **用户自开终端 `--detach`** | 一次性临时路线 | 当前终端/宿主会话内能活（关闭启动窗口无碍），但**无 supervisor 自愈——run 崩了没人拉起**，宿主整树清理时也会被杀。适合"我看着这一轮 / 短任务"的临时场景，不写成与 Task Scheduler 同级保证 |
-
-不做 **Job flags 运行时自动探测或自动路由**（探测≠保护；containment 才是保护）——宿主环境是否 kill-on-close 一律由上面这条人工分级决定，不自动判。
-
-### 从无后台能力的宿主 shell 启动（chrys / opencode TUI 等）→ 必须 `--detach`
-
-当**编排 agent 自己**（如 chrys TUI 的内置 shell 工具）去启动 goal-runner，而该 shell **仅阻塞、有超时上限、无后台模式**时：直接跑会秒级超时 → runner 变孤儿后台续跑 → agent 误判超时又重复起 run → 子进程互杀（chrys 实测）。**加 `--detach`**：
-
-```bash
-cd framework/harness && npx ts-node scripts/goal-runner.ts \
-  --feature <feature-slug> --requirement "需求" --adapter chrys --detach
-```
-
-- launcher fork 后台 child，完成自身有界启动确认后打印一行 JSON（`{detached, run_id, report_dir, log, pid, startup}`）；`startup=failed` 时非零退出，其余状态干净返回，**不等待任务终局**。
-- child 的 stdio 重定向到 `report_dir/detach.log`，**不继承宿主 shell 的管道**（否则宿主 `communicate()`/阻塞读会一直等到 child 关 pipe，反而拖到超时杀树）。
-- 解析 launcher JSON 取 `run_id` 与 `startup`，按 `ready` / `terminal` / `alive_timeout` / `failed` 准确汇报后交还轮次；调用方不再重复握手。`--detach` 同样兼容 `--resume <run-id> --feature <f> --detach`。
-- 适用前提（实测，chrys `foundation/platform/process.py`）：宿主 shell 用 `CREATE_NEW_CONSOLE` 而非 kill-on-close Job Object，且**仅在超时/取消时杀树**——故 launcher 干净退出即可让 detach 存活。
-
-**监控口径（chrys/opencode 无流式）**：`phases/<phase>/agent-output.log` 在 phase 结束前**恒为空**——活性**只**看 `goal-status` / `progress.json` / events 心跳（每 ~60s 一拍），**禁止** tail `agent-output.log` 判断卡死。
-
-## 运行中进度（progress / monitor 契约）
-
-事实源：`events.jsonl`（append-only）。派生快照：`progress.json` / `progress.md`（可重建）。
-
-```bash
-cd framework/harness && npx ts-node scripts/goal-status.ts \
-  --feature <feature-slug> --run-id latest --json
-```
-
-launcher 已使用 manifest、本次新增 events、liveness 与 progress 完成**有界启动确认**；主 agent 只消费返回 JSON 的 `startup` 四态并汇报 `run_id`、进度路径和续查命令，然后**结束当前轮次**。不得再用 `sleep` / `for` / `grep events.jsonl` 重复握手或等待 phase/verdict/run_end；仅当用户明确要求盯守时才进入 bounded monitor：
-
-```bash
-cd framework/harness && npx ts-node scripts/goal-monitor.ts \
-  --feature <feature-slug> --run-id <run-id|latest> \
-  --since-event <last-seen-event-index> \
-  --max-seconds 240 --markdown
-```
-
-调用 `goal-monitor --max-seconds N` 时（仅在 opt-in 盯守实际调用时适用），宿主 shell/tool timeout 必须显式设置为 `> N`（建议 `N + 60s`；`--max-seconds 240` 时至少 300s）。不要依赖 Claude Code Bash 等宿主工具的默认 timeout；若宿主无法提升 timeout，就把 `N` 降到安全值。
-
-| 入口 | 用途 |
-|------|------|
-| `progress.json` | IDE/插件/CI 文件 watch |
-| `goal-status --json` | 无法直接解析路径时的命令契约；**实时重算** liveness + `generated_at` 新鲜度降级 |
-| `goal-status --markdown` | agent 向用户汇报 |
-| `goal-status --watch` | **仅供人在终端**；agent 勿跑常驻 watch；可加 `--max-ticks N` 限制轮询次数（测试/脚本用） |
-| `goal-monitor --markdown/json` | **仅 opt-in 盯守用**；边沿触发、最多等待 `--max-seconds`、输出一次通知后退出。**不得当状态查询**（默认游标 -1 会重放最早历史 verdict）——状态查询唯一入口是 `goal-status` |
-
-**新鲜度降级**：非终态快照若 `generated_at` 超过 heartbeat 间隔 2–3 倍，不得信任 raw `status: RUNNING`（后台 terminal 随 IDE 会话回收会留下谎报）。终态快照（`COMPLETED`/`DEFERRED`/`PARTIAL`/`HALTED`）不降级。
-
-`goal-monitor` 是纯读取器：它不启动、不续跑、不杀掉、不修改 goal-runner；被宿主 timeout 杀掉无副作用，下一轮可重新调用。它的通知事件包括 `phase_verdict`、`run_end`、硬 liveness 异常，以及低频 ACTIVE heartbeat 摘要。heartbeat 摘要按事件时间累计 `SOFT_STALL_MS = 10min` 判断并去重，不按本次 monitor 调用等待时长判断。
-
-跨轮次接管：若主 agent 轮次中断，新轮 agent 应从 run 目录重新读取 `events.jsonl` / `goal-status` 推导当前状态和最近 verdict；不要假设内存里的 `last_seen` 仍可靠。第一版 framework 脚本不提供跨轮次聊天唤醒；真正 push/wakeup 属于宿主或 adapter 增强（如 Claude `ScheduleWakeup` / cron 等宿主调度能力）。
-
-**不要**把 `agent-output.log` 正文或 runner stdout 日志当协议；stdout 里程碑行 `GOAL_PHASE` / `GOAL_RUN` 是受维护的轻契约和可选加速器，不是通知 SSOT，且仅限**当前轮次、非 detached、stdout 仍由宿主持有**的路径（`--detach` 下 runner stdout 已全部重定向进 `detach.log`）。
-
-## Headless 阶段内闸门（§9）
-
-goal-runner 向每个 phase agent 注入 **Unattended execution** 块（SSOT：[user-confirmation-ux.md §9](../../skills/reference/user-confirmation-ux.md)）：
-
-- 阶段内确认闸门（术语 `[x]`、ui-spec verified、enum/gate 等）**自动解析 + 留痕** `doc/features/<feature>/<phase>/headless-assumptions.md`。
-- glossary 命中 → high 自动解析；新术语 → medium/low + legacy `must_review` 审计标记（goal-report 顶部清单，不参与门禁）。
-- `freeform_approval`（scope 扩展、改源码）→ **保守默认**（不扩 / 不改），记录推迟请求。
-
-### 防御纵深（盲目重试）
-
-| 机制 | 行为 |
-|------|------|
-| **无进展守卫** | 同一 phase 连续 attempt：`deterministic_gate_or_artifact_missing` + 相同 blocker 签名 + 产物 delta 零（存在性/内容 hash，**非 mtime**）→ 立即 HALT |
-| **指纹级熔断（f7a3d9c2）** | testing 视觉迭代：check 比对 `visual-rounds.ledger.jsonl`，连续两有效轮缺陷指纹集相等且仍有 loop-actionable 残差 → `failure_kind=no_progress_fuse` **首触即 HALT**（不烧重试预算；归因 `no_fix_attempt`/`ineffective_fix` 在 blocker details；duplicate 重放保证 agent 自跑首检的 fuse 外层 gate 仍可见）。与旧 `no_progress_visual_gap`（blocker-id 粗粒度签名熔断）并存：fuse 更细更先触发，signature 熔断留作兜底 |
-| **账本完整性（f7a3d9c2）** | testing gate/resume 启动时 events↔ledger 反向对账：期望行缺失/被改（含 decision）→ `visual_ledger_integrity` HALT——删账本行绕不过熔断，损坏不解释成空历史（运行时一致性防护，非密码学防篡改） |
-| **chrys sentinel** | `agent-output.log` 逐行 JSON 命中 `code=headless_interaction_required` → 立即 HALT + `agent_interaction_required` 事件 |
-| **重试上下文** | 产物缺失类失败不注入「先 revert」话术；仅 `code_regression` 保留 revert-first。testing 的可信根失败非空且全为 `test_contract` 时，后置精修并跨 retry/`--resume` 恢复该分类，prompt 只检查 selector、ui-spec、测试锚点或 runner 契约，禁止据此修改产品源码 |
-
-events 字段：`failure_kind_classified`、`blocker_signature`、`halt_reason`、`interaction_question`；f7a3d9c2 新增 `visual_round`（loop_id/visual_attempt/row_hash/disposition/fused——账本回执，integrity 对账期望集）与 `critic_receipt_produced`。轮次身份：runner 对 agent 与 gate 双注入 `MAISON_GOAL_RUN_ID`/`MAISON_GOAL_ATTEMPT`（attempt=events 回放的 invocation 序数，跨 `--resume` 单调，绝不用 phase 内 retries 计数）。
-
-## 宿主侧实机冒烟（chrys，跨机器）
-
-本仓开发机可能无 chrys；以下步骤须在 **真 chrys 宿主**（如 HarmonyOSDemo + framework）执行，结果回填 plan 实施记录。
-
-```bash
-# 0. Tier_1 + personal setup（goal-mode Skill 前置）
-cd framework/harness && node ../scripts/init-readiness.mjs
-npx ts-node scripts/check-personal-setup.ts --json --ensure --select-adapter chrys --project-root <repo-root>
-
-# 1. 核实 chrys 非交互 flag（Layer C）
-chrys run --help   # 记录是否有 bypass/非交互 flag，反馈维护者
-
-# 2. 仅 spec 单 phase 冒烟
-npx ts-node scripts/goal-runner.ts \
-  --feature <feature-slug> \
-  --requirement "<需求摘要>" \
-  --adapter chrys \
-  --start spec --end spec \
-  --detach
-
-# 3. 验收（run 结束后）
-# - agent-output.log 无 headless_interaction_required
-# - doc/features/<f>/spec/spec.md 存在且含 section 0 [x] + 正文
-# - spec/reports/summary.json verdict=PASS
-# - doc/features/<f>/spec/headless-assumptions.md 含 must-review 清单（如有 medium/low 术语）
-npx ts-node scripts/goal-status.ts --feature <f> --run-id <run-id> --markdown
-```
-
-失败时查 `goal-runs/<run-id>/goal-report.md` 的「外部输入或权限」段与 `events.jsonl` 的 `agent_interaction_required`；仅真实外部前置条件允许停放，质量问题不得由人工确认放行。
+本手册描述开发实现；P3仍以开发定向/整合验收记录为准，P4真实联合宿主/设备验收 pending。历史CLI探针只证明其实际覆盖的启动/运输/会话能力，不证明业务交付。

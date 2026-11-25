@@ -82,13 +82,15 @@ export const APP_LENS_QUESTIONS = [
 
 export function createAppViewInstances(
   seeds: Partial<Record<(typeof VIEW_IDS)[number], BlueprintRecord>>,
-  deploymentApplicable: boolean,
+  deploymentApplicable?: boolean,
 ): BlueprintRecord[] {
   return VIEW_IDS.map(viewId => ({
     view_id: viewId,
     viewpoint_contract: `app-${viewId}@1`,
-    applicability: viewId === 'deployment' && !deploymentApplicable ? 'not_applicable' : 'applicable',
-    ...(viewId === 'deployment' && !deploymentApplicable ? {} : { evolution_impact: 'changed' }),
+    ...(deploymentApplicable === undefined ? {} : {
+      applicability: viewId === 'deployment' && !deploymentApplicable ? 'not_applicable' : 'applicable',
+      ...(viewId === 'deployment' && !deploymentApplicable ? {} : { evolution_impact: 'changed' }),
+    }),
     stakeholders: [],
     purpose: '',
     current_state: 'unknown',
@@ -105,6 +107,7 @@ export function createAppLens(
   answers: Record<(typeof APP_LENS_QUESTIONS)[number], BlueprintRecord>,
   runtimeFlowTriggerAssessment: BlueprintRecord,
 ): BlueprintRecord {
+  // 作者按各根问题的真实依据完成 4+1 与目标 typed 细节；lens 不补事实或自授权。
   return { ...answers, runtime_flow_trigger_assessment: runtimeFlowTriggerAssessment };
 }
 

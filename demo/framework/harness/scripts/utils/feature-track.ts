@@ -1,17 +1,27 @@
-import { resolveExecutionScope, executionScopeFingerprint, EXECUTION_SOURCE_KINDS, OBLIGATION_PROVIDERS, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from './execution-scope';
+import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
+import { executionCompletionPhases } from './execution-scope';
+import { readRepairDependencyContext } from './repair-responsibility';
+import { phaseCompletionProblems, isBlockingCheck } from './check-disposition';
+import { resolveExecutionScope, readScopeRevisionUserControl, applyScopeUserControl, assertRevisionKeepsRequiredObligations, executionScopeFingerprint, effectiveScopeView, scopeProofHistory, phaseEvidenceIsCurrent, scopeRevisionInvalidations, authorizedScopePhases, acceptsDefinitionInputProof, EXECUTION_SOURCE_KINDS, OBLIGATION_PROVIDERS, type ScopeHistoryEvent, type ScopeEvidenceRef, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from './execution-scope';
 import { createHash } from 'crypto';
 import * as path from 'path';
 import type { WorkflowSpec } from '../../workflow-loader';
-import type { AcceptanceSpec } from './types';
+import type { AcceptanceSpec, ContractsSpec } from './types';
 import { readBoundInput, DEPENDENCY_ONLY_PROVIDER_IDS, type InputBinding } from './capability-resolution';
 import { inferLegacyProjectRoot, isInsideProjectRoot, resolveDependencyPath } from './project-relative-path';
-import { loadEffectiveExecutionScope } from './goal-run-creation';
+import { loadEffectiveExecutionScope, resolveEffectiveScopeSource } from './goal-run-creation';
 import { loadFeatureContracts, contractFingerprint } from './skill-contract';
 import { loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness } from './phase-evidence-manifest';
 import { authoritativeContentDrift, describeAuthoritativeDrift } from './blueprint-skill-projection';
 import { hasNewSourcedFact } from './execution-scope';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import { inferRepoLayout } from '../../repo-layout';
+import { SpecLoader } from './spec-loader';
+import { featureRelativePath } from './feature-identity';
+import type { FidelityTarget } from './fidelity-shared';
+import { validateChangeUnitFeatureProjection } from './change-unit-feature-projection';
+import { deriveChangeUnitFeatureId } from './change-unit-path';
+import type { ChangeUnitArtifact } from './change-unit-model';
 // ============================================================================
 // feature-track.ts — feature.yaml 的 track 声明读取（C1 feature-track，plan d4a7c1e8）
 // ============================================================================
@@ -21,7 +31,7 @@ import { inferRepoLayout } from '../../repo-layout';
 
 import * as fs from 'fs';
 import * as YAML from 'yaml';
-import { featureArtifactPath, featureFilePath, featurePhaseReportsDir } from '../../config';
+import { featureArtifactPath, featureFilePath, featurePhaseReportsDir, relFeaturesDir } from '../../config';
 import type { FeatureCompletion } from './verify-feature-completion';
 import { resolveFeatureTrack, type FeatureTrackDecl } from './runtime-policy';
 
@@ -33,18 +43,9 @@ export function featureTrackDeclPath(projectRoot: string, feature: string): stri
 
 export function loadFeatureTrackDecl(projectRoot: string, feature: string, existingRunId?: string): FeatureTrackDecl | null {
   const runId = existingRunId ?? process.env.MAISON_GOAL_RUN_ID?.trim();
-  // D1.6 / 批次 3 阻断 1：**现代有效范围在场即 full**，两个载体同口径。
-  // 否则 feature.yaml 里残留的 `track: lite` 会在冻结入口之前把 review/ut 判成非法 phase，
-  // 闭环出口也会按 lite 口径走——那正是「现代路径被旧 track 门控」的事故形状。
-  try {
-    if (loadEffectiveExecutionScope(projectRoot, feature, runId)) return { track: 'full' };
-  } catch {
-    // 权威说不清时（例如记录已转交而本次无 run 身份）不在这里裁决 track——
-    // 交给冻结入口 / 统一入口给出明确报错。
-  }
   if (runId && fs.existsSync(featureArtifactPath(projectRoot, feature, 'goal-runs/' + runId + '/manifest.json'))) {
     const legacy = JSON.parse(fs.readFileSync(featureArtifactPath(projectRoot, feature, 'goal-runs/' + runId + '/manifest.json'), 'utf8')) as { phase_chain?: string[] };
-    if (Array.isArray(legacy.phase_chain) && legacy.phase_chain.length) return { track: resolveFeatureTrack(undefined, legacy.phase_chain) };
+    if (Array.isArray(legacy.phase_chain) && legacy.phase_chain.length) resolveFeatureTrack(undefined, legacy.phase_chain);
   }
   try {
     const abs = featureTrackDeclPath(projectRoot, feature);
@@ -52,9 +53,13 @@ export function loadFeatureTrackDecl(projectRoot: string, feature: string, exist
     const raw = YAML.parse(fs.readFileSync(abs, 'utf-8')) as unknown;
     if (!raw || typeof raw !== 'object') return null;
     const track = (raw as { track?: unknown }).track;
+    if (track === 'lite') {
+      console.warn('[lite-retired] feature.yaml 的 track: lite 已忽略；当前请求按义务范围运行，不恢复 change/exit 旧链。');
+      return { track: 'full' };
+    }
     return typeof track === 'string' ? { track } : {};
   } catch {
-    // 解析失败按未声明处理（full），不阻断——feature.yaml 语法问题由 change/exit 门禁另行报告
+    // 解析失败按未声明处理（full），候选范围语法由现有范围入口另行报告
     return null;
   }
 }
@@ -112,7 +117,7 @@ export function featureRequirementBinding(projectRoot: string, feature: string):
 }
 
 /** Only fresh 1.2 runs read the candidate; resume never consults this mutable file. */
-export function resolveFeatureExecutionScope(projectRoot: string, feature: string, workflow: WorkflowSpec, frameworkRoot?: string, requirement?: string): ExecutionScope | undefined {
+export function resolveFeatureExecutionScope(projectRoot: string, feature: string, workflow: WorkflowSpec, frameworkRoot?: string, requirement?: string, manifestFidelity?: FidelityTarget): ExecutionScope | undefined {
   if (workflow.schema_version !== '1.2') return undefined;
   const raw = YAML.parse(fs.readFileSync(featureTrackDeclPath(projectRoot, feature), 'utf8')) as { execution_scope?: ExecutionScopeInput };
   if (!raw?.execution_scope) throw new Error('[execution-scope] workflow 1.2 缺少运行前范围输入');
@@ -134,7 +139,7 @@ export function resolveFeatureExecutionScope(projectRoot: string, feature: strin
     // requirement source: the real `--requirement` / `manifest.requirement`. Both birth entries
     // have one; the change-unit handoff projection has none, and **不编一份**——凭空拿
     // `requested_results` 当需求文本只会让每条 `derive.requirement` 绑定恒判 stale。
-    collectResolvedScopeFacts(raw.execution_scope, { ...ctx, requirement: requirement?.trim() || undefined }),
+    collectResolvedScopeFacts(raw.execution_scope, { ...ctx, requirement: requirement?.trim() || undefined, manifestFidelity }),
   );
 }
 
@@ -151,7 +156,7 @@ export function resolveFeatureExecutionScope(projectRoot: string, feature: strin
 export function resolveWithPriorEvidence(
   input: ExecutionScopeInput,
   workflow: WorkflowSpec,
-  ctx: { projectRoot: string; feature: string; frameworkRoot: string; requirement?: string; requirementSha?: string },
+  ctx: { projectRoot: string; feature: string; frameworkRoot: string; requirement?: string; requirementSha?: string; manifestFidelity?: FidelityTarget },
 ): ExecutionScope {
   const { projectRoot, feature, frameworkRoot } = ctx;
   /* eslint-disable @typescript-eslint/no-require-imports */
@@ -173,7 +178,7 @@ export function resolveWithPriorEvidence(
     }
     return resolveExecutionScope(input, workflow, readScopeAcceptance(projectRoot, input, { feature, frameworkRoot }), facts);
   };
-  const expected = resolveChangeUnitExpectedExecution(projectRoot, feature);
+  const expected = resolveChangeUnitExpectedExecution(projectRoot, feature, false, frameworkRoot);
   const first = resolve();
   if (assessFeature(projectRoot, feature, { ...expected, frameworkRoot }).record.state === 'ok') {
     const projection = JSON.parse(fs.readFileSync(featureFilePath(projectRoot, feature, FEATURE_COMPLETION_FILENAME), 'utf8')) as { original_path: string };
@@ -289,12 +294,12 @@ function verifyBasisBinding(projectRoot: string, frameworkRoot: string, feature:
 }
 
 /** `satisfied_by` bindings are proof that a duty is already met — always fully re-resolved. */
-function verifySatisfiedByBinding(projectRoot: string, frameworkRoot: string, feature: string, phase: string, binding: InputBinding, legacyRoot?: string): { ok: boolean; detail: string } {
+function verifySatisfiedByBinding(projectRoot: string, frameworkRoot: string, feature: string, phase: string, binding: InputBinding, legacyRoot?: string, authorityReaders?: IdentityNeutralDigestReaders): { ok: boolean; detail: string } {
   for (const dep of binding.dependencies) {
     if (!isInsideProjectRoot(projectRoot, resolveDependencyPath(projectRoot, dep.path, legacyRoot))) return { ok: false, detail: `${binding.input_id}: 依据不在项目内 ${dep.path}` };
   }
   try {
-    readBoundInput({ projectRoot, frameworkRoot, feature, phase, track: 'full' }, binding, legacyRoot);
+    readBoundInput({ projectRoot, frameworkRoot, feature, phase, track: 'full', authorityReaders }, binding, legacyRoot);
     return { ok: true, detail: `${binding.input_id}: re-resolved` };
   } catch (error) {
     return { ok: false, detail: `${binding.input_id}: ${(error as Error).message}` };
@@ -309,16 +314,22 @@ function verifySatisfiedByBinding(projectRoot: string, frameworkRoot: string, fe
 export function collectResolvedScopeFacts(
   input: ExecutionScopeInput,
   ctx: { projectRoot: string; feature: string; frameworkRoot: string; currentRunId?: string; requirement?: string | null;
+    manifestFidelity?: FidelityTarget;
+    /** requested_results may support the existing UI heuristic, but is not a fidelity requirement. */
+    requirementIsFallback?: boolean;
     /** True when `request.impact` was inherited from the effective scope rather than supplied by
      *  this proposal — its basis is then a birth-time observation and its content is not re-compared. */
-    impactInherited?: boolean },
+    impactInherited?: boolean; currentPhasePass?: string },
 ): ResolvedScopeFacts {
   const { projectRoot, feature, frameworkRoot } = ctx;
   // plan b2d7f4e9 t4：候选/有效范围里的记录依赖可能写于另一个工程根，读侧按同一份记录推出的旧根重定位。
-  const legacyRoot = inferLegacyProjectRoot(projectRoot, input);
+  const legacyRoot = inferLegacyProjectRoot(projectRoot, input) ?? (ctx.currentRunId ? (() => {
+    const { loadFrozenExecutionScope } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+    return inferLegacyProjectRoot(projectRoot, loadFrozenExecutionScope(projectRoot, feature, ctx.currentRunId));
+  })() : undefined);
   const relDep = (dep: { path: string }): string => relPosix(projectRoot, resolveDependencyPath(projectRoot, dep.path, legacyRoot));
   /* eslint-disable @typescript-eslint/no-require-imports */
-  const { loadFidelityIntentSsotState, resolveUiRelevanceForRun } = require('./fidelity-shared') as typeof import('./fidelity-shared');
+  const { loadFidelityIntentSsotState, resolveUiRelevanceForRun, dereferenceRequirementDocs, resolveFidelityRoutingDecision, computeRequirementShaFromText } = require('./fidelity-shared') as typeof import('./fidelity-shared');
   const { uiSpecAbsPath, loadUiSpecFile } = require('./ui-spec-shared') as typeof import('./ui-spec-shared');
   const { executionScopeEvidenceIssues } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
   /* eslint-enable @typescript-eslint/no-require-imports */
@@ -343,6 +354,20 @@ export function collectResolvedScopeFacts(
     // 执行去填），不降成 WARN、不新开出口。解析复用既有唯一 loader（含形状归一化）。
     visual_acceptance_present: loadUiSpecFile(uiSpecAbsPath(projectRoot, feature)) !== null,
   };
+  if (ssot.state === 'missing' && ctx.requirement?.trim() && !ctx.requirementIsFallback) {
+    const featuresDirRel = relFeaturesDir(projectRoot);
+    const deref = dereferenceRequirementDocs(projectRoot, ctx.requirement, {
+      featuresDirRel, excludePrefixes: [`${featuresDirRel}/${featureRelativePath(feature)}/`],
+    });
+    const manifest = ctx.currentRunId
+      ? (require('./goal-manifest') as typeof import('./goal-manifest')).loadGoalManifestFromRun(projectRoot, ctx.currentRunId, { feature }) : undefined;
+    // Only selected is consumed; capability/defer and signing remain the runtime preflight's job.
+    const routing = resolveFidelityRoutingDecision({ requirementText: deref.combined, manifestFidelity: ctx.manifestFidelity ?? manifest?.fidelity,
+      capability: { hasVision: false, ocrAvailable: false }, executionIdentity: ctx.currentRunId ?? `phase:${feature}:spec`,
+      requirementSha: computeRequirementShaFromText(projectRoot, feature, ctx.requirement, featuresDirRel) ?? '',
+    });
+    Object.assign(fidelity, { state: 'valid', selected_fidelity: routing.selected });
+  }
 
   // Target sets the impact relevance check runs against (§4.1.3). Paths stay project-relative.
   const derivePaths = (predicate: (fact: ExecutionScopeInput['facts'][number]) => boolean): string[] => [...new Set(input.facts.filter(predicate)
@@ -421,10 +446,14 @@ export function collectResolvedScopeFacts(
       // Phase evidence reuse: reuse the completion-side checker so the freeze-time and the
       // verify-time rules are literally the same function.
       const probe = { ...structuredClone(fact), owner_phase: ref.phase, satisfied_by: [ref] };
+      // 单义务探针可能只剩源码路径，不能再从它自己猜旧工程根；继承本次完整输入已核出的根。
+      for (const binding of probe.basis) for (const dependency of binding.dependencies) {
+        dependency.path = resolveDependencyPath(projectRoot, dependency.path, legacyRoot);
+      }
       const issues = executionScopeEvidenceIssues(projectRoot, feature, {
         schema_version: '1.0', completion_target: input.request.completion_target, requested_results: [...input.request.requested_results],
         obligations: [probe], phase_chain: [], reused_phases: [], unresolved: [], policy_fingerprint: '0'.repeat(64),
-      } as ExecutionScope, new Set([fact.id]), ctx.currentRunId);
+      } as ExecutionScope, new Set([fact.id]), ctx.currentRunId, undefined, frameworkRoot, ctx.currentPhasePass);
       satisfied_by.push({ obligation_id: fact.id, ref_index, ok: issues.length === 0, detail: issues.join('; ') || `${ref.phase}@${ref.run_id}: evidence verified` });
     });
   }
@@ -432,7 +461,7 @@ export function collectResolvedScopeFacts(
 }
 
 /** Re-read the selected acceptance source through P1; never scan history or write artifacts. */
-export function readScopeAcceptance(projectRoot: string, input: Pick<ExecutionScopeInput, 'facts'>, context: { feature: string; frameworkRoot: string }): { value: AcceptanceSpec; binding: InputBinding } | undefined {
+export function readScopeAcceptance(projectRoot: string, input: Pick<ExecutionScopeInput, 'facts'>, context: { feature: string; frameworkRoot: string; authorityReaders?: IdentityNeutralDigestReaders }): { value: AcceptanceSpec; binding: InputBinding } | undefined {
   const bindings = input.facts.flatMap(fact => fact.basis);
   const binding = bindings.find(binding => binding.source.kind === 'artifact' && binding.source.artifact === 'acceptance@1')
     ?? bindings.find(binding => binding.source.kind === 'derive' && binding.source.provider_id === 'derive.blueprint-acceptance');
@@ -481,14 +510,35 @@ export interface PrepareScopeCandidateResult {
   explanation: string;
 }
 
+/** Mechanical arguments for the existing candidate writer; no domain or impact inference. */
+export function prepareChangeUnitScopeInput(input: {
+  projectRoot: string; frameworkRoot: string; changeUnit: ChangeUnitArtifact;
+  requirement: string; requirementSourceFiles?: string[];
+  requestedResults: string[]; requestedPhases: string[];
+  obligations?: ExecutionScope['obligations'];
+  impact?: PrepareScopeCandidateInput['impact']; overwrite?: boolean;
+}): PrepareScopeCandidateInput {
+  return {
+    projectRoot: input.projectRoot, frameworkRoot: input.frameworkRoot,
+    feature: deriveChangeUnitFeatureId(input.changeUnit.blueprint_id, input.changeUnit.change_unit_id),
+    completionTarget: 'feature',
+    requirement: input.requirement,
+    ...(input.requirementSourceFiles?.length ? { requirementSourceFiles: [...input.requirementSourceFiles] } : {}),
+    requestedResults: [...input.requestedResults],
+    requestedPhases: [...new Set([...input.requestedPhases, ...(input.obligations ?? [])
+      .filter(obligation => obligation.applicability === 'required' && !obligation.satisfied_by?.length)
+      .map(obligation => obligation.owner_phase)])],
+    ...(input.impact ? { impact: structuredClone(input.impact) } : {}),
+    ...(input.overwrite !== undefined ? { overwrite: input.overwrite } : {}),
+  };
+}
+
 /** 候选里的每一条绑定都来自生产解析器——没有任何手写指纹、手写 basis 的余地。 */
 /**
  * 两个定义类 kind（`design-context` / `acceptance-context`）的**唯一**派生点：生成器与冻结
  * 读取层共用同一份判定，把 D0.1「不采信候选自报、按来源重算」从 unit/device/visual 扩到它们。
  *
- * 写集授权**只认 `contracts.files`** 这一条受信设计来源。候选自带的 `implementation` basis 是
- * **自报**：它能指向任意项目内文件，而 `verifyBasisBinding` 只验路径 / 存在性 / 摘要，同一条绑定
- * 随后又被算进 impact 的目标集合——用它当写集授权等于让候选自证相关性（第七轮阻断 1）。
+ * 定义从 contracts/acceptance 正式绑定派生；files 仅提供初始研究目标，不授予逐文件许可。
  */
 function deriveDefinitionContext(
   ctx: { projectRoot: string; frameworkRoot: string; feature: string },
@@ -515,10 +565,10 @@ function deriveDefinitionContext(
   const writeSetBinding = existingWriteSet.length ? candidateBinding(ctx, 'plan', 'codebase', existingWriteSet) : undefined;
   return {
     contracts, acceptance, writeSet, writeSetBinding, wantsImplementation,
-    designAvailable: !!contracts && (!wantsImplementation || writeSet.length > 0),
+    designAvailable: !!contracts,
     acceptanceAvailable: !!acceptance,
     acceptanceGap: authorityGapOf(ctx, 'acceptance', acceptanceInput),
-    contractsGap: authorityGapOf(ctx, 'contracts', contractsInput),
+    contractsGap: authorityGapOf(ctx, 'contracts', contractsInput, wantsImplementation || requestedPhases.some(phase => workflow.artifacts.some(artifact => artifact.id === phase && artifact.obligation_provider_id === 'obligations.plan'))),
   };
 }
 
@@ -533,9 +583,17 @@ function authorityGapOf(
   ctx: { projectRoot: string; frameworkRoot: string; feature: string },
   kind: 'acceptance' | 'contracts',
   input: { binding: InputBinding; value: unknown } | undefined,
+  needsConstruction = true,
 ): string | undefined {
-  if (!input || input.binding.source.kind !== 'artifact') return undefined;
-  return describeAuthoritativeDrift(authoritativeContentDrift(ctx.projectRoot, ctx.feature, ctx.frameworkRoot, kind, input.value), kind);
+  if (!input) return undefined;
+  const drift = input.binding.source.kind === 'artifact'
+    ? describeAuthoritativeDrift(authoritativeContentDrift(ctx.projectRoot, ctx.feature, ctx.frameworkRoot, kind, input.value), kind)
+    : undefined;
+  if (drift || kind !== 'contracts' || !needsConstruction || !ctx.feature.startsWith('cu-')) return drift;
+  const { resolveChangeUnitConstructionInputs } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
+  const candidate = resolveChangeUnitConstructionInputs(ctx.projectRoot, ctx.feature, ctx.frameworkRoot, input.value as ContractsSpec);
+  if (candidate.gap) return candidate.gap;
+  return undefined; // The shared candidate reader already checked the same projection.
 }
 
 /**
@@ -587,14 +645,12 @@ export function recomputeDefinitionFacts(
       if (!onlyTighten) {
         fact.applicability = 'unknown';
         fact.reason = design
-          ? (derived.contracts ? '设计已存在但未声明可核验写集（contracts.files 为空或不可解析）' : '本 feature 尚无可解析的设计来源')
+          ? (derived.contracts ? '设计来源不可核验' : '本 feature 尚无可解析的设计来源')
           : '本 feature 尚无可解析的验收来源';
       }
     }
   }
-  const implementationBasis = derived.writeSet.length > 0
-    ? derived.writeSetBinding ?? derived.contracts
-    : undefined;
+  const implementationBasis = derived.writeSetBinding ?? derived.contracts;
   if (derived.wantsImplementation && implementationBasis) {
     const implementation = input.facts.find(fact => fact.kind === 'implementation');
     const update = {
@@ -639,6 +695,30 @@ function candidateInput(
   }
 }
 
+/** Reparse only still-valid inputs; content/authority changes remain the original owner's work. */
+export function refreshScopeBindingInput(ctx: { projectRoot: string; frameworkRoot: string; feature: string; requirement?: string },
+  previous: ExecutionScope): ExecutionScopeInput | undefined {
+  const legacyRoot = inferLegacyProjectRoot(ctx.projectRoot, previous);
+  let changed = false;
+  const facts = structuredClone(previous.obligations);
+  const refresh = (binding: InputBinding, phase: string): InputBinding => {
+    if (binding.source.kind === 'derive' && ['derive.codebase', 'derive.test-targets', ...DEPENDENCY_ONLY_PROVIDER_IDS].includes(binding.source.provider_id)) return binding;
+    try { readBoundInput({ ...ctx, phase, track: 'full' }, binding, legacyRoot); } catch { return binding; }
+    const current = candidateInput(ctx, phase, binding.input_id)?.binding;
+    if (!current || JSON.stringify(current.source) !== JSON.stringify(binding.source)) return binding;
+    if (executionScopeFingerprint(current) !== executionScopeFingerprint(binding)) { changed = true; return current; }
+    return binding;
+  };
+  for (const fact of facts) {
+    fact.basis = fact.basis.map(binding => refresh(binding, fact.owner_phase));
+    fact.satisfied_by = fact.satisfied_by?.map(proof => 'input_id' in proof ? refresh(proof, fact.owner_phase) : proof);
+  }
+  if (!changed || !hasNewSourcedFact(previous, facts, '')) return undefined;
+  return { request: { completion_target: previous.completion_target, requested_results: [...previous.requested_results],
+    requested_phases: executionCompletionPhases(previous), ...(previous.request_impact ? { impact: structuredClone(previous.request_impact) } : {}) },
+    facts, contract_fingerprints: [], ...(previous.control_edges ? { control_edges: structuredClone(previous.control_edges) } : {}) };
+}
+
 /**
  * 生成 feature.yaml 的 execution_scope 候选，并用**同一个** resolver 投影结果。
  *
@@ -653,7 +733,7 @@ export function prepareFeatureScopeCandidate(input: PrepareScopeCandidateInput):
   // 同一个 resolver、同一份已解析事实——投影出来的就是冻结时会得到的结果。
   const scope = resolveExecutionScope(candidate, resolveWorkflowSpecForCandidate(projectRoot, frameworkRoot),
     readScopeAcceptance(projectRoot, candidate, { feature, frameworkRoot }),
-    collectResolvedScopeFacts(candidate, { projectRoot, feature, frameworkRoot, requirement: input.requirement?.trim() || input.requestedResults.join('\n') }));
+    collectResolvedScopeFacts(candidate, { projectRoot, feature, frameworkRoot, requirement: input.requirement?.trim() || input.requestedResults.join('\n'), requirementIsFallback: !input.requirement?.trim() }));
 
   const abs = featureTrackDeclPath(projectRoot, feature);
   const existing = fs.existsSync(abs) ? (YAML.parse(fs.readFileSync(abs, 'utf-8')) as Record<string, unknown> | null) ?? {} : {};
@@ -687,7 +767,7 @@ export function buildFeatureScopeCandidate(input: Omit<PrepareScopeCandidateInpu
   const derived = deriveDefinitionContext(ctx, workflow, input.requestedPhases);
   const contracts = derived.contracts;
   const acceptance = derived.acceptance;
-  // 无蓝图合法入口（非 CU feature）：设计 / 验收产物都还不存在时，来源就只有需求本身。
+  // generic / 单职责 request / 合法存量的无蓝图兜底；design-lens 新完整交付已在公开出生入口分流。
   // 需求绑定同样走既有 resolver（`derive.requirement`，带 inputContext 时返回需求文本作解析值），
   // **不自造 provider**、不伪造蓝图。
   // provenance：**始终**生成需求绑定——它是「这份候选为哪句需求而算」的机器凭据，
@@ -699,21 +779,14 @@ export function buildFeatureScopeCandidate(input: Omit<PrepareScopeCandidateInpu
   const facts: ExecutionScopeInput['facts'] = [];
   // implementation **由请求动作决定**，不由 completion_target 决定：只有当请求里含实现
   // provider 的阶段时才产出，写集来源取契约声明的文件（D0.1 规则 (a) 要求可核验写集）。
-  // 「声明了文件却绑不出来」与「没声明」是同一种缺陷（都拿不出可核验写集），由
-  // `deriveDefinitionContext` 一并判掉，不能一个走缺口、另一个被静默省略。
+  // 初始源码可为空；实现义务仍由有效契约给出来源。
   const wantsImplementation = derived.wantsImplementation;
   const writeSet = derived.writeSet;
   const writeSetBinding = derived.writeSetBinding;
-  const implementationBasis = writeSet.length > 0 ? writeSetBinding ?? contracts : undefined;
-  // 契约在、却拿不出可核验写集（`contracts.files: []` 是 schema 允许的）＝**设计没给出写集**，
-  // 这正是 plan 的责任缺口。此时不能把 design-context 当「已有设计可用」记成 required——否则
-  // 既没有缺口挡住 coding，resolver 又会自动补一条 basis 为空的 implementation 请求标记，
-  // 等于放一条无来源的实现义务进链。降成 unknown 走既有 definition-gap 通路（与「压根没有
-  // 契约」同一条路），只在**请求跳过设计阶段**时才拒绝（见下方 fail-closed）。
+  const implementationBasis = writeSetBinding ?? contracts;
   // A1（plan c4e7a9b2 §3.1）：手写产物与当前设计权威不一致时责任仍 required、不写 satisfied_by——责任阶段入链对齐，
   // 下游按链序等待；出生不拒绝。
   if (derived.designAvailable) facts.push({ id: 'design-context:candidate', kind: 'design-context', applicability: 'required', reason: derived.contractsGap ?? '已有设计可用', basis: [contracts!], ...(derived.contractsGap ? {} : { satisfied_by: [contracts!] }) });
-  else if (contracts) facts.push({ id: 'design-context:pending', kind: 'design-context', applicability: 'unknown', reason: '设计已存在但未声明可核验写集（contracts.files 为空或不可解析）', basis: [contracts] });
   // 缺设计 ≠ 没有设计责任：落一条 unknown 的 design-context（owner=plan），由既有 definition-gap
   // 通路把下游（含 coding）挂进 needed_by，等设计阶段产出 contracts 后再由 D0.3/D2 同 run 补链。
   else facts.push({ id: 'design-context:pending', kind: 'design-context', applicability: 'unknown', reason: '本 feature 尚无可解析的设计来源（仅有需求）', basis: gapBasis });
@@ -721,17 +794,14 @@ export function buildFeatureScopeCandidate(input: Omit<PrepareScopeCandidateInpu
   // 缺验收 ≠ 没有验收责任：落一条 unknown 的 acceptance-context（resolver 会把它送进
   // unresolved、owner=spec），不静默省略、也不伪造蓝图（需求 D0.2 原文）。
   else facts.push({ id: 'acceptance-context:pending', kind: 'acceptance-context', applicability: 'unknown', reason: '本 feature 尚无可解析的验收来源', basis: gapBasis });
-  // 请求里是否**同时**含产出设计的阶段（spec / plan 家族）：含 → 写集本来就该由本次设计产出，
-  // 交给 definition-gap 通路挡住 coding；不含 → 这是「跳过设计直接改代码却没有写集」，当场拒。
+  // 跳过设计时仍需有效契约；没有文件预测不构成设计缺口。
   const designPhases = workflow.artifacts
     .filter(artifact => ['obligations.spec', 'obligations.plan'].includes(artifact.obligation_provider_id ?? ''))
     .map(artifact => artifact.id);
   const requestsDesign = input.requestedPhases.some(phase => designPhases.includes(phase));
   if (wantsImplementation && !requestsDesign) {
-    // 跳过设计阶段就必须拿得出**可核验的写集**：契约缺失 / files 为空 / 绑定解析不出来时
-    // 在这里 fail-closed，而不是让 resolver 事后补一条空 basis 的请求标记，把问题推到 coding。
-    if (!writeSet.length) throw new Error('[prepare-scope] 请求跳过设计阶段直接改代码，但契约没有声明可核验的写集（contracts.files 为空或不可解析）——责任方 plan');
-    if (!implementationBasis) throw new Error('[prepare-scope] 写集无法解析为项目内绑定：' + writeSet.join(', '));
+    if (!contracts) throw new Error('[prepare-scope] 请求跳过设计阶段直接改代码，但缺少有效设计来源——责任方 plan');
+    if (!implementationBasis) throw new Error('[prepare-scope] 设计或初始源码无法解析为项目内绑定：' + writeSet.join(', '));
     facts.push({ id: 'implementation:request', kind: 'implementation', applicability: 'required', reason: '本次请求包含改代码', basis: [implementationBasis] });
   } else if (wantsImplementation && implementationBasis) {
     facts.push({ id: 'implementation:request', kind: 'implementation', applicability: 'required', reason: '本次请求包含改代码', basis: [implementationBasis] });
@@ -754,7 +824,7 @@ export function buildFeatureScopeCandidate(input: Omit<PrepareScopeCandidateInpu
   return candidate;
 }
 
-/** 写集来源：契约声明的文件（contracts@1 的 files）——不猜、不扫描。 */
+/** 初始研究线索；不是权限或完成依据。 */
 function readCandidateWriteSet(
   ctx: { projectRoot: string; frameworkRoot: string; feature: string },
   contracts: InputBinding | undefined,
@@ -837,6 +907,64 @@ export function featureScopePhaseHealth(
  * 载体差异只有一处：`currentRunId`（run 载体有、feature 载体没有）——它只影响
  * 「本轮新产生的阶段闭环证据算不算新事实」与补证明时写不写 run 身份，**不放宽任何判据**。
  */
+export function readScopeProofHistory(input: {
+  projectRoot: string; frameworkRoot: string; feature: string; workflow: WorkflowSpec; previous: ExecutionScope;
+  currentRunId?: string; currentPhasePass?: string;
+}) {
+  const { projectRoot, frameworkRoot, feature } = input;
+  const { loadFrozenExecutionScope, loadAuthoritativeRunEvents } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+  const { readFeatureFrozenScope } = require('./feature-execution-scope') as typeof import('./feature-execution-scope');
+  const record = input.currentRunId ? undefined : readFeatureFrozenScope(projectRoot, feature);
+  const birth = input.currentRunId ? loadFrozenExecutionScope(projectRoot, feature, input.currentRunId) ?? input.previous : record?.execution_scope ?? input.previous;
+  const events: ScopeHistoryEvent[] = input.currentRunId ? loadAuthoritativeRunEvents(projectRoot, feature, input.currentRunId) : record?.revisions ?? [];
+  if (input.currentPhasePass) events.push({ type: 'phase_verdict', phase: input.currentPhasePass, verdict: 'PASS', action: 'advance' });
+  const order = [...new Set([...(input.workflow.auto_chain ?? []), ...input.workflow.artifacts.map(a => a.id)])];
+  const dependencies = readRepairDependencyContext(projectRoot, feature, input.workflow, input.previous, frameworkRoot);
+  const history = scopeProofHistory(birth, events, order, undefined, input.workflow, dependencies);
+  return { birth, events, dependencies, history };
+}
+
+export function resolveCurrentScopeView(input: {
+  projectRoot: string; frameworkRoot: string; feature: string; workflow: WorkflowSpec; previous: ExecutionScope;
+  currentRunId?: string; completedPhases?: ReadonlySet<string>; currentPhase?: string; reopen?: string; authorityReaders?: IdentityNeutralDigestReaders;
+  currentResults?: import('./verify-feature-completion').CleanPassOptions['currentResults'];
+}): ExecutionScope {
+  input = { ...input, authorityReaders: input.authorityReaders
+    ?? (require('./identity-neutral-digest') as typeof import('./identity-neutral-digest')).createIdentityNeutralDigestReaders() };
+  const { projectRoot, frameworkRoot, feature } = input;
+  const currentPhasePass = input.currentPhase && input.completedPhases?.has(input.currentPhase) ? input.currentPhase : undefined;
+  const { birth, events, dependencies, history } = readScopeProofHistory({ ...input, currentPhasePass });
+  const proofs = new Map<string, ScopeEvidenceRef>();
+  const stale = new Set<string>();
+  const { resolveCompletionDisposition, applicableCheckFamilies } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
+  const disposition = resolveCompletionDisposition({ projectRoot, feature, chain: applicableCheckFamilies(input.previous),
+    workflow: input.workflow, executionScope: input.previous, frameworkRoot, runId: input.currentRunId,
+    pendingOwnerPhase: input.currentPhase, authorityReaders: input.authorityReaders, currentResults: input.currentResults });
+  const actualResults = [...new Set(input.previous.obligations.filter(obligation => obligation.applicability !== 'not_applicable')
+    .map(obligation => obligation.owner_phase))].filter(phase => !!loadPhaseEvidenceManifest(projectRoot, feature, phase));
+  const candidates = new Set([...history.passed, ...input.completedPhases ?? [], ...input.previous.reused_phases.map(p => p.phase), ...actualResults]);
+  for (const phase of candidates) {
+    const evidence = loadPhaseEvidenceManifest(projectRoot, feature, phase);
+    // 新发现交真实责任方处理；它不等于来源阶段的证明字节已经过期。
+    const fresh = evidence?.integrityOk && !phaseCompletionProblems(disposition, [phase]).some(problem =>
+      !problem.id.startsWith('open_finding:') || (problem.owner ?? problem.phase) === phase);
+    if (!fresh) { stale.add(phase); continue; }
+    const eligible = phaseEvidenceIsCurrent({ fresh: !!fresh, generatedAt: evidence?.manifest.generated_at,
+      invalidatedAt: history.invalidatedAt.get(phase) });
+    if (eligible === true && evidence) proofs.set(phase, { phase, ...(input.currentRunId ? { run_id: input.currentRunId } : {}), evidence_manifest_aggregate: evidence.manifest.aggregate_sha256 });
+  }
+  const definitionProofs = new Map<string, readonly InputBinding[]>();
+  const legacyRoot = inferLegacyProjectRoot(projectRoot, input.previous);
+  for (const [id, refs] of history.definitionProofs) {
+    const obligation = input.previous.obligations.find(item => item.id === id);
+    if (!obligation || !refs.every(ref => verifySatisfiedByBinding(projectRoot, frameworkRoot, feature, obligation.owner_phase, ref, legacyRoot, input.authorityReaders).ok)) continue;
+    if (phaseCompletionProblems(disposition, [obligation.owner_phase]).some(problem =>
+      !problem.id.startsWith('open_finding:') || (problem.owner ?? problem.phase) === obligation.owner_phase)) continue;
+    definitionProofs.set(id, refs);
+  }
+  return effectiveScopeView({ birth, events, workflow: input.workflow, proofs, definitionProofs, stalePhases: [...stale], reopen: input.reopen, inputOwners: dependencies.inputOwners, inputEdges: dependencies.inputEdges });
+}
+
 export function resolveScopeRevisionProposal(input: {
   projectRoot: string;
   frameworkRoot: string;
@@ -850,14 +978,33 @@ export function resolveScopeRevisionProposal(input: {
    * `ExecutionScope` 没有 `requested_phases` 字段，故由调用方把冻结那一份链传进来。
    */
   authorizedPhases: readonly string[];
+  repairCandidates?: readonly import('./repair-candidates').RepairCandidate[];
   completedPhases?: ReadonlySet<string>;
+  currentPhase?: string;
   currentRunId?: string;
   requirement?: string;
+  currentResults?: import('./verify-feature-completion').CleanPassOptions['currentResults'];
 }): { scope: ExecutionScope; input: ExecutionScopeInput } | null {
   if (input.proposals.length > 1) throw new Error('[execution-scope] multiple revision proposals');
   if (!input.proposals.length) return null;
   const { projectRoot, frameworkRoot, feature, workflow, previous } = input;
   const proposal = structuredClone(input.proposals[0]) as ExecutionScopeInput;
+  const { loadFrozenExecutionScope } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+  const { readFeatureFrozenScope } = require('./feature-execution-scope') as typeof import('./feature-execution-scope');
+  const featureRecord = input.currentRunId ? undefined : readFeatureFrozenScope(projectRoot, feature);
+  const birth = input.currentRunId ? loadFrozenExecutionScope(projectRoot, feature, input.currentRunId) : featureRecord?.execution_scope;
+  const legacyRoot = inferLegacyProjectRoot(projectRoot, previous) ?? inferLegacyProjectRoot(projectRoot, birth);
+  const rebaseBinding = (binding: InputBinding): void => {
+    for (const dependency of binding.dependencies) dependency.path = resolveDependencyPath(projectRoot, dependency.path, legacyRoot);
+  };
+  // 只重定位本次提案副本；原事件与旧证明保留，以下仍逐条核验当前实际内容和证据。
+  for (const fact of proposal.facts) {
+    fact.basis.forEach(rebaseBinding);
+    for (const proof of fact.satisfied_by ?? []) if ('input_id' in proof) rebaseBinding(proof);
+  }
+  for (const binding of proposal.request.impact?.basis ?? []) rebaseBinding(binding);
+  const priorImpact = previous.request_impact ? structuredClone(previous.request_impact) : undefined;
+  for (const binding of priorImpact?.basis ?? []) rebaseBinding(binding);
   proposal.contract_fingerprints = loadFeatureContracts(frameworkRoot).map(contractFingerprint);
   proposal.control_edges ??= structuredClone(previous.control_edges);
   if (proposal.request.completion_target !== previous.completion_target
@@ -866,39 +1013,58 @@ export function resolveScopeRevisionProposal(input: {
   }
   // plan a9f3c7d2 第二笔：request 终点是单职责请求——修订只能关闭本阶段的定义缺口，
   // **不得把新阶段塞进请求动作**。边界取**冻结授权链**（见 `authorizedPhases` 注释）。
-  if (previous.completion_target === 'request' && proposal.request.requested_phases.some(phase => !input.authorizedPhases.includes(phase))) {
+  if (proposal.request.requested_phases.some(phase => !authorizedScopePhases(birth ?? previous, workflow).includes(phase))) {
     throw new Error('[execution-scope] request-scope revision cannot add phases');
   }
-  const completed = input.completedPhases ?? new Set<string>();
-  const revoked = new Set(previous.obligations
-    .filter(obligation => obligation.satisfied_by?.length
-      && proposal.facts.some(fact => fact.id === obligation.id && !fact.satisfied_by?.length))
-    .map(obligation => obligation.id));
+  const progress = resolveCurrentScopeView(input);
+  const { loadAuthoritativeRunEvents } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+  const control = readScopeRevisionUserControl(previous, proposal, input.currentRunId ? {
+    projectRoot, feature, runId: input.currentRunId, events: loadAuthoritativeRunEvents(projectRoot, feature, input.currentRunId), completedPhases: input.completedPhases,
+    failedPhases: new Set((input.currentResults ?? []).filter(result => result.checks.some(check => isBlockingCheck(check)
+      && !['externalBlocked', 'framework_internal'].includes(check.blocking_class ?? ''))).map(result => result.phase)),
+  } : undefined);
+  if (control.source) proposal.request.user_control = control.source;
+  else delete proposal.request.user_control;
+  const repairFactIds = new Set(proposal.facts.filter(fact => (input.repairCandidates ?? []).some(candidate => fact.id.endsWith(`:${candidate.id}`))).map(fact => fact.id));
   for (const obligation of previous.obligations) {
     if (obligation.applicability !== 'required') continue;
+    if (control.allowedSubtractions.has(obligation.id)) {
+      const declared = proposal.facts.find(fact => fact.id === obligation.id && fact.kind === obligation.kind);
+      if (declared) declared.applicability = obligation.applicability;
+      else proposal.facts.push(structuredClone(obligation));
+      continue;
+    }
     const existing = proposal.facts.find(fact => fact.id === obligation.id);
-    if (completed.has(obligation.owner_phase) && !revoked.has(obligation.id)) {
-      const evidence = loadPhaseEvidenceManifest(projectRoot, feature, obligation.owner_phase);
-      if (!evidence?.integrityOk) throw new Error('[execution-scope] completed phase has no valid closure evidence');
-      const proof = {
-        phase: obligation.owner_phase,
-        ...(input.currentRunId ? { run_id: input.currentRunId } : {}),
-        evidence_manifest_aggregate: evidence.manifest.aggregate_sha256,
-      };
-      const fact = { ...(existing ?? obligation), satisfied_by: [proof] };
-      if (existing) Object.assign(existing, fact); else proposal.facts.push(fact);
-    } else if (!existing) proposal.facts.push({ ...obligation });
+    const effective = progress.obligations.find(item => item.id === obligation.id)!;
+    if (!existing) proposal.facts.push(structuredClone(effective));
+    else if (acceptsDefinitionInputProof(existing.kind) && existing.satisfied_by?.length && existing.satisfied_by.every(ref => 'input_id' in ref)) {
+      // The owner supplied a definition binding; the common binding validator below judges it.
+    }
+    else if (repairFactIds.has(existing.id) && !existing.satisfied_by?.length) {
+      // A current trusted finding reopens its owner even if the last recorded scope predates its PASS.
+    }
+    else if (!obligation.satisfied_by?.length || existing.satisfied_by?.length
+      || existing.kind === obligation.kind && existing.applicability === obligation.applicability
+        && executionScopeFingerprint(existing.basis) === executionScopeFingerprint(obligation.basis)) {
+      if (effective.satisfied_by?.length) existing.satisfied_by = structuredClone(effective.satisfied_by);
+      else delete existing.satisfied_by;
+    }
   }
+  const order = [...new Set([...(workflow.auto_chain ?? []), ...workflow.artifacts.map(a => a.id)])];
+  const nextDuties = proposal.facts.map(fact => ({ ...fact, owner_phase: workflow.artifacts.find(a => (OBLIGATION_PROVIDERS[a.obligation_provider_id ?? ''] ?? []).includes(fact.kind))?.id ?? '' }));
+  const revoked = new Set(scopeRevisionInvalidations(progress, { obligations: nextDuties }, order, undefined, workflow, readRepairDependencyContext(projectRoot, feature, workflow, progress, frameworkRoot)));
+  for (const fact of proposal.facts) if (revoked.has(nextDuties.find(o => o.id === fact.id)!.owner_phase)) delete fact.satisfied_by;
   if (proposal.request.impact === null) throw new Error('[execution-scope] 影响判断为 null——请给出判断或不要携带该字段');
   if (proposal.request.impact === undefined) proposal.request.impact = previous.request_impact;
   const impactInherited = proposal.request.impact === undefined
-    || (previous.request_impact !== undefined
-      && executionScopeFingerprint(proposal.request.impact) === executionScopeFingerprint(previous.request_impact));
+    || (priorImpact !== undefined
+      && executionScopeFingerprint(proposal.request.impact) === executionScopeFingerprint(priorImpact));
   if (!impactInherited && !(proposal.request.impact?.basis ?? []).some(binding => !previous.obligations.some(obligation => obligation.basis.some(prior => executionScopeFingerprint(prior) === executionScopeFingerprint(binding)))
     && !(previous.request_impact?.basis ?? []).some(prior => executionScopeFingerprint(prior) === executionScopeFingerprint(binding)))) {
     throw new Error('[execution-scope] impact correction requires its own new sourced basis');
   }
-  const ctx = { projectRoot, feature, frameworkRoot, ...(input.currentRunId ? { currentRunId: input.currentRunId } : {}), ...(input.requirement ? { requirement: input.requirement } : {}), impactInherited };
+  const currentPhasePass = input.currentPhase && input.completedPhases?.has(input.currentPhase) ? input.currentPhase : undefined;
+  const ctx = { projectRoot, feature, frameworkRoot, ...(input.currentRunId ? { currentRunId: input.currentRunId } : {}), ...(input.requirement ? { requirement: input.requirement } : {}), impactInherited, currentPhasePass };
   recomputeDefinitionFacts(proposal, { projectRoot, feature, frameworkRoot }, workflow, true);
   let facts = collectResolvedScopeFacts(proposal, ctx);
   const stale = facts.satisfied_by.filter(entry => !entry.ok
@@ -912,8 +1078,20 @@ export function resolveScopeRevisionProposal(input: {
     }
     facts = collectResolvedScopeFacts(proposal, ctx);
   }
-  const resolved = resolveExecutionScope(proposal, workflow, readScopeAcceptance(projectRoot, proposal, { feature, frameworkRoot }), facts);
+  const resolved = applyScopeUserControl(resolveExecutionScope(proposal, workflow, readScopeAcceptance(projectRoot, proposal, { feature, frameworkRoot }), facts), workflow, control);
+  assertRevisionKeepsRequiredObligations(previous, resolved, control.allowedSubtractions);
+  if (resolved.phase_chain.some(phase => !authorizedScopePhases(birth ?? previous, workflow).includes(phase))) throw new Error('[execution-scope] request-scope revision cannot add phases');
+  // A fresh qualified owner proof must be recorded even when this proposal already
+  // describes the live progress view. Only the recorded scope is the no-op baseline.
   if (executionScopeFingerprint(resolved) === executionScopeFingerprint(previous)) return null;
-  if (!hasNewSourcedFact(previous, proposal.facts, input.currentRunId ?? '')) throw new Error('[execution-scope] revision requires new sourced facts');
+  const confirmedRepair = input.repairCandidates?.some(candidate => {
+    const fact = proposal.facts.find(item => repairFactIds.has(item.id) && item.id.endsWith(':' + candidate.id) && item.applicability === 'required');
+    return (candidate.files.length > 0 || candidate.category === 'coding') && !!fact?.basis.length && !previous.obligations.some(item => item.id === fact.id);
+  });
+  const reopened = proposal.facts.some(fact => repairFactIds.has(fact.id)
+    && !fact.satisfied_by?.length && progress.obligations.some(prior => prior.id === fact.id && prior.satisfied_by?.length));
+  // A current trusted finding is new knowledge; its unchanged product file need not be rewritten to earn recovery.
+  if (!control.newSource && !hasNewSourcedFact(previous, proposal.facts, input.currentRunId ?? '') && !confirmedRepair && !reopened
+    && !previous.obligations.some(prior => prior.satisfied_by?.length && !progress.obligations.find(o => o.id === prior.id)?.satisfied_by?.length)) throw new Error('[execution-scope] revision requires new sourced facts');
   return { scope: resolved, input: proposal };
 }

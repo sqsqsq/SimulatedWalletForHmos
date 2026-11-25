@@ -5,13 +5,29 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as YAML from 'yaml';
+import { parseYamlCached } from './yaml-read-cache';
 import { listWorkflowPhases, loadWorkflowSpec } from '../../workflow-loader';
 import type { AxisId } from './quality-axes';
 
-export type FeatureTrackName = 'full' | 'lite';
+export type FeatureTrackName = 'full';
 export type Assurance = 'blocked' | 'degraded' | 'full';
 export type MinimumAssurance = Exclude<Assurance, 'blocked'>;
+
+/** A design producer may replace its own unsatisfied output, then publish a scope revision. */
+export function phaseOwnsDesignOutput(
+  produces: ReadonlyArray<{ artifact?: string }>,
+  scope: { obligations: ReadonlyArray<{ owner_phase: string; applicability: string; satisfied_by?: readonly unknown[] }> },
+  phase: string,
+  binding: import('./capability-resolution').InputBinding | string,
+): boolean {
+  const artifact = typeof binding === 'string' ? binding : binding.source.kind === 'artifact' ? binding.source.artifact
+    : binding.source.provider_id === 'derive.blueprint-acceptance' ? 'acceptance@1'
+      : binding.source.provider_id === 'derive.blueprint-contracts' ? 'contracts@1' : undefined;
+  return ['spec', 'plan'].includes(phase)
+    && !!artifact && produces.some(output => output.artifact === artifact)
+    && scope.obligations.some(obligation => obligation.owner_phase === phase
+      && (obligation.applicability === 'required' || obligation.applicability === 'unknown') && !obligation.satisfied_by?.length);
+}
 
 export const ASSURANCE_RANK: Readonly<Record<Assurance, number>> = {
   blocked: 0,
@@ -122,8 +138,8 @@ function assertStringArray(value: unknown, label: string, allowEmpty = false): a
 
 function validateTracks(value: unknown, label: string): FeatureTrackName[] {
   assertStringArray(value, label);
-  if (value.some((track) => track !== 'full' && track !== 'lite')) {
-    throw new Error(`[skill-contract] ${label} 仅支持 full|lite`);
+  if (value.some((track) => track !== 'full')) {
+    throw new Error(`[skill-contract] ${label} 仅支持 full；lite 已退役`);
   }
   if (new Set(value).size !== value.length) throw new Error(`[skill-contract] ${label} 不得重复`);
   return [...value] as FeatureTrackName[];
@@ -293,7 +309,7 @@ function validatePhase(raw: unknown, label: string, modern = false): PhaseContra
 
 export function loadSkillContract(filePath: string): SkillContract {
   if (!fs.existsSync(filePath)) throw new Error(`[skill-contract] 未找到 contract：${filePath}`);
-  const raw = YAML.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
+  const raw = parseYamlCached(filePath, fs.readFileSync(filePath, 'utf8'));
   assertRecord(raw, filePath);
   for (const key of Object.keys(raw)) if (!['schema_version', 'skill', 'skill_doc', 'phases'].includes(key)) throw new Error(`[skill-contract] ${filePath} 含未知字段 ${key}`);
   if (raw.schema_version !== '1.0' && raw.schema_version !== '1.1') throw new Error(`[skill-contract] ${filePath} schema_version 仅支持 1.0|1.1`);
@@ -346,7 +362,7 @@ export function phaseContractIndex(contracts: readonly SkillContract[]): Map<str
 
 export function loadArtifactInventory(frameworkRoot: string): ArtifactInventory {
   const inventoryPath = path.join(frameworkRoot, 'specs', 'artifact-schemas', 'inventory.yaml');
-  const raw = YAML.parse(fs.readFileSync(inventoryPath, 'utf8')) as unknown;
+  const raw = parseYamlCached(inventoryPath, fs.readFileSync(inventoryPath, 'utf8'));
   assertRecord(raw, inventoryPath);
   if (raw.schema_version !== '1.0' || !Array.isArray(raw.artifacts)) {
     throw new Error('[skill-contract] artifact inventory 形状非法');
@@ -360,7 +376,7 @@ export function loadArtifactInventory(frameworkRoot: string): ArtifactInventory 
     }
     const schemaPath = path.join(path.dirname(inventoryPath), entry.schema);
     if (!fs.existsSync(schemaPath)) throw new Error(`[skill-contract] artifact schema 不存在：${schemaPath}`);
-    const schemaRaw = YAML.parse(fs.readFileSync(schemaPath, 'utf8')) as unknown;
+    const schemaRaw = parseYamlCached(schemaPath, fs.readFileSync(schemaPath, 'utf8'));
     assertRecord(schemaRaw, schemaPath);
     if (schemaRaw['x-artifact-id'] !== entry.id) {
       throw new Error(`[skill-contract] ${entry.schema} x-artifact-id 与 inventory 不一致`);

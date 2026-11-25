@@ -1,3 +1,6 @@
+import { adapterModelBinding } from './types';
+import { normalizeModelRouteFields } from './types';
+import type { ProviderRef } from './types';
 // ============================================================================
 // 阶段状态机 + 闭环同步（.current-phase.json / summary.json）
 // ============================================================================
@@ -5,6 +8,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import { spawnSync } from 'child_process';
 import {
   featureDir,
@@ -26,7 +30,9 @@ import {
   type PolicySnapshot,
 } from './runtime-policy';
 import { loadFeatureTrackDecl } from './feature-track';
-import { finalizePhaseClosure } from './phase-closure-finalizer';
+import { finalizePhaseClosure, preparePhaseRepairFeedback } from './phase-closure-finalizer';
+import { readReusableCheckResult } from './verify-feature-completion';
+import { loadPhaseEvidenceManifest, recomputeManifestAggregate, writePhaseEvidenceManifest } from './phase-evidence-manifest';
 import { deleteEnvKeyCaseInsensitive } from './process-integrity';
 
 /** Feature phase id（由 workflow 定义；不再限定 canonical 枚举——C0 runtime-policy-core 收编）。 */
@@ -35,7 +41,6 @@ export type FeaturePhase = string;
 
 export interface ReceiptValidation {
   /**
-   * `not_applicable`（C2）：lite track 的 receipt 机制架构性不适用——闭环判据是
    * change.md checkbox + exit script-report PASS，不经本文件。绝不映射为 passed。
    */
   status: 'passed' | 'failed' | 'missing' | 'error' | 'not_applicable';
@@ -124,23 +129,27 @@ export const MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV = 'MAISON_GOAL_VISUAL_PROVIDE
 /** 成对注入的唯一执行器（成对写、成对清——半个身份既冻结不了也回放不了）。 */
 export function applyGoalVisualProviderEnv(
   env: NodeJS.ProcessEnv,
-  pin: { adapter: string; model: string } | undefined,
+  pin: ProviderRef | undefined,
 ): void {
   deleteEnvKeyCaseInsensitive(env, MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV);
   deleteEnvKeyCaseInsensitive(env, MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV);
   if (pin?.adapter && pin.model) {
     env[MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV] = pin.adapter;
-    env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV] = pin.model;
+    env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV] = adapterModelBinding({ ...pin, value: pin.model })!;
   }
 }
 
 /** 从当前进程 env 读回冻结 provider 身份（成对齐全才算数）。 */
 export function readGoalVisualProviderEnv(
   env: NodeJS.ProcessEnv = process.env,
-): { adapter: string; model: string } | undefined {
+): ProviderRef | undefined {
   const adapter = env[MAISON_GOAL_VISUAL_PROVIDER_ADAPTER_ENV]?.trim();
   const model = env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV]?.trim();
-  return adapter && model ? { adapter, model } : undefined;
+  if (!adapter || !model) return undefined;
+  if (!model.startsWith('{')) return { adapter, model };
+  const value = JSON.parse(model);
+  if (typeof value.value !== 'string' || !value.value) return undefined;
+  return { adapter, model: value.value, ...normalizeModelRouteFields(value) };
 }
 
 export function isGoalOrchestrationEnv(): boolean {
@@ -160,18 +169,15 @@ export function isGoalHeadlessEnv(): boolean {
  * visual-rounds journal 分流都必须消费本函数，不得各自造判定）。
  * 信号取并集：adapter 工具子进程实测会丢部分 env（2026-07-27 宿主实锤：cursor 丢
  * MAISON_GOAL_HEADLESS 留 MAISON_GOAL_RUN_ID——单一信号判定必翻车）；任一 goal 信号
- * 在场而无 gate authority（MAISON_GOAL_GATE_HARNESS=1，runner 直接 spawn 的 gate
- * harness 独有、agent env 构造时按信任锚剥离）即视为 agent 侧。
+ * 在场即为 goal CLI；自检与外层 gate 均只产 proposal，正式写者是 runtime。
  */
 export function hasGoalExecutionSignal(): boolean {
-  return (
-    Boolean(process.env.MAISON_GOAL_RUN_ID?.trim()) ||
-    Boolean(process.env.MAISON_GOAL_ATTEMPT?.trim()) ||
-    // plan b3e8d4c7 t1：新增的 attempt phase 同属 goal 信号——不入并集的话，
-    // 子进程只剩 PHASE 时真实 goal 上下文会被当 manual（与本 plan 的 fail-closed 相悖）。
-    Boolean(process.env.MAISON_GOAL_ATTEMPT_PHASE?.trim()) ||
-    isGoalOrchestrationEnv()
-  );
+  return require('../../../agents/shared/goal-execution-signal.cjs').hasGoalExecutionSignal(process.env);
+}
+
+export function readGoalGateDeadlineMs(env: NodeJS.ProcessEnv = process.env): number | undefined {
+  const value = Number(env.MAISON_GOAL_GATE_DEADLINE_MS?.trim());
+  return Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 /** Direct harness runs may opt into a committed diff base; every goal context ignores it. */
@@ -182,7 +188,7 @@ export function resolveHarnessDiffBaseRef(): string | undefined {
 }
 
 export function isAgentSideGoalHarness(): boolean {
-  return hasGoalExecutionSignal() && process.env.MAISON_GOAL_GATE_HARNESS !== '1';
+  return hasGoalExecutionSignal();
 }
 
 /**
@@ -264,7 +270,6 @@ export function mergeAndWritePhaseState(
       last_seen_session_id: carryLastSeenSid,
       last_seen_at: carryLastSeenAt,
       policy_snapshot: buildPolicySnapshot(
-        // 快照须含真实 track（OpenSpec runtime-policy）；C2 lite closure 与 hook 对账依赖此事实
         resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, partial.feature)),
       ),
       updated_at: new Date().toISOString(),
@@ -348,19 +353,6 @@ export function tryValidateReceipt(
   const receiptAbs = receiptResolved.path;
   const receiptRel = path.relative(projectRoot, receiptAbs).replace(/\\/g, '/');
 
-  // C2：lite track 的 receipt 机制架构性不适用——短路避免无谓 subprocess spawn，
-  // 且绝不能把「没有 receipt」误判为 status:'missing'（那会被上游当作待补齐的
-  // 未闭环凭证反复提示；lite 本就不产生这份凭证）。
-  const track = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature, opts?.goalIdentity?.runId));
-  if (track === 'lite') {
-    return {
-      status: 'not_applicable',
-      receipt_path: receiptRel,
-      message:
-        'lite track：receipt 机制不适用。闭环判据 = change.md checkbox 全勾 + exit 阶段 script-report verdict=PASS（非 receipt）。',
-    };
-  }
-
   const checker = path.join(harnessRoot, 'scripts', 'check-receipt.ts');
   if (!fs.existsSync(checker)) {
     return {
@@ -400,6 +392,7 @@ export function tryValidateReceipt(
       '--skip-state-sync',
     ],
     {
+      windowsHide: true,
       cwd: harnessRoot,
       encoding: 'utf-8',
       shell: isWin,
@@ -411,19 +404,22 @@ export function tryValidateReceipt(
   if (result.status === 0) {
     return { status: 'passed', receipt_path: receiptRel, exit_code: 0 };
   }
+  const stderr = result.stderr || result.error?.message || 'unknown';
+  const resultAt = stderr.indexOf('❌ BLOCKER — 完成回执校验未通过');
+  const diagnostic = resultAt >= 0 ? stderr.slice(resultAt) : stderr;
   if (result.status === 1) {
     return {
       status: 'failed',
       receipt_path: receiptRel,
       exit_code: 1,
-      message: (result.stderr ?? '').slice(0, 800),
+      message: diagnostic,
     };
   }
   return {
     status: 'error',
     receipt_path: receiptRel,
     exit_code: result.status ?? -1,
-    message: (result.stderr ?? result.error?.message ?? 'unknown').slice(0, 800),
+    message: diagnostic,
   };
 }
 
@@ -442,8 +438,14 @@ export function patchSummaryClosureStatus(
   if (!fs.existsSync(summaryPath)) {
     return false;
   }
+  let before: string | undefined;
   try {
-    const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf-8')) as Record<string, unknown>;
+    before = fs.readFileSync(summaryPath, 'utf-8');
+    const summary = JSON.parse(before) as Record<string, unknown>;
+    const bound = summary.closure_status !== 'closed' && patch.closure_status !== 'closed'
+      && readReusableCheckResult({ projectRoot, feature, phase, frameworkRoot,
+        runId: typeof summary.run_id === 'string' ? summary.run_id : undefined });
+    const evidence = bound ? loadPhaseEvidenceManifest(projectRoot, feature, phase) : null;
     if (patch.closure_status !== undefined) {
       summary.closure_status = patch.closure_status;
     }
@@ -453,9 +455,18 @@ export function patchSummaryClosureStatus(
     if (patch.next_action !== undefined) {
       summary.next_action = patch.next_action;
     }
-    fs.writeFileSync(summaryPath, JSON.stringify(summary, null, 2), 'utf-8');
+    const after = JSON.stringify(summary, null, 2);
+    fs.writeFileSync(summaryPath, after, 'utf-8');
+    const output = evidence?.manifest.outputs.find(entry => path.resolve(projectRoot, entry.path) === summaryPath);
+    if (before !== after && evidence?.integrityOk && output?.sha256 === crypto.createHash('sha256').update(before).digest('hex')) {
+      output.sha256 = crypto.createHash('sha256').update(after).digest('hex');
+      evidence.manifest.aggregate_sha256 = recomputeManifestAggregate(evidence.manifest);
+      writePhaseEvidenceManifest(projectRoot, evidence.manifest);
+    }
     return true;
   } catch {
+    // These flags are diagnostic. If their binding cannot be published, keep the preceding result.
+    if (before !== undefined) try { fs.writeFileSync(summaryPath, before, 'utf-8'); } catch { /* best-effort original contract */ }
     return false;
   }
 }
@@ -480,7 +491,7 @@ export function applyClosurePatchFromReceiptValidation(
 
 export interface SyncClosureResult {
   exitCode: number;
-  /** Present only when receipt passed but the atomic closure commit failed. */
+  /** Explicit feedback preparation or atomic closure commit failed. */
   finalizationError?: string;
 }
 
@@ -504,21 +515,24 @@ export function runSyncClosureDetailed(
   // 非 goal 调用（harness-runner 的 --sync-closure 等）省略本参数即保持现状。
   opts?: { goalIdentity?: { runId: string; attemptId: string; attemptPhase: string; modelPin?: string } },
 ): SyncClosureResult {
+  try {
+    preparePhaseRepairFeedback({ projectRoot, frameworkRoot: frameworkRoot ?? path.resolve(harnessRoot, '..'), feature, phase });
+  } catch (error) {
+    const message = (error as Error).message;
+    console.error(`❌ sync-closure: 修订反馈准备失败：${message}`);
+    return { exitCode: 1, finalizationError: message };
+  }
   const receiptValidation = tryValidateReceipt(harnessRoot, projectRoot, phase, feature, {
     ...(opts?.goalIdentity ? { goalIdentity: opts.goalIdentity } : {}),
   });
   const workflowSpec = loadWorkflowSpec(projectRoot, frameworkRoot);
 
-  if (receiptValidation.status === 'not_applicable') {
-    // lite track：receipt 不是本 phase 的闭环判据，不动 state / summary。
-    console.log('');
-    console.log('ℹ️  sync-closure: receipt 机制对 lite track 不适用（not_applicable）');
-    console.log(`   ↳ ${receiptValidation.message}`);
-    console.log(`   请改查 harness-runner --phase ${phase} --feature ${feature} 的 script-report.json verdict。`);
-    return { exitCode: 0 };
-  }
 
   if (receiptValidation.status === 'passed') {
+    if (hasGoalExecutionSignal() && !opts?.goalIdentity) {
+      console.log('✅ sync-closure: 当前检查通过；goal 阶段闭环由 runtime 在正式 gate 后提交。');
+      return { exitCode: 0 };
+    }
     let finalized;
     try {
       finalized = finalizePhaseClosure({

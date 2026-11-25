@@ -1,5 +1,7 @@
 # catalog-bootstrap 详细流程（条件加载：执行 Phase A/B 任一步骤时读）
 
+维护写入遵守[知识读取与维护](../../docs/concepts/skill-contracts.md#知识读取与维护)：相同条目/映射已有本任务明确确认时复用，不为搬回真源重问；新语义仍执行以下确认。实际路径以配置为准，本文默认 `doc/` 示例不覆盖 paths。目标态须待实现验证成立后归位，不能在蓝图期提前改当前画像。
+
 > SSOT 索引见 [`skills/project/catalog-bootstrap/SKILL.md`](../project/catalog-bootstrap/SKILL.md)。本文承载 Phase A（模块画像）与 Phase B（术语表）的完整分步流程；触发条件/核心原则/门禁表仍以主文档为准。
 
 ## Phase A：模块画像自举（`/catalog-bootstrap`）
@@ -19,7 +21,8 @@ cd framework/harness && npx ts-node harness-runner.ts --phase catalog --module <
 | `catalog_file_exists` FAIL：文件不存在 | **你自己**创建 `doc/module-catalog.yaml`，只写骨架（见下方骨架模板），**不加任何模块**。然后再跑一次 harness 确认变为 `modules_is_list` WARN（这是合法中间态）。 |
 | `modules_is_list` WARN：已有骨架、`modules: []` | 骨架已就绪，进入 Step 1。 |
 | `requested_module_present` FAIL | 本次目标尚未登记，进入 CREATE；不扩为全仓建档。 |
-| 其它 FAIL | 把报告原文贴给用户、停下来问，不要试图"修复"。 |
+| 其它 FAIL，且 harness 结论不是 PASS | 把报告原文贴给用户、停下来问，不要试图"修复"。 |
+| 其它 FAIL，但结论仍是 PASS（控制台 `Verdict: PASS`，该失败列在 summary 的 `disclosed_failures`） | 记下这条披露，继续本流程；合并进主 catalog 前的用户 `y` 确认不变。 |
 
 **写入本次草稿时创建 staging 目录**：`doc/catalog-staging/`
 

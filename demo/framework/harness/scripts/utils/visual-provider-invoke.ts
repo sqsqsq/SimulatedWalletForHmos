@@ -1,3 +1,4 @@
+import { adapterModelBinding, dshModelSource, parseAdapterModelBinding } from './adapter-model';
 // ============================================================================
 // visual-provider-invoke.ts — 只读视觉 provider 执行器（plan ab072691 t3）
 // ============================================================================
@@ -30,6 +31,7 @@
 // ============================================================================
 
 import { createHash } from 'crypto';
+import { invocationCompleted } from './invocation-completion';
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -46,14 +48,14 @@ import {
   type VisualProviderStdoutEnvelope,
 } from './adapter-catalog';
 import { extractClaudeFinalResultText } from './claude-envelope';
-import { extractCodexAgentMessageText } from './codex-terminal-events';
+import { extractCodexAgentMessageText, extractProviderFinalText } from './codex-terminal-events';
 import { hasImageReadParser, parseImageReadEventsFor } from './critic-receipt-producer';
 import { resolveHeadlessBinary, shouldUseCrossSpawn } from './headless-binary-resolve';
 import type { AgentInvokeUsage } from './usage-capture';
 import type { ProviderRef } from './types';
 
 // ---------------------------------------------------------------------------
-// 预算（t3⑥）：**不占** max_total_turns / max_retries_per_phase；占 wall clock。
+// Concrete provider tool timeout; work-unit execution has no aggregate quota.
 // ---------------------------------------------------------------------------
 
 /** 单次 provider 调用的分钟级独立 timeout（经既有 AgentInvokeOptions.timeoutMs 注入）。 */
@@ -65,15 +67,6 @@ export const VISUAL_PROVIDER_DEFAULT_TIMEOUT_MS = 5 * 60_000;
 // 这里**刻意不放**「每 attempt 至多 N 次调用」的计数常量：gate 在同一 attempt 内的合法重跑
 // 是既有契约的一部分（缺陷清零 → 重采/重评 → 当前 hash-bound 机器证据 →
 // **重跑 gate 方 PASS**），硬计数会把必要重验判成超预算并落入错误降级。
-
-/** spec 观察：单 run 封顶（另受参考图数量约束，见 resolveSpecObservationBudget）。 */
-export const VISUAL_PROVIDER_SPEC_OBSERVATION_MAX_PER_RUN = 12;
-
-/** spec 观察的本轮批次上限 = min(参考图数, 单 run 封顶)。 */
-export function resolveSpecObservationBudget(referenceImageCount: number): number {
-  const n = Number.isFinite(referenceImageCount) ? Math.max(0, Math.floor(referenceImageCount)) : 0;
-  return Math.min(n, VISUAL_PROVIDER_SPEC_OBSERVATION_MAX_PER_RUN);
-}
 
 export type VisualProviderPurpose = 'spec_observation' | 'review';
 
@@ -145,10 +138,19 @@ export function resolveVisualProviderInvokePlan(input: VisualProviderPlanInput):
     resolvedBinary: resolved,
     useCrossSpawn: shouldUseCrossSpawn(resolved),
     adapterName: provider.adapter,
+    modelBinding: adapterModelBinding({ ...provider, value: provider.model }),
   };
-  const modelFlag = declaration.model_replay;
+  const modelFlag = declaration.model_replay!;
 
   switch (declaration.readonly_invoke) {
+    case 'profile_read_only_patch': {
+      if (provider.adapter !== 'deepseek-harness') throw new Error('profile_read_only_patch 尚未接通该 adapter');
+      const pin = parseAdapterModelBinding(provider.adapter, base.modelBinding);
+      if (!pin) throw new Error('DSH 视觉调用缺少冻结模型绑定');
+      const argv = [bin, '--profile', 'headless', '--patch', dshModelSource(pin), '--patch',
+        path.resolve(__dirname, '../../../agents/deepseek-harness/visual-readonly-patch.yaml'), '--json'];
+      return { plan: { ...base, readonlyInvocation: true, argv, label: `${path.basename(bin)} --profile headless --patch visual-readonly …` } };
+    }
     case 'safe_mode_read_only_tools': {
       // 两个控制面**都要关**：`--safe-mode` 隔离工程定制（settings.json / hooks /
       // 入口文件 / skills / plugins / MCP / 自定义命令与子 agent），`--tools Read` 把模型
@@ -331,7 +333,7 @@ export function extractOpenCodeFinalText(raw: string): string | null {
  */
 export function projectVisualProviderBody(
   envelope: VisualProviderStdoutEnvelope,
-  result: AgentInvokeResult,
+  result: Pick<AgentInvokeResult, 'stdout' | 'completion_observed' | 'terminal_failure_observed'>,
 ): { body: string | null; reason?: string } {
   switch (envelope) {
     case 'stream_json_result': {
@@ -355,6 +357,10 @@ export function projectVisualProviderBody(
     case 'events_json': {
       const body = extractOpenCodeFinalText(result.stdout);
       return body === null ? { body: null, reason: '无确定性 final result（无 step_finish 终态或无终稿文本）' } : { body };
+    }
+    case 'final_jsonl': {
+      const body = extractProviderFinalText(result.stdout, 'deepseek-harness');
+      return body === null ? { body: null, reason: '无完整的最后 final 正文' } : { body };
     }
     default: {
       const never: never = envelope;
@@ -401,6 +407,7 @@ export interface VisualProviderInvokeInput {
   /** 证据落盘目录（`<report_dir>/visual-review/<invoke_id>/`）；缺省=不落盘 */
   evidenceDir?: string;
   timeoutMs?: number;
+  deadlineMs?: number;
   dryRun?: boolean;
   /**
    * **仅单测注入缝**：替换统一执行器，用来确定性地演练 timeout / terminal failure /
@@ -419,6 +426,8 @@ export interface VisualProviderInvocation {
   outcome: VisualProviderOutcome;
   /** 非 success 时的人读原因（进事件，供排障） */
   reason?: string;
+  timed_out?: boolean;
+  deadline_exhausted?: boolean;
   /** 投影后的正文；outcome!=='success' 时恒 null */
   body: string | null;
   duration_ms: number;
@@ -464,13 +473,33 @@ function resolveInputProvenance(
   }
 }
 
+/** DSH may exit 0 after a failed image tool; only paired successful reads cover an input. */
+function dshReadImages(raw: string, projectRoot: string, imagePaths: string[]): boolean {
+  const canonical = (file: string): string => {
+    const absolute = path.resolve(projectRoot, file);
+    return process.platform === 'win32' ? absolute.toLowerCase() : absolute;
+  };
+  const calls = new Map<string, string>(), read = new Set<string>();
+  for (const line of raw.split(/\r?\n/)) {
+    let event: Record<string, any>;
+    try { event = JSON.parse(line); } catch { continue; }
+    if (!event || typeof event.callId !== 'string') continue;
+    if (event.type === 'tool_call' && event.tool === 'read_image' && typeof event.input?.file_path === 'string') {
+      calls.set(event.callId, canonical(event.input.file_path));
+    } else if (event.type === 'tool_result' && event.status === 'completed' && !event.error) {
+      const image = calls.get(event.callId); if (image) read.add(image);
+    }
+  }
+  return imagePaths.every(file => read.has(canonical(file)));
+}
+
 /**
  * 执行一次 provider 调用。
  *
  * 失败分档：
  *  · `unavailable` —— 传输面不成立：adapter 无完整声明、CLI 缺失/不可 spawn、spawn 失败、
- *    超时、terminal failure、进程非零退出。
- *  · `invalid`     —— 调用回来了但内容不可用：信封投影为空/为 null、工作区被弄脏。
+ *    terminal failure、进程非零退出（非 review 的超时沿原能力投影）。
+ *  · `invalid`     —— 当前没有可采信内容：review 超时、信封投影为空/为 null、工作区被弄脏；超时保留原原因。
  * 载荷 schema / 身份回显 / 图片 hash 的**逐项校验**由调用方在拿到 body 后进行
  * （review 与 spec 观察两种载荷形态不同，但都走同一条「不合法即丢弃」的路）。
  */
@@ -529,12 +558,16 @@ export async function invokeVisualProvider(
   }
 
   const before = snapshotWorkspaceDirtiness(input.projectRoot);
+  const timeoutMs = Math.min(input.timeoutMs ?? VISUAL_PROVIDER_DEFAULT_TIMEOUT_MS,
+    Number.isFinite(input.deadlineMs) && input.deadlineMs! > 0 ? input.deadlineMs! - Date.now() : Infinity);
+  if (!(timeoutMs > 0)) return fail('invalid', 'provider 共享 deadline 已耗尽，未启动调用');
 
   // 生命周期全部交给既有执行器：spawn / timeout / tree-kill / terminal 仲裁 / usage 回填。
   // terminalEventParser 不显式传——由 plan.adapterName 经既有 resolveTerminalEventParser 解析。
   const result = await (input.invokeAgent ?? invokeAgentHeadless)(built.plan, input.projectRoot, {
     ...(input.dryRun ? { dryRun: true } : {}),
-    timeoutMs: input.timeoutMs ?? VISUAL_PROVIDER_DEFAULT_TIMEOUT_MS,
+    timeoutMs,
+    ...(input.deadlineMs !== undefined ? { deadlineMs: input.deadlineMs } : {}),
     ...(outputLogPath ? { outputLogPath } : {}),
     // 三文件分流：agent-events.jsonl 只收纯 stdout（receipt 证据流绑定它，不绑混合人读日志）。
     toolEventCapture: 'structured_events',
@@ -557,19 +590,26 @@ export async function invokeVisualProvider(
     return fail('unavailable', `provider CLI 无法启动：${result.spawn_error.message}`, common);
   }
   if (result.timed_out) {
-    return fail('unavailable', 'provider 调用超时', common);
+    const exhausted = input.deadlineMs !== undefined && Date.now() >= input.deadlineMs;
+    return fail(input.purpose === 'review' ? 'invalid' : 'unavailable',
+      exhausted ? 'provider 调用被 gate/run 硬预算截断' : 'provider 调用超时',
+      { ...common, timed_out: true, ...(exhausted ? { deadline_exhausted: true } : {}) });
   }
   if (result.terminal_failure_observed === true) {
-    return fail('unavailable', `provider 观测到失败终态：${result.terminal_error_excerpt ?? 'terminal failure'}`, common);
+    return fail('unavailable', `provider 观测到失败终态：${result.model_binding_mismatch ?? result.terminal_error_excerpt ?? 'terminal failure'}`, common);
   }
-  // completion 观测成立即视为「跑完了」（完成≠通过）；否则以退出码判传输面失败。
-  if (result.exitCode !== 0 && result.completion_observed !== true) {
-    return fail('unavailable', `provider 非零退出（exit=${result.exitCode}）`, common);
+  if (!invocationCompleted(result) || input.provider.adapter === 'deepseek-harness' && result.exitCode !== 0) {
+    return fail('unavailable', `provider 调用未完成（exit=${result.exitCode}）`, common);
   }
 
-  const projected = projectVisualProviderBody(decl.declaration.stdout_envelope, result);
+  const dsh = input.provider.adapter === 'deepseek-harness';
+  const raw = dsh && eventsPath && fs.existsSync(eventsPath) ? fs.readFileSync(eventsPath, 'utf8') : result.stdout;
+  const projected = projectVisualProviderBody(decl.declaration.stdout_envelope, dsh ? { ...result, stdout: raw } : result);
   if (projected.body === null || projected.body.trim().length === 0) {
     return fail('invalid', projected.reason ?? 'provider 正文为空', common);
+  }
+  if (dsh && !dshReadImages(raw, input.projectRoot, input.imagePaths)) {
+    return fail('invalid', 'DSH 本次输入图片缺少配对的成功 read_image 证据', common);
   }
   if (dirtied) {
     // 丢弃本轮结果 + 记录事实；**不自动 revert**（那会覆盖人可能想留的现场），**不 halt**。
@@ -601,34 +641,7 @@ export async function invokeVisualProvider(
  * 允许 ```json 围栏与前后自然语言——这只是**解析**上的宽容，不放松任何信任性质：
  * 采信与否仍由身份回显 + 当前图片 hash + schema 决定。取不出即 null（→ invalid）。
  */
-export function extractJsonObjectFromText(body: string): Record<string, unknown> | null {
-  const tryParse = (s: string): Record<string, unknown> | null => {
-    try {
-      const doc = JSON.parse(s) as unknown;
-      return doc && typeof doc === 'object' && !Array.isArray(doc) ? (doc as Record<string, unknown>) : null;
-    } catch {
-      return null;
-    }
-  };
-  const trimmed = body.trim();
-  const direct = tryParse(trimmed);
-  if (direct) return direct;
-
-  const fence = /```(?:json)?\s*([\s\S]*?)```/gi;
-  let m: RegExpExecArray | null;
-  let lastFenced: Record<string, unknown> | null = null;
-  while ((m = fence.exec(body)) !== null) {
-    const parsed = tryParse((m[1] ?? '').trim());
-    if (parsed) lastFenced = parsed;
-  }
-  if (lastFenced) return lastFenced;
-
-  // 裸对象夹在散文里：取第一个 `{` 到最后一个 `}` 的闭包再试一次（只试一次，不做括号回溯）。
-  const first = trimmed.indexOf('{');
-  const last = trimmed.lastIndexOf('}');
-  if (first >= 0 && last > first) return tryParse(trimmed.slice(first, last + 1));
-  return null;
-}
+export { extractJsonObjectFromText } from './json-object-from-text';
 
 export interface ProviderIdentityExpectation {
   /** 期望回显的 run_id；不传=本轮无 run 身份可比（交互态） */
@@ -662,7 +675,7 @@ export function validateProviderIdentityEcho(
   }
   const raw = doc.image_hashes;
   if (!Array.isArray(raw) || raw.some(h => typeof h !== 'string' || !h.trim())) {
-    return 'image_hashes 缺失或不是非空字符串数组';
+    return `image_hashes: actual=${JSON.stringify(raw)?.slice(0, 180) ?? 'undefined'}; expected 非空字符串数组，包含本轮图片 ${expected.imageHashes.join(',')}`;
   }
   const got = new Set((raw as string[]).map(h => h.trim()));
   const want = new Set(expected.imageHashes);
@@ -680,6 +693,7 @@ export interface VisualProviderInvokeEvent {
   type: 'visual_provider_invoke';
   provider: string;
   model: string;
+  model_binding?: string;
   purpose: VisualProviderPurpose;
   image_hashes: string[];
   outcome: VisualProviderOutcome;
@@ -690,6 +704,7 @@ export interface VisualProviderInvokeEvent {
   events_path?: string;
   /** 验读证据等级（如实披露，非门槛） */
   input_provenance: 'verified' | 'unverified';
+  usage?: AgentInvokeUsage;
 }
 
 /**
@@ -721,14 +736,18 @@ export function buildVisualProviderInvokeEvent(
     type: 'visual_provider_invoke',
     provider: inv.provider.adapter,
     model: inv.provider.model,
+    model_binding: adapterModelBinding({ ...inv.provider, value: inv.provider.model }),
     purpose: inv.purpose,
     image_hashes: inv.image_hashes,
     outcome: inv.outcome,
     duration_ms: inv.duration_ms,
     invoke_id: inv.invoke_id,
     input_provenance: inv.input_provenance,
+    ...(inv.usage ? { usage: inv.usage } : {}),
     ...(inv.workspace_dirtied ? { workspace_dirtied: true } : {}),
     ...(inv.reason ? { reason: inv.reason } : {}),
+    ...(inv.timed_out ? { timed_out: true } : {}),
+    ...(inv.deadline_exhausted ? { deadline_exhausted: true } : {}),
     ...(inv.events_path ? { events_path: inv.events_path } : {}),
   };
 }

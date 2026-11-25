@@ -294,15 +294,15 @@ optional_fields:
       in_session_reconcile:
         type: boolean
         default: false
-        description: 声明宿主可在当前会话内运行 assess/authorize/execute/reassess 薄 driver。
+        description: 既有原生会话调和能力声明；可命令会话统一以 next/report 进入 GoalPhaseRuntime，不以此字段作为准入门槛。
       phase_context_isolation:
         type: boolean
         default: false
-        description: 声明每个 feature phase 可在新鲜隔离上下文中执行并只返回结构化 outcome。
+        description: 历史字段名；声明专用工作单元上下文能力。false 不授权主会话代施工；无法续接时按当前事实重建专用上下文并披露，独立核验仍真实独立。
       supports_resume:
         type: boolean
         default: false
-        description: 声明 adapter 可恢复同一 goal run_id 与权威事件序列。
+        description: 声明模型 CLI 原生运输的恢复能力；框架 next/report 的同 run 续作不依赖此值。
       handoff:
         type: string
         default: "none"
@@ -362,8 +362,10 @@ optional_fields:
               non-interactive full-permission 启动命令——无审批提示、完整文件系统/工具执行
               权限（用户主动启动 Goal/headless 即为该授权）。Maison 不猜第三方 CLI 旗标、
               不加命令白名单；无法满足者不得声明支持 Goal/headless。内建已知 CLI
-              （claude/codeagent/codex/cursor/opencode）运行时以 agent-invoke.ts 硬化 argv
+              （claude/codeagent/codex/cursor/opencode/deepseek-harness）运行时以 agent-invoke.ts 硬化 argv
               为 SSOT，本字段仅声明面（两者须一致，防双口径）。
+              deepseek-harness 还在统一 spawn 边界注入权限环境并传入发布件内固定 patch，
+              以覆盖已保存的默认权限；运行前提与验证版本见 goal-mode-runbook.md。
               注意：全权限=执行能力，不是业务裁决权——phase 权责、integrity、runner-owned
               gate、receipt/人签、设备与凭据规则不受影响。
           unattended:
@@ -389,7 +391,8 @@ optional_fields:
       `goal_capability` **不参与** provider 资格判定：那是「能不能当 goal 主执行体」的声明，
       与「能不能只读看图」正交；本字段自身承载 invoke / model / image / stdout 全契约。
 
-      四个字段**缺一即不完整**，不完整=无资格（交互态提示重选、无人值守 WARN+blind、
+      普通机制四个字段**缺一即不完整**；profile_read_only_patch + prompt_path + final_jsonl
+      组合以公共 modelBinding 回放模型，可省略 model_replay。不完整=无资格（交互态提示重选、无人值守 WARN+blind、
       显式 CLI fail-fast）。取值为**机制 id 而非厂商名**：机制 adapter 通用，多个 adapter 可
       共用同一机制。声明与运行时的分工同 `external_runner.headless_invoke`——本字段是声明面
       与资格面，argv 构造 SSOT 在 harness/scripts/utils/visual-provider-invoke.ts，两者须一致。
@@ -400,7 +403,7 @@ optional_fields:
     fields:
       readonly_invoke:
         type: string
-        enum: ["safe_mode_read_only_tools", "read_only_sandbox", "ask_mode", "permission_deny_non_read"]
+        enum: ["safe_mode_read_only_tools", "read_only_sandbox", "ask_mode", "permission_deny_non_read", "profile_read_only_patch"]
         description: |
           只读启动机制 id。语义：
           - safe_mode_read_only_tools：CLI 提供「隔离工程定制（settings/hooks/入口文件/skills/
@@ -408,6 +411,7 @@ optional_fields:
           - read_only_sandbox：CLI 提供进程级只读沙箱档位（文件系统写入在沙箱层被拒）；
           - ask_mode：CLI 提供只问不改的会话模式（无写入/无 shell 权限）；
           - permission_deny_non_read：CLI 提供结构化权限声明，可把 edit/bash 等非只读工具置 deny。
+          - profile_read_only_patch：加载绑定的模型来源后，最后加载固定只读 profile patch；核对 read-only/never。
           **禁止**声明任何依赖普通 headless 全权限旗标的机制——那条 argv 是无条件全权限契约。
       image_transport:
         type: string
@@ -418,17 +422,18 @@ optional_fields:
           （物理只读由 readonly_invoke 承担，receipt 图片路径因此天然与工程一致）。
       stdout_envelope:
         type: string
-        enum: ["stream_json_result", "turn_jsonl", "result_json", "events_json"]
+        enum: ["stream_json_result", "turn_jsonl", "result_json", "events_json", "final_jsonl"]
         description: |
           stdout 信封方言——决定「用哪个既有投影函数把 stdout 还原成模型正文」以及是否需要
           既有 terminal 事件解析器。**只选择既有能力，不新建第二套 parser**：投影后统一走
           同一份载荷校验。turn_jsonl 额外契约：只有 invoke 结果 completion 观测成立且无
           terminal failure 时才投影正文，投影为 null 亦判 invalid。
+          final_jsonl 取完整 stdout 的最后一条 final.text；DSH 另要求退出 0 及本次逐图成功 read_image。
       model_replay:
-        type: string
+        type: string | optional
         description: |
           模型回放旗标 token（如 `--model` / `-m`）——provider 的 model 必须真实进入该旗标。
-          无回放旗标的 adapter 不具 provider 资格（否则「声称已钉、实际未钉」）。
+          仅上述 profile_read_only_patch 组合可省略，以已冻结的公共模型绑定回放；其它机制仍必须给旗标。
 
   verifier_subagent:
     type: boolean | optional

@@ -6,6 +6,8 @@
 
 ## 索引
 
+重扫派生与长期策展分开：默认相关 run 收口后、P3 前在原写入授权内刷新；若当前门禁需要本次新增导出的 index，应先由既有权责链明确写集再执行，不能等收口来绕过本次检查。具体时点和归位职责见[知识读取与维护](skill-contracts.md#知识读取与维护)。
+
 默认 `doc/component-index.yaml`；文件存在即主动启用，git 入库，勿手编。在消费者 `framework/harness` 执行 `npm run bootstrap:component-index -- --project-root <宿主根>`。没有文件时 Feature 校验跳过，初始化/更新不创建文件，UPDATE 不回填配置键。
 
 根字段 `schema_version: '1.0'`、`components: []`。条目字段：`id`、`module`、`file`、`symbol`、`kind`（component|builder）、`props`（参数名数组）、`deprecated`、`source_fingerprint`（文件原始字节 SHA-256）、`static_checks`。ID 为 `<module>/<模块内相对文件>#<源码符号>`，file 为项目相对路径。按 ID 排序；禁止时间戳、绝对路径、引用计数或调用点样本。改文件名/符号得到新 ID。
@@ -30,13 +32,13 @@
 
 先核对语义同一性（变体还是另一物种）、纯增量兼容性、live 调用点影响范围、变体轴是否膨胀，再作裁决。同一组件出现两个以上包装时 review WARN 建议 evolve；语义重复只由带源码上下文的 review 判断。
 
-蓝图在 changed development 或涉 UI 的 logical/scenarios 视图读取资产；每个 development 页面/UI 目标一条扁平 decision：`kind: component_asset_selection`、`target_ref: view:development/node:<id>`、`asset_resolution`、`component_ref`、`rationale` 及既有 owner/provenance/verification_refs/status。非 custom 必须 component_ref，adapt/evolve/custom 必须 rationale。provenance.source_ref 只指配置的 index/catalog 证据。verified_unchanged development 禁止产出选型决策。
+蓝图在 changed development 或涉 UI 的 logical/scenarios 视图读取资产。选型结论只登记在扁平 decision：`kind: component_asset_selection`、`target_ref: view:development/node:<id>`、`asset_resolution`、`component_ref`、`rationale` 及既有 owner/provenance/verification_refs/status。UI 对象同时包括独立节点与节点 typed contracts 内的页面/组件；同一已明确目标的决定可覆盖多个组件，不强制拆节点。非 custom 必须 component_ref，adapt/evolve/custom 必须 rationale。provenance.source_ref 只指配置的 index/catalog 证据。verified_unchanged development 禁止产出选型决策。
 
-CU 用既有 `design_refs` 引用 decision，Feature 用既有 `design_ref_mappings.implementation_refs` 关联 `file#组件name`（文件唯一组件可省略 #name），不得新增 decision_ref。Feature 单值 `asset_selection: {resolution, component_ref?, rationale?, bindings?}` 的前三项与 decision 严格相等；bindings 为本地参数绑定对象。多资产沿原 components/children 树拆条目。
+CU 用既有 `design_refs` 显式选择本单元落实的目标及其选型决定，不复写选型结论，也不写入自动推导的依赖闭包。Feature 的 `design_ref_mappings.implementation_refs` 与单值 `asset_selection: {resolution, component_ref?, rationale?, bindings?}` 是同一权威的施工投影：既有目标关系能唯一确定时，缺失映射与副本由共享投影派生，不要求 plan 再抄一遍；显式冲突不得覆盖。映射关联 `file#组件name`（文件唯一组件可省略 #name），不得新增 decision_ref。resolution/component_ref 与 decision 严格相等；rationale 保留组件上游施工契约的说明，无上游说明时使用决定的理由，不与总理由逐字比较；bindings 为本地参数绑定对象。多资产沿原 components/children 树拆条目。
 
-UI 强制谓词沿既有 kind：page/component/builder，以及既有 Component/ComponentV2/Builder decorator 或 navigation destination 信号；不为工具类新增枚举约束。有 index 时命中谓词的条目必须选型；在途旧 Feature 回 plan 补齐。
+UI 强制谓词沿既有 kind：page/component/builder，以及既有 Component/ComponentV2/Builder decorator 或 navigation destination 信号；不为工具类新增枚举约束。有 index 时命中谓词的条目必须选型。旧 Feature 缺局部映射交 plan，缺权威决定或 CU 依赖则交设计 owner；不在无权阶段重复重试。
 
-依赖从 `components[].module`（使用方）与 index.module（定义方）加 architecture DSL 实时计算，复用既有 outer/intra-layer 许可；module/file 仍为使用位置。非法时依次换候选、在 plan 声明组件下沉、请求用户批准新边。AI 不改 DSL 自授。goal 换选自动、下沉经 auto-replan，新边沿 await-confirm 停放后恢复。蓝图中的未决新边用现有 gap（verification_refs 引 decision）记录 owner/needed_by，当前 CU 未获权责裁决不得施工。
+依赖从 `components[].module`（使用方）与 index.module（定义方）加 architecture DSL 实时计算，复用既有 outer/intra-layer 许可；module/file 仍为使用位置。非法时依次换合法候选、考虑组件下沉、必要时由设计 owner 裁决新边。已有完整交付全权的原需求内静默重签并经配置 writer 落盘；attended 用本次 --authorize-autonomy，detached 保留既有来源，未授权会话仍保留确认，plan/coding 不自行改 DSL。蓝图中的未决新边用现有 gap（verification_refs 引 decision）记录 owner/needed_by，当前 CU 未获权责裁决不得施工。
 
 错误选型/非法依赖、未登记共享导出、新共享组件静态不合规按 BLOCKER/FAIL 进入阶段最终裁定；蓝图投影不一致继续沿既有 BLOCKER。索引漂移保留 MAJOR 诊断，uncurated/dangling 等 WARN 不阻断，不改变全局严重级别规则。选型实际引用的 index/catalog 文件必须可读；未引用的 optional catalog 可以缺失，不新增锚点解析要求。映射覆盖按组件条目（file#name）计算，不同文件的同名组件分别覆盖。
 
@@ -54,4 +56,4 @@ UI 强制谓词沿既有 kind：page/component/builder，以及既有 Component/
 
 未展开的全局小写 Builder 调用同样保留 unknown。仅修改合法出口，把原私有组件导出为共享组件，也属于本 Feature 的新增资产；由当前/历史扫描的导出差异判断，出口位置只在扫描内存结果中传递，不写入 index。Windows 历史读取复用 Git 文件清单匹配真实大小写，避免将读取拼写差异当成历史不存在。live 样本按定义符号检索，别名可能漏采；未检出不代表无调用。
 
-本 Feature 新登记共享导出的适用检查不得 fail/unknown；既有共享组件 unknown 不阻断。新旧沿既有 goal baseline、diff base 或 coding trace/HEAD 源码比较，不建持久状态。custom 私有组件不要求入库；共享出口须刷新 index，缺策展仅 WARN。本期不提供渲染、真机或完整适配能力证明。
+适用静态检查已证实 fail 时须修复；unknown 保留未确认并进入已有 review，适用交互/视觉由 testing 验证，不因新导出自动判成不合格。新旧沿既有 goal baseline、diff base 或 coding trace/HEAD 源码比较，不建持久状态。custom 私有组件不要求入库；共享出口须刷新 index，缺策展仅 WARN。本期不提供渲染、真机或完整适配能力证明。

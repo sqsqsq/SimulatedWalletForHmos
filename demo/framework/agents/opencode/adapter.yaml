@@ -7,14 +7,14 @@ agent_entry_file:
   template_path: templates/AGENTS.md.template
   target_path: AGENTS.md
 
-# opencode 无 slash 路由文件（skill 自动注册为 /<name>），但**有原生子 agent 配置**：
-# .opencode/agent/<name>.md。verifier 是协议级子 agent，只读约束写在它自己的
-# frontmatter `permission:` 里（逐工具 deny），不靠调用时另加参数。
-commands:
-  subagents:
-    target_dir: .opencode/agent
-    template_dir: templates/agents
-    update_policy: auto_overwrite               # verifier 为协议级子 agent 配置
+commands: null
+
+# 无 slash 面（skill 自动注册为 /<name>），但有原生子 agent 配置 .opencode/agent/<name>.md，在顶层声明。
+# verifier 是协议级子 agent，只读约束写在它自己 frontmatter 的 `permission:` 里（逐工具 deny），不靠调用时另加参数。
+subagents:
+  target_dir: .opencode/agent
+  template_dir: templates/agents
+  update_policy: auto_overwrite                # verifier 为协议级子 agent 配置
 
 skill_bridge:
   target_dir: .opencode/skill
@@ -23,6 +23,12 @@ skill_bridge:
 rules:
   target_dir: .opencode/rules
   template_dir: ../shared/agent-bundle/templates/rules
+
+# 原生发现的项目级插件；只传当次 shell 身份并复用共享写前判据。
+hooks:
+  target_dir: .opencode/plugins
+  template_dir: templates/plugins
+  update_policy: auto_overwrite
 
 user_confirmation:
   structured_widget: unsupported
@@ -51,14 +57,24 @@ visual_provider:
   model_replay: '-m'
 
 goal_capability:
+  # 会话完整交付共用 goal-mode-entry --next / --report-result，命令退出后按请求原件执行。
+  # 隔离字段名仅历史兼容；作者使用本单元专用上下文，不能回主会话施工，必需核验仍真实独立。
+  # 框架交接续作不依赖模型 CLI 原生 resume；supports_resume/handoff 保留原生运输含义。
   mode: external_runner
   external_runner:
     # plan a8e5c3f9：headless 全权限契约——本 adapter 一直是唯一正确样板（恒 bypass），
     # 仅把 unattended 声明对齐 effective 值。
-    headless_invoke: 'opencode run --dangerously-skip-permissions --dir {{PROJECT_ROOT}}'
+    headless_invoke: 'opencode run --auto --format json --dir {{PROJECT_ROOT}}'
     unattended:
       write_mode: full-access
       approval_mode: never
+
+# verifier 子代理能力（plan d2f7a9c4）：只回答「能不能派发 verifier 子 agent」。调用为 task 工具
+# subagent_type=verifier、prompt = request JSON 整段；报告由调用方原样写入 summary.verifier_report。
+# 入册凭据：宿主 opencode 1.18.26，2026-09-05 实跑观测——主 agent 用 task 工具派出 subagent_type=verifier 的
+# 子会话（sessionId ≠ parentSessionId），子代理读到 ai-prompt.md 并交回带终态块的回复；只读来自 frontmatter 的
+# 逐工具 deny 声明（对照组去掉即可写）。
+verifier_subagent: true
 
 deprecated_artifacts:
   - path: skill/app-component-blueprint/
@@ -80,16 +96,10 @@ notes: |
     （由 skill / AGENTS.md 内容按需引用），**不是** opencode 有效规则入口。**禁止**为承载规则而擅自
     创建/覆盖用户的 `.opencode/opencode.json`。
   - 模型/凭据由 opencode 自身 config/auth（`~/.config/opencode` 或项目 `.opencode/opencode.json`）提供。
+  - `.opencode/plugins/maison-native-intake.js` 由普通前台自动加载；`--pure` 禁用外部插件。
+    bash 的 shell.env 携带当次 sessionID/callID，PTY 缺字段时不猜会话。编辑工具复用共享
+    framework 写保护与前门检查；shell 重定向仍不在编辑工具守卫范围内。
   - 运行时 headless stdin 灌 prompt，以 agent-invoke.ts 硬化为准。
   - **迁移**：UPDATE 会新增 `.opencode/skill`/`.opencode/rules`；旧版若曾物化到 `.agents`，该目录**不会自动删除**
     （未同时使用 generic/chrys 时可人工清理，避免 opencode 跨目录扫到同名 skill 仅 logWarning 的噪声）。
   - 口径 SSOT：agents/adapter-schema.yaml（bridge-only）。
-
-# verifier 子代理能力（plan d2f7a9c4）：只回答「能不能派发 verifier 子 agent」，与运行模式、
-# 发布机制无关。调用协议 adapter 无关——共享规则 bundle 与 AGENTS.md 要求 task 工具触发
-# subagent_type=verifier、prompt = request JSON 整段；报告由**调用方**把 verifier 回复原样
-# 写入 summary.verifier_report，本 adapter 不参与发布。
-# 入册凭据：宿主 opencode 1.18.26，2026-09-05 实跑观测——主 agent 用 task 工具派出
-# subagent_type=verifier 的子会话（sessionId ≠ parentSessionId），子代理读到 ai-prompt.md
-# 并交回带终态块的回复；只读来自 frontmatter 的逐工具 deny 声明（对照组去掉即可写）。
-verifier_subagent: true

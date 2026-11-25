@@ -26,7 +26,7 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.4"
     skill_step: "S2 计划批准"
     portable_menu: "多选 adapter 目录名（候选见 S1 InitTaskPlan.adapter_catalog）；须至少 1 项"
-    notes: "项目级物化清单；写入 framework.config.json materialized_adapters[]。generic/chrys 默认 `.agents` bridge bundle 字节一致、可幂等共存；opencode 用自有 `.opencode/skill` bundle（AGENTS.md 共享，像 cursor 各用各目录）；codex 默认 `.codex` bundle；差异仅在 headless 运行器与 skill 落盘目录。仅 generic 配非默认 agent_bundle_root 时为独立产物。generic 恒 bridge，无 inline 选项。"
+    notes: "项目级物化清单；写入 framework.config.json materialized_adapters[]。generic/chrys/dsh 默认 `.agents` bridge bundle 字节一致、可幂等共存；opencode 用自有 `.opencode/skill` bundle（AGENTS.md 共享，像 cursor 各用各目录）；codex 默认 `.codex` bundle；差异仅在 headless 运行器与 skill 落盘目录。仅 generic 配非默认 agent_bundle_root 时为独立产物。generic 恒 bridge，无 inline 选项。"
     options:
       - value: claude
         label: "claude — 物化 Claude Code 入口与 .claude/ 产物"
@@ -49,6 +49,12 @@ entries:
       - value: codeagent
         label: "codeagent — 物化 AGENTS.md + .cac/ 产物（Claude Code 内核；hooks 硬门禁；headless = codeagentcli -p）"
         portable: "codeagent"
+      - value: deepseek-harness
+        label: "deepseek-harness — 物化 AGENTS.md + .dsh/skills（headless = dsh --profile headless；默认模型）"
+        portable: "deepseek-harness"
+      - value: dsh
+        label: "dsh — 物化 AGENTS.md + .agents/ bundle + .dsh/ 独立审查员配置层（启动带 --patch）"
+        portable: "dsh"
 
   - id: init.task_plan
     skill: "framework-init"
@@ -801,15 +807,15 @@ entries:
     skill: "component-design"
     class: enum
     ssot_anchor: "user-confirmation-ux.md §3.2"
-    skill_step: "正式性判定（component-design 第 0 步；spec / change-lite 首次冻结施工意图时的兜底复核共用同一确认点）"
+    skill_step: "需要完整设计时的真实路由语义缺口（component-design/spec 共用，统一前门分类不单独询问）"
     portable_menu: "1=正式需求 2=非正式维护 3=信息不足"
-    notes: "仅在判据信息不足、或兜底复核发现事项符合正式需求判据却未经蓝图时询问。上游已显式标为正式需求时该分类具权威性、不再询问。这是路由确认点，不是质量门禁：不新增 track_scoring 条目、不新增档位、不加机器 BLOCKER；三处入口共用本条目，不各建状态。"
+    notes: "现行外框消费 project-entry.md 唯一规则和真实用户覆盖；原正式性标签不强制完整蓝图。先复用已有依据，只在影响正确交付且无法据证解决的真实语义缺口使用本确认点；不为分类格式或 unknown 本身停等。特别简单不建蓝图，小型同协议短设计、无CU/独立质询/独立评审，中型/复杂及已有CU保留完整路径。本条保留原选项作路由澄清兼容，不产生新档位、状态或机器票据。"
     options:
       - value: formal_requirement
         label: "正式需求 — 回 /component-design 建立部件演进蓝图后再施工"
         portable: "1=正式需求"
       - value: non_formal_maintenance
-        label: "非正式维护 — 不改变行为/契约/数据/NFR/运行语义/架构责任，继续 L0/L1 施工分档"
+        label: "非正式维护 — 恢复明确既有预期或不改变契约/数据/NFR/运行语义/架构责任，按请求终点维护"
         portable: "2=非正式维护"
       - value: needs_clarification
         label: "信息不足 — 继续澄清后再判，不猜测、不默认按任一侧处理"

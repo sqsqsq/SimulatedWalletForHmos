@@ -2,9 +2,12 @@
  * Manifest + CLI override pairing — strict per-field validation.
  */
 
-import type { GoalManifest, AdapterModelPin } from './goal-manifest';
+import { isUserPinnedModel, parseUserDeadlineAt, type GoalManifest, type AdapterModelPin } from './goal-manifest';
 import type { FeaturePhase } from './phase-transition-policy';
 import type { ProviderRef } from './types';
+import { adapterModelBinding, launchModelPin, assertModelReplay } from './adapter-model';
+import { normalizeModelRouteFields } from './types';
+import { loadLocalConfig } from './framework-local-config';
 
 export interface ManifestCliArgv {
   manifest?: string;
@@ -16,6 +19,7 @@ export interface ManifestCliArgv {
   requirement_source_files?: string[];
   /** --fidelity 只升不降；降档须作为新需求进入 correction/successor run。 */
   fidelity?: string;
+  'user-deadline-at'?: string;
   'override-start'?: boolean;
   'override-end'?: boolean;
   'override-manifest'?: boolean;
@@ -47,6 +51,7 @@ export function validateManifestCliOverrides(
 }
 
 export function applyManifestCliOverrides(manifest: GoalManifest, argv: ManifestCliArgv): void {
+  if (argv['user-deadline-at'] !== undefined) manifest.user_deadline_at = parseUserDeadlineAt(argv['user-deadline-at']);
   if (argv['override-start'] && argv.start) {
     manifest.start_phase = String(argv.start) as FeaturePhase;
   }
@@ -107,6 +112,7 @@ export function normalizeAdapterModelCliValue(raw: unknown): string | undefined 
 }
 
 export interface ResolveFinalModelPinInput {
+  cliPin?: AdapterModelPin;
   /** 已归一/校验的 --adapter-model CLI 值（无 pin 时 undefined），或 undefined */
   cliValue?: string;
   /** reconcile 后的 effective adapter */
@@ -131,6 +137,10 @@ export type ResolveFinalModelPinResult =
   | { ok: true; pin?: AdapterModelPin }
   | { ok: false; message: string };
 
+function modelPinUnsupported(adapter: string): boolean {
+  return adapter === 'chrys' || adapter === 'generic';
+}
+
 /**
  * plan d7f3a9c4 t2：final pin **单点裁决**（唯一产生 final pin 的纯函数）。
  *
@@ -151,14 +161,14 @@ export type ResolveFinalModelPinResult =
  *    successor 换 adapter 须 --adapter <new> --override-adapter --adapter-model <new-model>，
  *    禁止把旧 adapter 的模型字符串回放到新 adapter。**后续 resume 不享受出生特权**——
  *    一律走 resume 授权规则。
- *  - chrys / generic 传 pin（CLI 或继承的 manifest pin）→ fail-fast（argv 无法回放，
+ *  - chrys / generic / deepseek-harness 传 pin（CLI 或继承的 manifest pin）→ fail-fast（无法回放，
  *    否则形成"manifest 声称已钉而实际未钉"）。
  */
 export function resolveFinalModelPin(
   input: ResolveFinalModelPinInput,
 ): ResolveFinalModelPinResult {
   const {
-    cliValue,
+    cliValue: cliRawValue,
     effectiveAdapter,
     originalAdapter,
     manifestPin,
@@ -168,7 +178,11 @@ export function resolveFinalModelPin(
     overrideManifest,
     overrideAdapter,
   } = input;
-  const makePin = (value: string): AdapterModelPin => ({ adapter: effectiveAdapter, value });
+  const cliValue = input.cliPin?.source === 'frontend' && manifestPin ? undefined : input.cliPin?.value ?? cliRawValue;
+  const makePin = (value: string): AdapterModelPin => {
+    const { source: _history, ...prior } = manifestPin?.adapter === effectiveAdapter ? manifestPin : {} as Partial<AdapterModelPin>;
+    return { ...prior, ...input.cliPin, adapter: effectiveAdapter, value };
+  };
   // adapter 变化以 **reconcile/applyManifestCliOverrides 前的原始 adapter** 判定（旧 run/source
   // 无 pin 时，pin.adapter 不存在，无法据此推断原 adapter）。
   const adapterChanged = originalAdapter !== undefined && originalAdapter !== effectiveAdapter;
@@ -176,16 +190,16 @@ export function resolveFinalModelPin(
   // 未变（originalAdapter===effectiveAdapter），只要 manifestPin.adapter 不一致，也不得原样
   // 把另一个 adapter 的模型值回放给当前 adapter。
   const pinAdapterMismatch = Boolean(manifestPin && manifestPin.adapter !== effectiveAdapter);
-  const unsupported = effectiveAdapter === 'chrys' || effectiveAdapter === 'generic';
+  const unsupported = modelPinUnsupported(effectiveAdapter);
 
-  // chrys / generic 无回放缝：最终 pin 存在（CLI flag 或继承/加载的 manifest pin）
+  // 不支持模型回放的 adapter：最终 pin 存在（CLI flag 或继承/加载的 manifest pin）
   // 即 fail-fast——否则 manifest 声称已钉、argv 实际不回放。
   if (unsupported && (cliValue !== undefined || manifestPin !== undefined)) {
     return {
       ok: false,
       message:
         `[goal-runner] BLOCKER: adapter ${effectiveAdapter} 不支持 --adapter-model 模型钉` +
-        '（无模型回放旗标）；请移除 CLI flag，或清除 manifest 中的 adapter_model_pin。',
+        '；缺少精确回放契约，保留原任务等待支持，不发送模型请求。',
     };
   }
 
@@ -259,9 +273,14 @@ export function resolveFinalModelPin(
   }
 
   // cliValue 在场、manifest 绑定 run。
-  if (manifestPin && manifestPin.value === cliValue && !adapterChanged && !pinAdapterMismatch) {
-    // 同值幂等
-    return { ok: true, pin: makePin(cliValue) };
+  if (manifestPin && adapterModelBinding(manifestPin) === adapterModelBinding(makePin(cliValue)) && !adapterChanged && !pinAdapterMismatch) {
+    // 同值幂等。plan 4e6fb3b6 批二 review R4：来源的落盘走身份授权路径——带 --override-manifest 才改为用户显式钉值；
+    // 不带则 manifest 原样（改来源即改身份字段，未授权会被当成漂移）。本次调用内是否按用户钉死，由替代决策看
+    // "本次显式给了型号"（decideModelAlternative.explicitModel）决定，不依赖这里的来源。
+    return {
+      ok: true,
+      pin: overrideManifest ? makePin(cliValue) : manifestPin,
+    };
   }
   // resume 同时换 adapter 与模型 → 两个 override 都必须有。
   if (adapterChanged && isResume) {
@@ -349,6 +368,25 @@ export interface ResolveFinalVisualProviderPinInput {
   overrideManifest: boolean;
 }
 
+/** Visual selection only inherits its own authorized configuration, never the primary route. */
+export function resolveVisualProviderCliSelection(argv: Record<string, any>, projectRoot: string, authorized?: ProviderRef): ProviderRef | undefined {
+  const ref = normalizeVisualProviderCliPair(argv['visual-adapter'], argv['visual-model']);
+  const routeKeys = ['visual-provider', 'visual-reasoning', 'visual-model-config'];
+  if (!ref) {
+    if (routeKeys.some(key => argv[key] !== undefined)) throw new Error('视觉路由参数须与 --visual-adapter/--visual-model 一起提供');
+    return undefined;
+  }
+  const configured = authorized ?? loadLocalConfig(projectRoot)?.vision?.visual_provider;
+  const base = configured?.adapter === ref.adapter ? configured : undefined;
+  const selected = launchModelPin({ 'adapter-model': ref.model,
+    ...(argv['visual-provider'] !== undefined ? { 'adapter-provider': argv['visual-provider'] } : {}),
+    ...(argv['visual-reasoning'] !== undefined ? { 'adapter-reasoning': argv['visual-reasoning'] } : {}),
+    ...(argv['visual-model-config'] !== undefined ? { 'adapter-model-config': argv['visual-model-config'] } : {}) }, ref.adapter, projectRoot,
+    { ...base, adapter: ref.adapter, value: base?.model ?? ref.model });
+  assertModelReplay(selected);
+  return { ...ref, ...normalizeModelRouteFields(selected as unknown as Record<string, unknown>) };
+}
+
 export type ResolveFinalVisualProviderPinResult =
   | { ok: true; pin?: ProviderRef }
   | { ok: false; message: string };
@@ -370,9 +408,10 @@ export type ResolveFinalVisualProviderPinResult =
 export function resolveFinalVisualProviderPin(
   input: ResolveFinalVisualProviderPinInput,
 ): ResolveFinalVisualProviderPinResult {
-  const { cliRef, manifestPin, isResume, hasManifestFlag, isSuccessor, overrideManifest } = input;
+  const { cliRef: rawCliRef, manifestPin, isResume, hasManifestFlag, isSuccessor, overrideManifest } = input;
+  const cliRef = rawCliRef && rawCliRef.adapter === manifestPin?.adapter ? { ...manifestPin, ...rawCliRef } : rawCliRef;
   const sameRef = (a?: ProviderRef, b?: ProviderRef): boolean =>
-    Boolean(a && b && a.adapter === b.adapter && a.model === b.model);
+    Boolean(a && b && a.adapter === b.adapter && adapterModelBinding({ ...a, value: a.model }) === adapterModelBinding({ ...b, value: b.model }));
 
   // successor 出生特权：显式双参数即新 run 出生输入，可覆盖继承值。
   if (isSuccessor && !isResume) {

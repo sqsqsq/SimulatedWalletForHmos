@@ -21,6 +21,7 @@ import type { CheckResult, Phase } from './types';
 import type { CapabilityResolutionReport } from './capability-resolution';
 import { resolveVerdictFromChecks } from './report-generator';
 import { validateRepairCandidatesShape } from './repair-candidates';
+import { isBlockingCheck, isRequiredCheckGap, resolveCheckDisposition } from './check-disposition';
 
 export type AxisId = 'functional' | 'visual' | 'asset' | 'evidence';
 export const AXIS_IDS: readonly AxisId[] = ['functional', 'visual', 'asset', 'evidence'];
@@ -167,7 +168,10 @@ export interface CompletionGaps {
 export function extractCompletionGaps(checks: readonly CheckLike[]): CompletionGaps {
   let p0 = 0;
   let total = 0;
+  // plan f7045213 §4.3：被披露（不阻断）的失败每条算一个完成缺口——只是披露，不阻塞完成。
+  let disclosed = 0;
   for (const c of checks) {
+    if (resolveCheckDisposition(c).action === 'disclose') disclosed++;
     const s = c.structured as Record<string, unknown> | undefined;
     if (!s || typeof s !== 'object') continue;
     if (c.id === 'p0_coverage_integrity' && typeof s.unsupported_gap === 'number') p0 = Math.max(p0, s.unsupported_gap);
@@ -175,7 +179,7 @@ export function extractCompletionGaps(checks: readonly CheckLike[]): CompletionG
       total = Math.max(total, s.unsupported_gap_count);
     }
   }
-  return { p0, total: Math.max(total, p0) };
+  return { p0, total: Math.max(total, p0) + disclosed };
 }
 
 // ---------------------------------------------------------------------------
@@ -241,7 +245,7 @@ export function deriveQualityAxes(
     const b = buckets[axis];
     b.sources.push(c.id);
     if (c.status !== 'SKIP') b.executed++;
-    if (c.status === 'FAIL' && c.severity === 'BLOCKER') {
+    if (isBlockingCheck(c)) {
       if (allBlockerFailsExternal) b.externalFails.push(c);
       else b.hardFails.push(c);
     }
@@ -308,6 +312,8 @@ export interface AssetAxisInheritance {
   upstreamVerdict: AxisVerdict;
   /** 调用方判定的五指纹一致性（任一漂移=false） */
   provenanceIntact: boolean;
+  /** 唯一缺口是尚无 review 闭环证明（其余指纹完好）；不是 coding 能修的过期。 */
+  reviewUnattestedOnly?: boolean;
   provenanceDetail: string;
   /** 证据引用（coding summary hash / inventory hash / debt revision 等） */
   evidenceRefs: string[];
@@ -324,6 +330,17 @@ export function applyAssetAxisInheritance(axes: QualityAxes, inh: AssetAxisInher
       blocking_class: null,
       resolution: null,
       source_checks: inh.evidenceRefs.map(r => `inherited:${inh.upstreamPhase}:${r}`).sort(),
+    };
+    return;
+  }
+  if (inh.reviewUnattestedOnly && inh.upstreamVerdict === 'PASS') {
+    // 与 testing 的 review_closure_attestation 同口径：未复核如实标注、不挡完成；
+    // 保持 UNVERIFIED（release 仍 BLOCKED），不派 coding 返修（它修不了），也不派 review。
+    axes.asset = {
+      ...a,
+      blocking_class: 'needs_fix',
+      resolution: { class: 'needs_fix', owner: 'agent', retry_phase: null },
+      source_checks: [`unattested_inheritance:${inh.upstreamPhase}:${inh.provenanceDetail}`],
     };
     return;
   }
@@ -458,18 +475,20 @@ export function deriveSummaryVerdictLattice(
   // plan c8e5b3f1 t2：手动投影以暴露 pre/rawPost/post 供因果归因——projectPhaseAdvanceVerdict 纯函数、
   // applyCapabilityResolutionProjection 原地改 axes，前后各调一次即得标量；post 必须含 hasBlocked 顶层
   // 钳制（visual/asset blocked 依赖它，否则会被误判）。
-  const pre = projectPhaseAdvanceVerdict(quality_axes, String(opts.phase), report_validity);
+  const requiredGap = checks.some(check => isRequiredCheckGap(check));
+  const rawPre = projectPhaseAdvanceVerdict(quality_axes, String(opts.phase), report_validity);
+  const pre = requiredGap && rawPre === 'PASS' ? 'INCOMPLETE' : rawPre;
   const { hasBlocked } = applyCapabilityResolutionProjection(quality_axes, capabilityReport, String(opts.phase));
   const rawPost = projectPhaseAdvanceVerdict(quality_axes, String(opts.phase), report_validity);
-  const post = hasBlocked && rawPost === 'PASS' ? 'INCOMPLETE' : rawPost;
+  const post = (hasBlocked || requiredGap) && rawPost === 'PASS' ? 'INCOMPLETE' : rawPost;
   return {
     report_validity,
     quality_axes,
     pre_projection_verdict: pre,
     projected_verdict: post,
     has_blocked: hasBlocked,
-    release_readiness: hasBlocked ? 'BLOCKED' : projectReleaseReadiness(quality_axes),
-    completion_status: hasBlocked ? 'INCOMPLETE' : projectCompletionStatus(quality_axes, extractCompletionGaps(checks)),
+    release_readiness: hasBlocked || requiredGap ? 'BLOCKED' : projectReleaseReadiness(quality_axes),
+    completion_status: hasBlocked || requiredGap ? 'INCOMPLETE' : projectCompletionStatus(quality_axes, extractCompletionGaps(checks)),
   };
 }
 

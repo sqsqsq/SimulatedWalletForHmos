@@ -1,0 +1,80 @@
+adapter_name: deepseek-harness
+description: |
+  DeepSeek Harness adapter——共享 AGENTS.md + 自有 .dsh/skills 薄跳板。
+  headless 使用 dsh --profile headless（stdin + 固定权限/认证 patch），默认模型由 DSH 配置；
+  有效权限与凭据须满足 docs/operations/goal-mode-runbook.md 中的运行前提。
+
+agent_entry_file:
+  template_path: templates/AGENTS.md.template
+  target_path: AGENTS.md
+
+commands: null
+
+skill_bridge:
+  target_dir: .dsh/skills
+  template_dir: ../shared/agent-bundle/templates/skills-bridge
+
+rules:
+  target_dir: .dsh/rules
+  template_dir: ../shared/agent-bundle/templates/rules
+
+user_confirmation:
+  structured_widget: unsupported
+  portable_required: true
+  interaction_renderer_rule: ../generic/templates/rules/interaction-renderer.md
+
+image_input: none
+
+visual_provider:
+  readonly_invoke: profile_read_only_patch
+  image_transport: prompt_path
+  stdout_envelope: final_jsonl
+
+goal_capability:
+  # 两运输交同一工作单元请求；隔离声明表示真实专用执行上下文能力。
+  # --session-id 使用本 run 调用事件流中的准确 sessionId。
+  mode: external_runner
+  output_delivery: streaming
+  in_session_reconcile: true
+  phase_context_isolation: true
+  supports_resume: true
+  handoff: bidirectional
+  usage_capture: none
+  tool_event_provenance: none
+  external_runner:
+    # 环境变量提供兜底；固定 patch 覆盖已保存的 permission.defaultPreset，不写用户配置。
+    headless_invoke: 'dsh --profile headless --patch "{{FRAMEWORK_ROOT}}/agents/deepseek-harness/headless-patch.yaml" --json'
+    unattended:
+      write_mode: full-access
+      approval_mode: never
+
+post_install_hooks: []
+
+notes: |
+  - skill 正文仍在 framework/skills 或 doc/extensions；实例扩展沿 skill_bridge.target_dir 物化。
+  - DSH 技能名须匹配 ^[a-z0-9]+(?:-[a-z0-9]+)*$。实例扩展请使用小写 kebab-case；
+    共享 slug 允许的大写、下划线等在 DSH 中可能仅告警并被忽略，本 adapter 不自动改名。
+  - DSH 会发现 .dsh/skills 和 .agents/skills，并可能同时加载 AGENTS.md、CLAUDE.md。
+    .dsh/rules 是按需引用文档，不是自动加载规则入口。
+  - headless --json 输出 session/status/tool_call/tool_result/final 事件；session 首信封的
+    sessionId 立即进入既有 agent-events.jsonl，完成仅采信 turn_end.reason.kind=completed。
+  - 原生续接使用 --session-id <精确ID>；缺失/不可用时由执行协调器依当前事实重建专用上下文。
+    2026-10-29 CLI 0.2.1-rc.3 隔离验证：插入无关会话后精确续接原会话，产物与对话标记一致；
+    记录位于 harness/reports/72b6f0d9/p1/native/deepseek-harness/。
+  - 主模型由 adapter_model_pin 绑定独立 provider、完整 model ID 和适用推理设置；不拆分含斜杠 ID。
+    启动轮从原生 shell 的 DSH_SESSION_ID/DSH_HOME/DSH_PROFILE_DIR 自动捕获，按准确 SID 取最后一个请求头；
+    来源使用实际 profile，非秘密路由摘要保存在同一 pin，不能因路径相同而接受 endpoint 漂移。
+    headless 加载前台模型来源配置层后施加框架补丁，每次调用前以最终 --dump-config 核对来源；不自动替代模型。
+    不声明 verifier、结构化 widget 或精确用量。
+  - 独立视觉复用公共模型绑定，模型来源 patch 后最后加载 visual-readonly-patch.yaml。
+    视觉会话固定 read-only/never，仅保留读取工具；逐图成功 read_image 后才采信最后 final。
+    2026-11-06 桌面 0.2.2-rc.1 已验证默认 deepseek-flash 图像路由；开发调用仍用全权限 patch。
+  - Maison 不安装 DSH，不改用户 profile/home patch/.env，不复制 GUI 凭据。
+  - Windows / npm 版 dsh 0.2.1-rc.2 已通过隔离接口探针（stdin/cwd/环境凭据及权限覆盖）。
+    Windows 优先使用 PATH，未命中时通过官方安装记录发现桌面 CLI；均未找到时提示菜单注册。
+    Goal 运行期间不要更新或卸载桌面版。
+    桌面版 0.2.1-rc.2 已实测 PATH/官方安装记录解析及 guardian stdin/cwd/权限正常路径；
+    2026-10-20 review 已验证移除环境 key、使用真实 DSH_HOME 保存凭据的生产调用成功；见 runbook。
+    headless-patch.yaml 是发布件内只读配置，同时启用 DSH 自身存储认证，不生成临时 patch；
+    同一 DSH_HOME 内须有 headless 实际模型路由的凭据，保存值优先于环境和 .env。
+    新会话的 sandbox/approval 已由 DSH 会话记录确认。真实需求验收状态见 runbook。

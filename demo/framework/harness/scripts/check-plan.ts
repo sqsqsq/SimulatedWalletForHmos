@@ -1,3 +1,5 @@
+import { executeCheck } from './utils/check-execution';
+import { resolveImplementationScope } from './utils/diff-scope';
 // ============================================================================
 // Plan 阶段脚本 Harness — check-plan.ts
 // ============================================================================
@@ -27,7 +29,7 @@ import {
 } from './utils/types';
 import { SpecLoader } from './utils/spec-loader';
 import {
-  findUnauthorizedContractFileReferences,
+  findUnplannedContractFileReferences,
   resolveContractFileReferences,
 } from './utils/contract-reference-closure';
 import {
@@ -39,7 +41,7 @@ import {
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { checkFactsArtifact } from './utils/context-facts';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
-import { checkTypedConstructionContent, designScopeRevisionChecks } from './utils/blueprint-skill-projection';
+import { checkTypedConstructionContent, designScopeRevisionChecks, deriveBlueprintSkillInput, designWriteSetExpansion } from './utils/blueprint-skill-projection';
 import * as path from 'path';
 import { architectureImpactIssues, checkChangeUnitFeatureProjection, loadChangeUnitBlueprintScope } from './utils/change-unit-feature-projection';
 import { asRecord, asRecords } from './utils/component-blueprint-model';
@@ -265,7 +267,7 @@ function checkIntegrationScopeConsistency(ctx: CheckContext, design: string): Ch
     }];
   }
   const { scope } = parseScope(design);
-  const inScope = scope?.in_scope_modules ?? [];
+  const inScope = scope?.in_scope_modules ?? (ctx.featureSpec.contracts?.modules ?? []).map(module => module.name);
   const contracts = ctx.featureSpec.contracts;
   const violations = evaluateIntegrationScopeConsistency({
     points,
@@ -358,26 +360,26 @@ function checkScopeConsistencyWithPrd(
     }];
   }
 
-  const { unauthorizedExpansions, touchingForbidden } = findScopeViolations(
-    prdParse.scope!,
-    designParse.scope!,
-  );
+  const original = resolveImplementationScope(ctx.projectRoot, ctx.feature, ctx.featureSpec.contracts?.modules, process.env.MAISON_GOAL_RUN_ID?.trim()).explicit;
+  const { unauthorizedExpansions, touchingForbidden } = original
+    ? findScopeViolations(original, { ...designParse.scope!, expansions_with_user_approval: [] })
+    : { unauthorizedExpansions: [], touchingForbidden: [] };
 
   if (unauthorizedExpansions.length === 0 && touchingForbidden.length === 0) {
     return [{
       id: 'scope_consistency_with_spec', category: 'traceability',
       description: ruleDesc(ctx, 'structure_checks', 'scope_consistency_with_spec'),
       severity: 'BLOCKER', status: 'PASS',
-      details: `plan.in_scope_modules ⊆ spec scope（含批准扩展），共 ${designParse.scope!.in_scope_modules.length} 个模块。`,
+      details: `已对照原请求明确范围（spec 模块预测不作许可），共 ${designParse.scope!.in_scope_modules.length} 个模块。`,
     }];
   }
 
   const messages: string[] = [];
   if (unauthorizedExpansions.length > 0) {
-    messages.push(`未经用户批准就扩大到 spec 之外的模块：${unauthorizedExpansions.join('、')}`);
+    messages.push(`超出原请求明确限定的模块：${unauthorizedExpansions.join('、')}`);
   }
   if (touchingForbidden.length > 0) {
-    messages.push(`触碰了 spec.out_of_scope_modules：${touchingForbidden.join('、')}`);
+    messages.push(`触碰了原请求明确排除模块：${touchingForbidden.join('、')}`);
   }
 
   return [{
@@ -386,7 +388,7 @@ function checkScopeConsistencyWithPrd(
     severity: 'BLOCKER', status: 'FAIL',
     details: messages.join('；'),
     suggestion:
-      '要么把相关模块从 plan.in_scope_modules 移除并改为就地实现，要么回到 plan 的 Step 2.5.3 发起 scope 扩展提议，用户同意后在 expansions_with_user_approval 中登记。',
+      '原请求明确边界不能由预测表或补签自授；先在原边界内解决，真实目标变化再按原确认流程处理。',
     affected_files: [
       relFeatureArtifact(ctx.projectRoot, ctx.feature, 'spec.md'),
       relFeatureArtifact(ctx.projectRoot, ctx.feature, 'plan.md'),
@@ -541,7 +543,8 @@ export function resolveSectionApplicability(
   const contracts = ctx.featureSpec?.contracts as Record<string, unknown> | undefined;
   if (!contracts) return null; // 前提 1+2：真源不可信 → 落回原判定
   const shapeTainted = (ctx.featureSpec?.shape_issues ?? []).some(
-    issue => issue.includes('contracts.yaml') && issue.includes(`\`${collection}`),
+    issue => issue.includes('contracts.yaml') && (issue.includes(`\`${collection}`)
+      || new RegExp(`\\$\\.${collection}(?=\\[|\\.|:)`).test(issue)),
   );
   if (shapeTainted) return null; // 前提 3
 
@@ -984,7 +987,7 @@ export function checkChangeUnitBoundPlanScope(ctx: CheckContext, design: string)
     id, category, description: ruleDesc(ctx, category === 'traceability' ? 'traceability_checks' : 'structure_checks', id), severity: 'BLOCKER',
     status: failures.length ? 'FAIL' : 'PASS',
     details: `${failures.length ? failures.join('；') : pass}（来源=蓝图）`,
-    ...(failures.length ? { suggestion: 'CU-bound plan 不再判定范围与架构影响：回 /component-design 做蓝图 revision；DSL 改写走 framework-init 获准路径（init 预设 / 手工编辑 config 后重跑 UPDATE），plan 不是 DSL writer。' } : {}),
+    ...(failures.length ? { suggestion: '真实设计/架构缺口交设计 owner 沿原正式修订通道处理；plan 不自行改 DSL。预测清单变化无需补许可。' } : {}),
   });
   let projection: NonNullable<ReturnType<typeof loadChangeUnitBlueprintScope>>;
   try {
@@ -996,13 +999,7 @@ export function checkChangeUnitBoundPlanScope(ctx: CheckContext, design: string)
   const { scope, error } = parseScope(design);
   const scopeFailures: string[] = [];
   if (!scope) scopeFailures.push(error ? describeScopeError(error) : 'Scope 声明无法解析');
-  else {
-    const inScope = new Set(scope.in_scope_modules);
-    if (inScope.size !== projection.modifiable.length || projection.modifiable.some(name => !inScope.has(name))) {
-      scopeFailures.push(`in_scope_modules [${[...inScope].join(', ')}] 必须集合等于蓝图可修改模块 [${projection.modifiable.join(', ')}]`);
-    }
-    if ((scope.expansions_with_user_approval ?? []).length > 0) scopeFailures.push('CU-bound 不适用 plan.scope_expansion，expansions_with_user_approval 必须为空；范围扩大走蓝图 revision');
-  }
+  // 旧扩展登记仅作兼容读取，既不授予权限，也不因预测变化阻断。
   const decisions = asRecords(asRecord(projection.blueprint.decisions_and_gaps)?.decisions).filter(d => d.kind === 'architecture_impact');
   const expected = decisions.map(d => String(d.decision_id)).sort();
   const impactFailures: string[] = [];
@@ -1019,7 +1016,7 @@ export function checkChangeUnitBoundPlanScope(ctx: CheckContext, design: string)
   const architecture = architectureImpactIssues(ctx.projectRoot, projection.blueprint, projection.modifiable,
     projection.changeUnit.design_refs.filter(ref => ref.target.kind === 'decision').map(ref => ref.target.id));
   return [
-    result('scope_declaration', 'structure', scopeFailures, `in_scope_modules = 蓝图可修改模块 [${projection.modifiable.join(', ')}]`),
+    result('scope_declaration', 'structure', scopeFailures, `蓝图预测模块 [${projection.modifiable.join(', ')}]；计划模块不作许可`),
     result('architecture_impact_declared', 'structure', impactFailures, `架构影响段 = 蓝图决策投影 [${expected.join(', ') || 'none'}]`),
     result('plan_to_architecture', 'traceability', architecture.issues.map(item => item.message),
       `相关架构影响决策已裁决且与当前 DSL 一致${architecture.warnings.length ? `；待人工核对：${architecture.warnings.join('；')}` : ''}`),
@@ -1031,35 +1028,6 @@ export function checkChangeUnitBoundPlanScope(ctx: CheckContext, design: string)
 // Main Checker
 // --------------------------------------------------------------------------
 
-function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
-  try {
-    // t1d（plan e6a3c9f4）：编排边界附加产出来源，供报告/summary 定位真实产出方。
-    return fn().map(r => (r.source ? r : { ...r, source: checkId }));
-  } catch (err) {
-    const e = err as Error;
-    const isProgrammerError =
-      e instanceof TypeError || e instanceof RangeError || e instanceof SyntaxError;
-    return [{
-      id: checkId, category: 'structure',
-      description: `${checkId} 执行异常`,
-      severity: isProgrammerError ? 'BLOCKER' : 'MINOR',
-      status: isProgrammerError ? 'FAIL' : 'SKIP',
-      details: isProgrammerError
-        ? `[Harness 内部错误] ${e.message}\n${e.stack ?? ''}`
-        : `检查执行时发生错误：${e.message}`,
-      // P0-3（plan d9b4f7e2）：程序员错误=框架缺陷，结构化归因 framework_bug——goal-runner
-      // 据此首触 halt 指向回灌源仓，不再让 agent 把门禁崩溃当自身产物问题反复修。
-      ...(isProgrammerError
-        ? {
-            failure_kind: 'framework_bug',
-            blocking_class: 'framework_internal',
-            suggestion:
-              '门禁脚本自身异常（framework 缺陷，非本 feature 产物问题）——请把完整栈回灌 agent-maison 源仓修复；不要修改产物或 framework 发布件来绕过。',
-          }
-        : {}),
-    }];
-  }
-}
 
 const CONSTRAINT_CATEGORIES = new Set(['security', 'performance', 'dfx', 'nfr', 'privacy', 'compatibility']);
 
@@ -1174,40 +1142,10 @@ export function checkContractFileReferenceClosure(ctx: CheckContext): CheckResul
     }];
   }
 
-  const violations = findUnauthorizedContractFileReferences(closure);
-  if (violations.length === 0) {
-    return [{
-      id: 'contract_file_reference_closure',
-      category: 'traceability',
-      description: ruleDesc(ctx, 'traceability_checks', 'contract_file_reference_closure'),
-      severity: 'BLOCKER',
-      status: 'PASS',
-      details: `contracts.yaml 的 ${closure.references.length} 个文件引用均已由 contracts.files 授权。`,
-    }];
-  }
-
-  const shown = violations.slice(0, CONTRACT_REFERENCE_DIAGNOSTIC_LIMIT);
-  const omitted = violations.length - shown.length;
-  return [{
-    id: 'contract_file_reference_closure',
-    category: 'traceability',
-    description: ruleDesc(ctx, 'traceability_checks', 'contract_file_reference_closure'),
-    severity: 'BLOCKER',
-    status: 'FAIL',
-    details: [
-      `${violations.length} 个文件引用未列入 contracts.files（唯一授权集合）：`,
-      ...shown.map(violation => {
-        const sources = violation.sources
-          .slice(0, 3)
-          .map(source => `${source.source} [${source.kind}]`)
-          .join('；');
-        return `- ${violation.path} ← ${sources}`;
-      }),
-      ...(omitted > 0 ? [`- …另有 ${omitted} 个路径未展示`] : []),
-    ].join('\n'),
-    affected_files: [contractsRel],
-    suggestion: '回到 plan，将确需交付的路径加入 contracts.files，重新生成/关闭 contracts，再重跑 plan closure；现有文件、字节相同或其他字段均不构成授权。',
-  }];
+  const unplanned = findUnplannedContractFileReferences(closure);
+  return [{ id: 'contract_file_reference_closure', category: 'traceability',
+    description: ruleDesc(ctx, 'traceability_checks', 'contract_file_reference_closure'), severity: 'BLOCKER', status: 'PASS',
+    details: `已解析 ${closure.references.length} 个安全的工程内文件引用；${unplanned.length} 个未列入实施预测，引用不构成写授权。实际存在性/公共契约由相应阶段核验。` }];
 }
 
 const checker: PhaseChecker = {
@@ -1215,7 +1153,7 @@ const checker: PhaseChecker = {
 
   async check(ctx: CheckContext): Promise<CheckResult[]> {
     if (ctx.resolvedInputs && !ctx.resolvedInputs.context.required_outputs.some(name => path.basename(name) === 'plan.md')) {
-      const results = [...checkTypedConstructionContent(ctx), ...checkContractFileReferenceClosure(ctx), ...checkChangeUnitFeatureProjection(ctx, 'plan'), ...checkSpecConstraintTraceability(ctx, ''),
+      const results = [...checkTypedConstructionContent(ctx), ...checkContractFileReferenceClosure(ctx), ...checkChangeUnitFeatureProjection(ctx, 'plan'), ...checkSpecConstraintTraceability(ctx, ''), ...checkIntegrationScopeConsistency(ctx, ''),
         ...runAcceptanceYamlStructureChecks(ctx, (_c, _s, id) => id),
         ...checkFactsArtifact(ctx.projectRoot, ctx.feature, 'plan', { factsContext: ctx.factsContext, resolvedInputs: ctx.resolvedInputs, phaseRule: ctx.phaseRule, profileName: ctx.resolvedProfile.name, frameworkRoot: ctx.frameworkRoot })];
       if (ctx.resolvedInputs.context.required_outputs.some(name => path.basename(name) === 'visual-parity.yaml')) results.push(...dispatchPlanVisualParity(ctx));
@@ -1238,26 +1176,26 @@ const checker: PhaseChecker = {
       ...featureArtifactLayoutWarnings(ctx.projectRoot, ctx.feature, ['spec.md', 'plan.md']),
     ];
 
-    results.push(...safeRun(() => checkContractFileReferenceClosure(ctx), 'contract_file_reference_closure'));
-    results.push(...safeRun(() => checkRequiredChapters(ctx, design), 'required_chapters'));
-    const cuBoundScope = ctx.feature.startsWith('cu-') ? safeRun(() => checkChangeUnitBoundPlanScope(ctx, design) ?? [], 'scope_declaration') : null;
+    results.push(...executeCheck(ctx, () => checkContractFileReferenceClosure(ctx), 'contract_file_reference_closure'));
+    results.push(...executeCheck(ctx, () => checkRequiredChapters(ctx, design), 'required_chapters'));
+    const cuBoundScope = ctx.feature.startsWith('cu-') ? executeCheck(ctx, () => checkChangeUnitBoundPlanScope(ctx, design) ?? [], 'scope_declaration') : null;
     if (cuBoundScope) results.push(...cuBoundScope.filter(item => item.id !== 'plan_to_architecture'));
-    else results.push(...safeRun(() => checkScopeDeclaration(ctx, design), 'scope_declaration'));
-    results.push(...safeRun(() => checkScopeConsistencyWithPrd(ctx, design, prd), 'scope_consistency_with_spec'));
+    else results.push(...executeCheck(ctx, () => checkScopeDeclaration(ctx, design), 'scope_declaration'));
+    results.push(...executeCheck(ctx, () => checkScopeConsistencyWithPrd(ctx, design, prd), 'scope_consistency_with_spec'));
     // visual-capability-truth S6（P1-F）：集成契约 vs scope 一致性（机器真源=integration_points）
-    results.push(...safeRun(() => checkIntegrationScopeConsistency(ctx, design), 'integration_scope_consistency'));
-    if (!cuBoundScope) results.push(...safeRun(() => checkArchitectureImpactDeclared(ctx, design), 'architecture_impact_declared'));
-    results.push(...safeRun(() => checkArchitectureDiagram(ctx, design), 'architecture_diagram'));
-    results.push(...safeRun(() => checkModuleChangeTable(ctx, design), 'module_change_table'));
-    results.push(...safeRun(() => checkFileStructurePerModule(ctx, design), 'file_structure_per_module'));
-    results.push(...safeRun(() => checkDataModelTyped(ctx, design), 'data_model_typed'));
-    results.push(...safeRun(() => checkInterfaceSignaturesComplete(ctx, design), 'interface_signatures_complete'));
-    results.push(...safeRun(() => checkComponentTreePerPage(ctx, design), 'component_tree_per_page'));
-    results.push(...safeRun(() => checkPrdMappingTable(ctx, design), 'spec_mapping_table'));
-    results.push(...safeRun(() => checkStateManagementTable(ctx, design), 'state_management_table'));
-    results.push(...safeRun(() => checkRouteDesignTable(ctx, design), 'route_design_table'));
-    results.push(...safeRun(() => checkMetadataHeader(ctx, design), 'metadata_header'));
-    results.push(...safeRun(() => checkChangeUnitFeatureProjection(ctx, 'plan'), 'change_unit_feature_projection'));
+    results.push(...executeCheck(ctx, () => checkIntegrationScopeConsistency(ctx, design), 'integration_scope_consistency'));
+    if (!cuBoundScope) results.push(...executeCheck(ctx, () => checkArchitectureImpactDeclared(ctx, design), 'architecture_impact_declared'));
+    results.push(...executeCheck(ctx, () => checkArchitectureDiagram(ctx, design), 'architecture_diagram'));
+    results.push(...executeCheck(ctx, () => checkModuleChangeTable(ctx, design), 'module_change_table'));
+    results.push(...executeCheck(ctx, () => checkFileStructurePerModule(ctx, design), 'file_structure_per_module'));
+    results.push(...executeCheck(ctx, () => checkDataModelTyped(ctx, design), 'data_model_typed'));
+    results.push(...executeCheck(ctx, () => checkInterfaceSignaturesComplete(ctx, design), 'interface_signatures_complete'));
+    results.push(...executeCheck(ctx, () => checkComponentTreePerPage(ctx, design), 'component_tree_per_page'));
+    results.push(...executeCheck(ctx, () => checkPrdMappingTable(ctx, design), 'spec_mapping_table'));
+    results.push(...executeCheck(ctx, () => checkStateManagementTable(ctx, design), 'state_management_table'));
+    results.push(...executeCheck(ctx, () => checkRouteDesignTable(ctx, design), 'route_design_table'));
+    results.push(...executeCheck(ctx, () => checkMetadataHeader(ctx, design), 'metadata_header'));
+    results.push(...executeCheck(ctx, () => checkChangeUnitFeatureProjection(ctx, 'plan'), 'change_unit_feature_projection'));
 
     if (isPlanVisualParitySkipped(ctx.resolvedProfile)) {
       results.push({
@@ -1269,7 +1207,7 @@ const checker: PhaseChecker = {
         details: `project_profile=${ctx.resolvedProfile.name} 未启用 plan.visual_parity`,
       });
     } else {
-      results.push(...safeRun(() => dispatchPlanVisualParity(ctx), 'visual_parity_coverage'));
+      results.push(...executeCheck(ctx, () => dispatchPlanVisualParity(ctx), 'visual_parity_coverage'));
     }
 
     results.push(
@@ -1278,14 +1216,14 @@ const checker: PhaseChecker = {
       ),
     );
 
-    results.push(...safeRun(() => checkPrdCoverage(ctx, design, prd, 'P0', 'spec_p0_coverage'), 'spec_p0_coverage'));
-    results.push(...safeRun(() => checkPrdCoverage(ctx, design, prd, 'P1', 'spec_p1_coverage'), 'spec_p1_coverage'));
-    results.push(...safeRun(() => checkMappingToFile(ctx, design), 'mapping_to_file'));
-    results.push(...safeRun(() => checkSpecConstraintTraceability(ctx, design), 'spec_constraint_traceability'));
+    results.push(...executeCheck(ctx, () => checkPrdCoverage(ctx, design, prd, 'P0', 'spec_p0_coverage'), 'spec_p0_coverage'));
+    results.push(...executeCheck(ctx, () => checkPrdCoverage(ctx, design, prd, 'P1', 'spec_p1_coverage'), 'spec_p1_coverage'));
+    results.push(...executeCheck(ctx, () => checkMappingToFile(ctx, design), 'mapping_to_file'));
+    results.push(...executeCheck(ctx, () => checkSpecConstraintTraceability(ctx, design), 'spec_constraint_traceability'));
     if (cuBoundScope) results.push(...cuBoundScope.filter(item => item.id === 'plan_to_architecture'));
-    else results.push(...safeRun(() => checkDesignToArchitecture(ctx, design), 'plan_to_architecture'));
+    else results.push(...executeCheck(ctx, () => checkDesignToArchitecture(ctx, design), 'plan_to_architecture'));
     results.push(
-      ...safeRun(
+      ...executeCheck(ctx,
         () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'plan', {
           factsContext: ctx.factsContext,
           resolvedInputs: ctx.resolvedInputs,

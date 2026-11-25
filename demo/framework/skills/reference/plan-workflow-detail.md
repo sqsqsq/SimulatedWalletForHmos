@@ -1,5 +1,7 @@
 # plan 阶段详细流程（条件加载：执行对应 Step 时读）
 
+正式交付按已有 ut_layer、device_focus、use-cases 和 plan 说明两层各证明什么；both 不是要求 UT 模拟 ArkUI 或重复全条设备流程。定义与可测性不一致先回原责任方裁定，不由 UT 修改 acceptance、减少 required 义务或新建业务抽象。 设计阶段同时明确真实业务入口与最小必要隔离边界，不能先把全部 UI 行为标 both，再让下游为单测改造整套 UI。
+
 > SSOT 索引见 [`skills/feature/plan/SKILL.md`](../feature/plan/SKILL.md)。本文承载核心架构认知、Scope 扩展提议全流程、UseCase 复杂度判定与 schema、contracts.yaml 提取字段表、架构影响判定五分支的完整机制；触发/门禁清单/闭环判定仍以主文档为准。
 
 ## 核心架构认知
@@ -8,56 +10,23 @@
 
 **功能拆分核心任务**（非 CU-bound）：把 spec 功能点分配到 catalog/architecture 已声明的模块，跨模块依赖不超过 `can_depend_on`；页面/UI→业务模块 presentation；应用壳→壳模块；细分子域→独立业务模块；横切能力→catalog 权威模块；通用 UI/工具→公共模块或 sublayer；无需求不新增模块。
 
-**CU-bound**：模块归属已由蓝图 development 节点 `module` 裁决，plan 不重新分配模块，只在这些模块内按上述五条规则做文件、符号与内层级落点。
+**CU-bound**：模块归属已由蓝图 development 节点 `module` 裁决，这些节点表示预计影响；必要实现调整按真实边界和现行架构核对，不为补预测清单重复回签。
 
-## Scope 继承与扩展提议（Scope 守门机制核心，在任何模块设计动作前完成）
+## Scope 预测与真实边界
 
-**继承**：读 spec.md「Scope 声明」yaml 块，plan.md 显式复述 `in_scope_modules`/`out_of_scope_modules`/`rationale`。从此刻起本次设计原则上只能规划修改 `in_scope_modules` 列出的模块。
+in_scope_modules/out_of_scope_modules/files 记录预计实施范围，不是逐项许可；原始请求明确限制不能被模型预测覆盖。计划保留行为、验收、公共接口和有效架构，允许下游调整必要的私有组织与位置。
 
-**最小改动原则**：就地实现优先（禁止出于"架构美感"把代码提前上提到更高外层或未授权的公共模块）；已有公共能力强制复用（先查 `architecture.md > 各模块公共能力清单`，有则直接用不新增）；禁止默默扩大（哪怕判断合理也不能直接写入 plan.md，必须走扩展提议）。
-
-**扩展提议流程**（唯一合法扩大路径）：仅当 in_scope 模块物理上无法承载（跨层依赖不允许）或公共能力清单确无可复用能力且多 Feature 需要时，才允许提议：
-
-```markdown
-## ⚠️ Scope 扩展提议（需用户确认）
-
-**spec 已声明**：in_scope_modules / out_of_scope_modules / rationale
-
-**当前分析发现**需要扩展到：建议新增 in_scope：`{ModuleName}`；原因；备选方案（是否考虑过就地实现）；复用检查（已查阅公共能力清单，确认无可复用）
-
-**请用户明确回复**（`plan.scope_expansion`）：
-1. 已读并同意扩展（记录用户原话到 expansions_with_user_approval）
-2. 拒绝扩展
-3. 修改提议后再议
-```
-
-**headless/goal-mode**：无交互用户 → 保守默认 = 拒绝扩展（不写入 `expansions_with_user_approval`），记录被推迟请求到 `headless-assumptions.md`，必要时 goal-run DEFERRED。
-
-用户同意后登记：
-
-```yaml
-expansions_with_user_approval:
-  - modules: [<ModuleA>, <ModuleB>]
-    reason: "<业务理由>"
-    approved_by: "{user_name}"
-    approved_at: "2026-04-17"
-```
-
-未同意的提议**不得**写入 plan.md，退回就地实现。本 Step 结束时 `in_scope_modules`（= spec 继承 ∪ 已批准扩展）冻结，后续所有 Step 的模块选择必须在此集合内。
-
-### CU-bound（`cu-` Feature，正式需求）：Scope 只投影蓝图
-
-- **投影来源**：可修改模块集合只由 CU `touches[].design_ref` 经既有 addressing resolver 解析到 development 节点、取 `module` 去重派生；`design_refs` 只是设计依赖闭包，引用共享模块但不修改它的 CU 不得把它带进来。蓝图 revision 变化后旧派生 stale，不用旧 PASS。
-- **plan.md 叙述路径**：`in_scope_modules` 必须集合等于可修改集合，`expansions_with_user_approval` 必须为空；`plan.scope_expansion` 不适用（无 plan 内扩展出口），范围扩大回 [`/component-design`](../project/component-design/SKILL.md) 做蓝图 revision。沿用 `scope_declaration` 同 id 核对，details 注明「来源=蓝图」。
-- **`cu_scope_matches_blueprint`**（BLOCKER）：`contracts.modules[].name` ⊆ 可修改集合；越出或无法派生（节点缺 `module`、引用不可解析）即 FAIL 并指回 `/component-design`。它位于共享投影校验 `validateChangeUnitFeatureProjection`，typed plan、蓝图直接投影进 coding（不执行 plan）、completion、ready-set、closure 同一判据。`contracts.files` 仍是唯一精确写集授权，模块集合不替代它。
+超出预计模块但仍在原需求内的必要改动，在既有 review 显著披露必要性、影响与回归依据；无需登记 expansions_with_user_approval。真实目标/验收变化仍确认；已获完整交付全权的原需求内设计或架构变化，由原 owner 经正式修订、独立质询、发布和重绑接续；attended 需本次 --authorize-autonomy，detached 保留既有授权来源。未授权会话沿原确认点，plan/coding 不自行改 DSL 自授。
 
 ## UseCase 复杂度判定与 use-cases.yaml（条件式产出）
+
+**已有蓝图用例优先交付**：当前 CU 合法 typed 投影含 use-cases@1 时，plan 必须写 use-cases.yaml，先使用规范化设计内容，仅按原权威对齐规则补未声明项；原文件存在时仍必交。required_outputs 同时判定投影与物理文件，不能因为交接未提前物化就省略。业务 UT 消费真实文件，不能用 UT 总体 PASS 掩盖缺输入；无投影且无原文件才继续下方条件式判定。
 
 > `UseCase` 是**文档级业务规约**，不是代码中必须存在的类；真正的业务编排代码由 coding 阶段选择最贴合复杂度的形式落地。
 
 **仅当至少满足下列一条**才产出 `use-cases.yaml`：①多 UI 节点共享状态（≥2 页面/组件订阅同一业务状态且互相渲染依赖）；②多步云侧调用（一个动作触发 ≥2 次独立请求且顺序受前一次结果影响）；③存在回滚/补偿分支；④多路人机交互（≥2 次真实用户输入）。全部不满足则**不产出**，business-ut 走退化模式基于 `acceptance.yaml`+`dag.yaml` 直接对 data 层写 UT。
 
-**P2 CU-bound 覆盖规则**：存在 `contracts.change_unit` 时不使用作者自选阈值。use-case 义务由至少两个有序步骤、失败/重试/恢复/补偿、同状态多消费者或生命周期/后台/定时/外部恢复事实机械派生；DAG 再结合 `acceptance.ut_layer=unit|both` 与跨步骤/分支/多消费者事实派生。简单只读/首次加载、单步、无分支、无共享消费者且无生命周期恢复时不得伪造 mutation/subscription 或多余流产物。
+**P2 CU-bound 覆盖规则**：绑定 canonical CU 时不使用作者自选阈值，也不以尚未生成 contracts.change_unit 作为免责条件。use-case 义务由至少两个有序步骤、失败/重试/恢复/补偿、同状态多消费者或生命周期/后台/定时/外部恢复事实机械派生；DAG 再结合 `acceptance.ut_layer=unit|both` 与跨步骤/分支/多消费者事实派生。简单只读/首次加载、单步、无分支、无共享消费者且无生命周期恢复时不得伪造 mutation/subscription 或多余流产物。
 
 **若决定产出**，两份文档：
 
@@ -67,6 +36,8 @@ expansions_with_user_approval:
 **禁止的反模式**：要求"必须在 `domain/usecase/` 下新建 XxxUseCase 类"（代码形态由 coding 决定）；为 data 层类套 `XxxPort` 接口只为 UT 注入方便；把路由/弹窗/Toast 等 UI 副作用登记为 `data_boundaries`（应走 `ui_subscription` + `acceptance.yaml > device_focus`，不进 UT）；对简单 feature 硬凑 use-cases.yaml。
 
 ## contracts.yaml 提取字段表
+
+CU-bound 从已有 typed 设计开始，保留模型、公共接口和运行设计；files 仅作实施预测；本阶段生成整个 change_unit：通过 canonical resolver 取得当前 ref，覆盖每个必需 predicate/provide/design-ref ID 的实现定位线索与真实测试/验证落点，不复制定义、不改写设计、不扩大授权。设计时省略映射不等于施工时豁免；未知 ID、错误 CU、实质设计冲突仍过完整检查；私有文件/符号位置变化按实际源码披露，已有合法 Feature 映射可按原证据复用。
 
 从 plan.md 提取到 `<features_dir>/{module-name}/contracts.yaml`：
 
@@ -79,13 +50,13 @@ expansions_with_user_approval:
 | `components` | 页面组件树+状态管理方案 | `name`/`module`/`file`/`kind`（page/component/utility）/`state`/`props`/`events`/`children` |
 | `change_unit` | canonical CU（仅 CU-bound Feature） | `change_unit_ref` + `predicate_mappings`/`provide_mappings`/`design_ref_mappings`；只映射既有 ID 到 project-relative `file[#symbol]` / test / verification 消费落点，不复制定义 |
 | `state_management` | 状态管理方案 | 运行时施工事实唯一权威；CU-bound 时以 `design_ref` 关联 P1 flow，并可含 owner/contract、ordered steps、conditional mutation/publication/subscription/consumer、lifecycle 与 recovery；禁止平行 `runtime_flow_slices` |
-| `navigation` | 路由/导航设计 | 3.0 canonical **只有** `config_files[]`（导航注册/配置文件清单，如 `main_pages.json` / `route_map.json`），逐项列入 `files`；其它承载文件路径的 navigation 键（含嵌套 `pages[]`/`routes[]` 形态、`registration_points`）一律判 `unconsumed_file_field` BLOCKER |
-| `files` | 目录/文件结构规划 | **唯一文件授权集合**；下列一切文件引用都必须以规范化路径列入此处 |
+| `navigation` | 路由/导航设计 | 3.0 canonical **只有** `config_files[]`（导航注册/配置文件清单，如 `main_pages.json` / `route_map.json`），作为定位线索，无需预填也不构成逐文件许可；其它承载文件路径的 navigation 键（含嵌套 `pages[]`/`routes[]` 形态、`registration_points`）一律判 `unconsumed_file_field` BLOCKER |
+| `files` | 目录/文件结构规划 | 预计实现位置；可不穷举，实际改动进入检查和审查，不能用清单封顶 |
 | `conventions_applied`（可选） | plan 条件节「遵循的既有惯例」 | `id` + 非空 `planned_locations[]`；location 仅允许项目相对 POSIX 文件/目录前缀，禁 glob/绝对路径/`..`/反斜杠；有所引蓝图时须覆盖其适用且命中本 CU scope 的惯例 |
-| `resource_keys` | 宿主资源引用 | **媒体资源 `path` / `media` 必须指向模块实际资源目录**（如 `<module>/src/main/resources/base/media/<key>.<ext>`），且逐项列入 `files`；不得写工程根相对路径——visual-parity 素材门禁以模块资源目录真实文件判定，曾发生 1×1 占位借工程根路径假 PASS |
-| `prd_to_code_traceability` | spec 功能映射表 | `key_files[]` 逐项列入 `files` |
+| `resource_keys` | 宿主资源引用 | 仅使用已有资源时用 `value: app.media.<key>`，来源保留在 spec/asset-manifest，不声明待交付文件；新建或修改的**媒体资源 `path` / `media` 必须指向模块实际资源目录**（如 `<module>/src/main/resources/base/media/<key>.<ext>`），可列入预测 `files`；不得写工程根相对路径——visual-parity 素材门禁以模块资源目录真实文件判定，曾发生 1×1 占位借工程根路径假 PASS |
+| `prd_to_code_traceability` | spec 功能映射表 | `key_files[]` 作为定位线索，实际行为覆盖由 review/UT/testing 验证 |
 
-**文件引用闭包（BLOCKER）**：模板见 [contracts-template.yaml](../feature/plan/contracts-template.yaml)。`data_models[].file`、`interfaces[].file`、`components[].file`、`prd_to_code_traceability[].key_files[]`、`resource_keys.*.*[].path/media`、`navigation.config_files[]`，以及 module 的 `har_index`/`builder`/export 文件，全部必须满足 `引用 ⊆ contracts.files`。现有物理文件、与 spec asset 字节相同或出现在其他字段都不能自动授权。门禁失败时只回 plan：把确需交付的路径加入 `contracts.files`，重新生成/关闭 contracts，再重跑 plan harness。闭包只裁决路径安全/规范化与授权——**允许**声明 coding 将新建的文件（已授权但未建 → plan PASS、coding `file_completeness` FAIL）。
+**文件引用**：沿同一 resolver 检查安全的工程相对路径；引用不必属于预测 files，读引用不授予写权。物理存在不证明实现完成；实际来源、接口与路由由相应消费者核验，错误引用由责任方修正。
 
 **边界用例只读复核**：plan 可检查 `acceptance.yaml` 与 spec/plan 的边界场景是否一致，但不得创建或补写 spec-owned 文件。发现缺失、漏场景或矛盾时，让 `scope_consistency_with_spec` 以机器事实失败并生成 spec repair candidate；runner 回退 spec 修改后，再重走 plan 及下游。
 
@@ -110,7 +81,7 @@ architecture_impact:
 | `module_set_change` | 模块集合变化 | 新增/下线模块、模块迁外层 |
 | `responsibility_rewrite` | 模块核心职责大调整 | catalog `primary_responsibility` 被大幅重写 |
 
-> **判定原则**：从严判 `none`。不确定就按 `impact != none` 处理并停下确认。
+> **判定原则**：从严判 `none`。不确定就按 `impact != none` 处理；能由当前目标裁决的不确定按目标裁决并留痕，目标本身冲突或缺失且无法裁决时才停下确认（见 [agent-behavioral-principles.md「权威判定」](agent-behavioral-principles.md#权威判定)）。
 
 - **`none`**：`affected_items`等全部 `[]`；不修改 architecture.md/catalog/config；不追加变更记录；跳到 Step 13。
 - **`dsl_change`**：plan 不是 DSL writer。DSL 改写走 framework-init 既有获准路径（`init.architecture_preset` 预设，或[手工编辑 config 后本地校验并重跑 UPDATE](../project/framework-init/templates/custom-architecture-questionnaire.md)），落盘后过 `validateArchitectureDsl`；需要刷新物化产物时再跑 UPDATE。plan 只同步 [doc/architecture.md](../../../doc/architecture.md) 对应小节；末尾「架构级变更记录」追加一行 `| YYYY-MM-DD | dsl_change | <具体变化> |`；回填 `architecture_md_updates`。
@@ -132,6 +103,8 @@ architecture_impact:
 
 ## 组件选型施工投影（index 文件存在时）
 
-字段与判据只读 [组件资产 SSOT](../../docs/concepts/component-assets.md)。Context Facts 必读 index/catalog、CU design_refs 指向的蓝图选型 decision、候选定义及 live 调用点。页面/UI components 的 asset_selection 为单值对象，严格展开蓝图 resolution/component_ref/rationale，bindings 才是本地施工信息；用既有 design_ref_mappings 的 implementation_refs 定位 file#name。多组件沿 children 拆条目，不再自行裁决或造 decision_ref。工具类 kind 豁免，无 index 时不新增本节产物要求。
+字段与判据只读 [组件资产 SSOT](../../docs/concepts/component-assets.md)。Context Facts 必读 index/catalog、CU design_refs 指向的蓝图选型 decision、候选定义及 live 调用点。页面/UI 的 asset_selection 和 design_ref_mappings 由同一权威投影：目标明确且决定唯一时缺失项自动派生，plan 不必重复手填；实质冲突仍须责任方修正。rationale 保留上游施工契约的组件说明，缺失时沿决定理由；bindings 为本地施工信息，implementation_refs 定位 file#name。多组件沿 children 拆条目，不自行裁决或造 decision_ref。工具类 kind 豁免，无 index 时不新增本节产物要求。
 
-依赖使用 components[].module→index.module 经现有 DSL helper 实时预检。evolve provider 须在 in_scope_modules；换选返回蓝图重签，下沉须写进 plan 范围。normal 与 goal 权责一致：goal 换选自动、下沉经 auto-replan、新边停放 await-confirm 等用户批后 resume，不能以自改 DSL 或重写需求绕过。
+依赖使用 components[].module→index.module 经现有 DSL helper 实时预检。evolve provider 的实际修改须披露，并核实公共契约和现行 DSL；换选返回蓝图重签，下沉须写进 plan 范围。normal 与 goal 均回设计方重签：无人值守原需求内的新边由设计 owner 自动裁决、经配置 writer 落盘后继续；有人在场保留确认，plan 不自改 DSL 或重写需求。
+
+无人值守完整交付时，原需求内的蓝图/CU与必要架构变更由 runner 交设计 owner 静默修订、隔离质询、检查、发布和重绑后继续；不需要个人 B1 开关，不由 plan/coding 或外层主 Agent 就地自授。有人在场沿原授权处理，已有完整交付授权不重复确认。改变原需求或实质验收、真实秘密/不可逆外部动作、突破用户总预算或明确禁止仍须用户决定。

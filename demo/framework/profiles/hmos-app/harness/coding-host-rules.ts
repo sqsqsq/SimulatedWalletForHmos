@@ -1,3 +1,4 @@
+import { implementationFiles, projectImplementationModules } from '../../../harness/scripts/utils/diff-scope';
 // hmos-app / ArkTS 宿主：coding 阶段结构/追溯中与工具链绑定的规则（根 check-coding 仅编排）。
 
 import * as fs from 'fs';
@@ -5,9 +6,9 @@ import * as path from 'path';
 import type { CheckContext, CheckResult, ContractsSpec } from '../../../harness/scripts/utils/types';
 import { CHECK_NOT_APPLICABLE_MARKER } from '../../../harness/scripts/utils/types';
 import { AstAnalyzer, type FileAnalysis } from '../../../harness/scripts/utils/ast-analyzer';
-import { diffChangedFiles } from '../../../harness/scripts/utils/git-diff';
-import type { ProfileCodingHost } from '../../../harness/profile-host-loader';
-import { loadFrameworkConfig } from '../../../harness/config';
+import { diffChangedFiles, diffChangedFilesWithStatus, resolveEffectiveDiffBaseline, readFileAtRef } from '../../../harness/scripts/utils/git-diff';
+import type { ProfileCodingHost, ProjectCompileContext, ProjectCompileResult } from '../../../harness/profile-host-loader';
+import { loadFrameworkConfig, resolveFeatureArtifact } from '../../../harness/config';
 import {
   isCapabilitySkipped,
   isDepsInstallExecutable,
@@ -27,6 +28,7 @@ import {
   type ProductSelection,
 } from './product-selection';
 import {
+  parseJson5,
   isCrossModuleExportFileStem,
   isLibraryFormat,
   readOhPackageField,
@@ -35,6 +37,9 @@ import {
 
 import { runArkuiStaticRules } from './arkui-static-rules';
 import { blockerFail } from '../../../harness/scripts/utils/check-result-factory';
+import { classifyGeneratedSourceChange } from './generated-source-classifier';
+import { resolveDeviceTestProduct, resolveDeviceTestBuildMode } from './testing-build-conventions';
+import { TEST_REPORT_GENERATED_MARKER } from './test-report-writer';
 import {
   resolveContractFileReferences,
   selectContractReferencePaths,
@@ -72,21 +77,14 @@ function readFileIfExists(filePath: string): string | null {
   return fs.readFileSync(filePath, 'utf-8');
 }
 
-function parseJson5(content: string): unknown {
-  let stripped = content.replace(/^\s*\/\/.*$/gm, '');
-  stripped = stripped.replace(/([^"':])\s*\/\/.*$/gm, '$1');
-  stripped = stripped.replace(/\/\*[\s\S]*?\*\//g, '');
-  stripped = stripped.replace(/,(\s*[}\]])/g, '$1');
-  return JSON.parse(stripped);
-}
 
-function structureRuleDefined(ctx: CheckContext, id: string): boolean {
+function structureRuleDefined(ctx: Pick<CheckContext, 'phaseRule'>, id: string): boolean {
   const sc = ctx.phaseRule.structure_checks as Record<string, unknown> | undefined;
   return Boolean(sc && Object.prototype.hasOwnProperty.call(sc, id));
 }
 
 function ruleDesc(
-  ctx: CheckContext,
+  ctx: Pick<CheckContext, 'phaseRule'>,
   section: 'structure_checks' | 'semantic_checks' | 'traceability_checks',
   id: string,
 ): string {
@@ -139,6 +137,11 @@ function checkNoHardcodedStrings(ctx: CheckContext, analyses: FileAnalysis[]): C
 }
 
 function checkHarIndexExport(ctx: CheckContext): CheckResult[] {
+  return checkProjectExportEntries({ projectRoot: ctx.projectRoot, phaseRule: ctx.phaseRule,
+    resolvedProfile: ctx.resolvedProfile, modules: ctx.featureSpec.contracts?.modules ?? [] });
+}
+
+function checkProjectExportEntries(ctx: Pick<CheckContext, 'projectRoot' | 'phaseRule' | 'resolvedProfile'> & { modules: ContractsSpec['modules'] }): CheckResult[] {
   if (!structureRuleDefined(ctx, 'har_index_export')) {
     return [
       {
@@ -148,6 +151,7 @@ function checkHarIndexExport(ctx: CheckContext): CheckResult[] {
         severity: 'BLOCKER',
         status: 'SKIP',
         details: '当前合并后的 phase-rules 未声明 har_index_export，跳过。',
+        structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
       },
     ];
   }
@@ -167,8 +171,7 @@ function checkHarIndexExport(ctx: CheckContext): CheckResult[] {
     ];
   }
 
-  const contracts = ctx.featureSpec.contracts;
-  if (!contracts?.modules?.length) {
+  if (!ctx.modules.length) {
     return [
       {
         id: 'har_index_export',
@@ -181,7 +184,7 @@ function checkHarIndexExport(ctx: CheckContext): CheckResult[] {
     ];
   }
 
-  const libraryModules = contracts.modules.filter(m => isLibraryFormat(m.format));
+  const libraryModules = ctx.modules.filter(m => isLibraryFormat(m.format));
   if (libraryModules.length === 0) {
     return [
       {
@@ -191,6 +194,7 @@ function checkHarIndexExport(ctx: CheckContext): CheckResult[] {
         severity: 'BLOCKER',
         status: 'SKIP',
         details: '无 HAR/HSP 库模块。',
+        structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
       },
     ];
   }
@@ -268,6 +272,17 @@ function checkModuleConfigRegistered(ctx: CheckContext): CheckResult[] {
     ];
   }
 
+  const newModules = contracts.modules.filter(m => m.change_type === 'new');
+  if (newModules.length === 0) {
+    return [{
+      id: 'module_config_registered', category: 'structure',
+      description: ruleDesc(ctx, 'structure_checks', 'module_config_registered'),
+      severity: 'BLOCKER', status: 'SKIP',
+      details: '无新增模块需要注册。',
+      structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
+    }];
+  }
+
   const content = readFileIfExists(path.join(ctx.projectRoot, 'build-profile.json5'));
   if (!content) {
     return [
@@ -304,7 +319,6 @@ function checkModuleConfigRegistered(ctx: CheckContext): CheckResult[] {
     if (m.name) registeredNames.add(m.name);
   }
 
-  const newModules = contracts.modules.filter(m => m.change_type === 'new');
   const missing = newModules.filter(m => !registeredNames.has(m.name)).map(m => m.name);
 
   if (missing.length === 0) {
@@ -314,12 +328,8 @@ function checkModuleConfigRegistered(ctx: CheckContext): CheckResult[] {
         category: 'structure',
         description: ruleDesc(ctx, 'structure_checks', 'module_config_registered'),
         severity: 'BLOCKER',
-        status: newModules.length > 0 ? 'PASS' : 'SKIP',
-        details:
-          newModules.length > 0
-            ? `全部 ${newModules.length} 个新增模块已在 build-profile.json5 注册。`
-            : '无新增模块需要注册。',
-        ...(newModules.length > 0 ? {} : { structured: { applicability: CHECK_NOT_APPLICABLE_MARKER } }),
+        status: 'PASS',
+        details: `全部 ${newModules.length} 个新增模块已在 build-profile.json5 注册。`,
       },
     ];
   }
@@ -478,129 +488,64 @@ export function isDependencyDeclared(
  * `contracts.navigation` 原始字段。装载期 SpecLoader 已算好 `referenceClosure`；缺失时
  * 按 check-plan.ts 同款 `??` 兜底现算，双相共享同一份解析结论、不重复计算。
  */
-function resolveNavigationConfigFiles(ctx: CheckContext): string[] {
-  const contracts = ctx.featureSpec.contracts;
-  if (!contracts) return [];
-  const closure = ctx.featureSpec.referenceClosure
-    ?? resolveContractFileReferences(ctx.projectRoot, contracts);
-  return selectContractReferencePaths(closure, 'navigation.config_files');
-}
-
-/**
- * 已声明的注册配置文件读取（review P1）：`existsSync` 对"路径其实是目录"返回 true，随后
- * `readFileSync` 抛 EISDIR——异常逃到 check-coding 的 safeRun 会被降级成 MINOR SKIP，
- * `coding_run_status` 不计入阻断，于是"不可读"反而能宣称完成。故本地判普通文件并吞掉
- * 读取异常，一律归入 unreadable → BLOCKER FAIL（fail-closed，不新增机制）。
- */
-function readRegularFileOrNull(absolutePath: string): string | null {
-  try {
-    if (!fs.statSync(absolutePath).isFile()) return null;
-    return fs.readFileSync(absolutePath, 'utf-8');
-  } catch {
-    return null;
-  }
-}
-
 function checkPageRegistration(ctx: CheckContext): CheckResult[] {
   const contracts = ctx.featureSpec.contracts;
-  const components = contracts?.components ?? [];
-
-  const navPages = components
-    .filter(c => c.nav_destination)
-    .map(c => ({
-      name: c.name,
-      dest: c.nav_destination!,
-      file: c.file,
-    }));
-
-  if (navPages.length === 0) {
-    return [
-      {
-        id: 'page_registration',
-        category: 'structure',
-        description: ruleDesc(ctx, 'structure_checks', 'page_registration'),
-        severity: 'BLOCKER',
-        status: 'SKIP',
-        details: '无 NavDestination 页面需要检查。',
-        structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
-      },
-    ];
+  const files = implementationFiles(ctx.projectRoot, ctx.feature, contracts, process.env.MAISON_GOAL_RUN_ID?.trim());
+  const baseline = resolveEffectiveDiffBaseline(ctx.projectRoot, ctx.feature, process.env.MAISON_GOAL_RUN_ID?.trim());
+  const changes = baseline.available ? diffChangedFilesWithStatus({ projectRoot: ctx.projectRoot, baseRef: baseline.baseSha }).entries : [];
+  const pages = files.filter(file => file.endsWith('.ets'))
+    .filter(file => /\bNavDestination\s*\(|@Entry\b/.test(stripStringsAndComments(fs.readFileSync(path.join(ctx.projectRoot, file), 'utf8'))));
+  for (const entry of changes) {
+    const old = entry.status === 'D' ? entry.path : entry.oldPath;
+    if (!old?.endsWith('.ets') || !baseline.available) continue;
+    const content = readFileAtRef(ctx.projectRoot, baseline.baseSha, old)?.toString('utf8') ?? '';
+    if (/\bNavDestination\s*\(|@Entry\b/.test(stripStringsAndComments(content)) && !pages.includes(old)) pages.push(old);
   }
-
-  // 状态表（plan c7e2a9d4 T2）：走到这里必然「已有 NavDestination 页面」——
-  // 没有注册配置声明、或声明的文件读不到，都是真实缺口，一律 FAIL，不得以 SKIP 冒充成功。
-  const configFiles = resolveNavigationConfigFiles(ctx);
-  if (configFiles.length === 0) {
-    return [
-      {
-        id: 'page_registration',
-        category: 'structure',
-        description: ruleDesc(ctx, 'structure_checks', 'page_registration'),
-        severity: 'BLOCKER',
-        status: 'FAIL',
-        details:
-          `${navPages.length} 个 NavDestination 页面待注册，但 contracts.yaml 的 ` +
-          '`navigation.config_files` 未声明任何导航注册配置文件。',
-        suggestion:
-          '回到 plan 在 contracts.yaml 的 `navigation.config_files` 声明 main_pages.json / ' +
-          'route_map.json 等注册配置文件，并同步列入 `contracts.files`。',
-      },
-    ];
+  const registrationChanged = changes.some(entry => /(?:module\.json5|resources\/base\/profile\/[^/]+\.json)$/.test(entry.path));
+  const base = { id: 'page_registration', category: 'structure' as const, severity: 'BLOCKER' as const,
+    description: ruleDesc(ctx, 'structure_checks', 'page_registration') };
+  if (!pages.length && !registrationChanged) return [{ ...base, status: 'SKIP', details: '当前实际源码中没有适用的新增/修改路由页面。', structured: { applicability: CHECK_NOT_APPLICABLE_MARKER } }];
+  const entryPages = new Set(pages.filter(file => fs.existsSync(path.join(ctx.projectRoot, file))
+    && /@Entry\b/.test(stripStringsAndComments(fs.readFileSync(path.join(ctx.projectRoot, file), 'utf8')))));
+  const registered = new Set<string>();
+  const failures: string[] = [];
+  const unresolved: string[] = [];
+  for (const module of projectImplementationModules(ctx.projectRoot, contracts?.modules)) {
+    const metaFile = path.join(ctx.projectRoot, module.package_path, 'src/main/module.json5');
+    if (!fs.existsSync(metaFile)) { if (pages.some(page => page.startsWith(module.package_path + '/'))) unresolved.push(...pages.filter(page => page.startsWith(module.package_path + '/'))); continue; }
+    let activeConfig = metaFile;
+    try {
+      const meta = (parseJson5(fs.readFileSync(metaFile, 'utf8')) as { module?: { routerMap?: string; pages?: string } }).module;
+      const refs = [meta?.routerMap, meta?.pages].filter((ref): ref is string => typeof ref === 'string' && ref.startsWith('$profile:'));
+      for (const page of pages.filter(page => page.startsWith(module.package_path + '/'))) {
+        if (!entryPages.has(page) && !meta?.routerMap?.startsWith('$profile:')) unresolved.push(page);
+        if (entryPages.has(page) && !meta?.pages?.startsWith('$profile:')) failures.push(page + ' 的模块未配置 main_pages');
+      }
+      for (const ref of refs) {
+        const rel = path.posix.join(module.package_path, 'src/main/resources/base/profile', ref.slice('$profile:'.length) + '.json');
+        activeConfig = path.join(ctx.projectRoot, rel);
+        const doc = JSON.parse(fs.readFileSync(activeConfig, 'utf8')) as { routerMap?: Array<{ name: string; pageSourceFile: string; buildFunction: string }>; src?: string[] };
+        for (const route of doc.routerMap ?? []) {
+          const page = path.posix.normalize(path.posix.join(module.package_path, route.pageSourceFile));
+          if (!pages.includes(page) && !changes.some(entry => entry.path.startsWith(module.package_path + '/'))) continue;
+          const source = stripStringsAndComments(fs.readFileSync(path.join(ctx.projectRoot, page), 'utf8'));
+          if (!route.buildFunction || !new RegExp('\\bfunction\\s+' + route.buildFunction.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\(').test(source)) failures.push(page + ' 的注册 builder 不存在：' + route.buildFunction);
+          else registered.add(page);
+        }
+        for (const page of doc.src ?? []) {
+          const file = path.posix.join(module.package_path, 'src/main/ets', page.endsWith('.ets') ? page : page + '.ets');
+          if (entryPages.has(file)) registered.add(file);
+        }
+      }
+    } catch (error) {
+      if (pages.some(page => page.startsWith(module.package_path + '/')) || changes.some(entry => entry.path.startsWith(module.package_path + '/'))) failures.push(path.relative(ctx.projectRoot, activeConfig) + ' 路由配置不可读：' + String(error));
+    }
   }
-
-  let configContent = '';
-  const unreadable: string[] = [];
-  for (const cf of configFiles) {
-    const c = readRegularFileOrNull(path.join(ctx.projectRoot, cf));
-    if (c === null) unreadable.push(cf);
-    else configContent += c;
-  }
-
-  if (unreadable.length > 0) {
-    return [
-      {
-        id: 'page_registration',
-        category: 'structure',
-        description: ruleDesc(ctx, 'structure_checks', 'page_registration'),
-        severity: 'BLOCKER',
-        status: 'FAIL',
-        details: [
-          `${unreadable.length} 个已声明的导航注册配置文件不存在或不可读：`,
-          ...unreadable.map(f => `  - ${f}`),
-        ].join('\n'),
-        affected_files: unreadable,
-        suggestion: '在 coding 阶段实际创建这些注册配置文件（文件存在性的正式裁决在 coding file_completeness）。',
-      },
-    ];
-  }
-
-  const unregistered = navPages.filter(p => !configContent.includes(p.dest) && !configContent.includes(p.name));
-
-  if (unregistered.length === 0) {
-    return [
-      {
-        id: 'page_registration',
-        category: 'structure',
-        description: ruleDesc(ctx, 'structure_checks', 'page_registration'),
-        severity: 'BLOCKER',
-        status: 'PASS',
-        details: `全部 ${navPages.length} 个 NavDestination 页面已在配置文件中注册。`,
-      },
-    ];
-  }
-
-  return [
-    {
-      id: 'page_registration',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'page_registration'),
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details: `${unregistered.length} 个页面未在配置文件中注册：\n${unregistered.map(u => `  - ${u.name} (nav_destination: ${u.dest})`).join('\n')}`,
-      affected_files: configFiles,
-      suggestion: '请在 main_pages.json 和/或 route_map.json 中注册页面。',
-    },
-  ];
+  for (const page of pages) if (fs.existsSync(path.join(ctx.projectRoot, page)) && !registered.has(page) && !unresolved.includes(page)) failures.push(page + ' 未在实际 module.json5 引用的路由配置中注册');
+  if (failures.length) return [{ ...base, status: 'FAIL', details: failures.join('\n'), affected_files: pages,
+    suggestion: '修复实际模块路由配置与页面入口；无需预先登记文件许可或导航预测清单。' }];
+  if (unresolved.length) return [{ ...base, severity: 'MAJOR', status: 'WARN', details: '以下实际页面所属模块未识别到静态路由形式，须由 review/真机核验可达性：' + unresolved.join('、'), affected_files: pages }];
+  return [{ ...base, status: 'PASS', details: `已核验 ${pages.length} 个实际页面的静态路由与入口，不以预测登记代替。` }];
 }
 
 function checkNamingConventions(ctx: CheckContext, analyses: FileAnalysis[]): CheckResult[] {
@@ -668,7 +613,7 @@ function checkNamingConventions(ctx: CheckContext, analyses: FileAnalysis[]): Ch
 
 function checkNoAnyType(ctx: CheckContext): CheckResult[] {
   const contracts = ctx.featureSpec.contracts;
-  const etsFiles = contracts?.files?.filter(f => f.endsWith('.ets')) ?? [];
+  const etsFiles = implementationFiles(ctx.projectRoot, ctx.feature, contracts, process.env.MAISON_GOAL_RUN_ID?.trim()).filter(f => f.endsWith('.ets'));
   if (etsFiles.length === 0) {
     return [
       {
@@ -729,7 +674,7 @@ function checkNoAnyType(ctx: CheckContext): CheckResult[] {
 
 function checkAsyncAwaitPattern(ctx: CheckContext): CheckResult[] {
   const contracts = ctx.featureSpec.contracts;
-  const etsFiles = contracts?.files?.filter(f => f.endsWith('.ets')) ?? [];
+  const etsFiles = implementationFiles(ctx.projectRoot, ctx.feature, contracts, process.env.MAISON_GOAL_RUN_ID?.trim()).filter(f => f.endsWith('.ets'));
   if (etsFiles.length === 0) {
     return [
       {
@@ -797,14 +742,15 @@ function checkDesignFilePlanToCode(ctx: CheckContext): CheckResult[] {
         id: 'plan_file_to_code',
         category: 'traceability',
         description: ruleDesc(ctx, 'traceability_checks', 'plan_file_to_code'),
-        severity: 'BLOCKER',
+        severity: 'MINOR',
         status: 'SKIP',
-        details: 'contracts.yaml 无 files 列表。',
+        details: '无预测文件列表；实际源码与语义仍须验证。', structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
       },
     ];
   }
 
-  const etsFiles = contracts.files.filter(f => f.endsWith('.ets'));
+  const { partitionConstructionFiles } = require('../../../harness/scripts/utils/phase-write-boundary') as typeof import('../../../harness/scripts/utils/phase-write-boundary');
+  const etsFiles = partitionConstructionFiles(ctx.projectRoot, ctx.resolvedProfile?.profileDir ?? '', contracts).implementation.filter(f => f.endsWith('.ets'));
   const missing: string[] = [];
   for (const f of etsFiles) {
     if (!fs.existsSync(path.join(ctx.projectRoot, f))) missing.push(f);
@@ -818,7 +764,7 @@ function checkDesignFilePlanToCode(ctx: CheckContext): CheckResult[] {
         description: ruleDesc(ctx, 'traceability_checks', 'plan_file_to_code'),
         severity: 'BLOCKER',
         status: 'PASS',
-        details: `设计规划的全部 ${etsFiles.length} 个 .ets 文件均已实现。`,
+        details: `设计规划的全部 ${etsFiles.length} 个 .ets 预测位置可读取（不代表行为已验证）。`,
       },
     ];
   }
@@ -829,10 +775,10 @@ function checkDesignFilePlanToCode(ctx: CheckContext): CheckResult[] {
       category: 'traceability',
       description: ruleDesc(ctx, 'traceability_checks', 'plan_file_to_code'),
       severity: 'BLOCKER',
-      status: 'FAIL',
+      status: 'WARN',
       details: `${missing.length}/${etsFiles.length} 个规划 .ets 文件缺失：\n${truncateList(missing, 15)}`,
       affected_files: missing,
-      suggestion: '请按照 plan.md 目录/文件结构规划补全缺失的 .ets 文件。',
+      suggestion: '核对当前实现及行为覆盖，预测位置过时不要求创建空壳文件；实际缺陷交独立 review/测试确认。',
     },
   ];
 }
@@ -965,7 +911,7 @@ export function classifyCodingCompileFailure(
     logAbsPath?: string;
     logExcerpt?: string;
   },
-  ctx: CheckContext,
+  ctx: ProjectCompileContext,
   selection?: ProductSelection,
 ): CodingCompileFailureClassification {
   return withUnconfirmedFormLead(classifyCodingCompileFailureCore(res, ctx), selection);
@@ -981,7 +927,7 @@ export function withUnconfirmedFormLead(
   outcome: CodingCompileFailureClassification,
   selection?: ProductSelection,
 ): CodingCompileFailureClassification {
-  if (!selection?.product || TRUSTED_PRODUCT_SOURCES.has(selection.source)) return outcome;
+  if (!selection?.product || TRUSTED_PRODUCT_SOURCES.has(selection.source) || selection.source === 'sole_candidate') return outcome;
   return {
     ...outcome,
     explanation:
@@ -1002,7 +948,7 @@ function classifyCodingCompileFailureCore(
     logAbsPath?: string;
     logExcerpt?: string;
   },
-  ctx: CheckContext,
+  ctx: ProjectCompileContext,
 ): CodingCompileFailureClassification {
   const errs = res.errors ?? [];
   if (res.toolMissing) {
@@ -1066,10 +1012,10 @@ function classifyCodingCompileFailureCore(
       kind: 'project_build_environment_inconsistent',
       explanation:
         `hvigor 配置阶段失败（${configError.code}），但引用路径**实际存在**` +
-        `${resolved ? `——${resolved}` : ''}。构建环境与磁盘状态不一致（非本轮编码所致）。`,
+        `${resolved ? `——${resolved}` : ''}。构建观测与磁盘状态矛盾，原因尚未确认。`,
       suggestion:
-        '同一构建事务原样重跑一次即可自证；仍失败则属外部条件（工具链/文件锁/缓存），' +
-        '**不应**再让 agent 改代码。',
+        '先以无 daemon 的构建事务重跑一次；仍失败则保留日志与实际环境，交当前作者在授权写域内调查构建配置、路径解析与脚本。' +
+        '只有确认缺凭据/权限、外部服务或须扩大写域时才沿现有条件/授权等待，不按分类名直接归外部。',
     };
   }
 
@@ -1085,12 +1031,12 @@ function classifyCodingCompileFailureCore(
       explanation:
         '构建日志显示工程依赖解析失败，当前失败更可能来自依赖安装 / 依赖声明或内网 registry，而不是本轮编码实现本身。\n' +
         formatDependencyIssue(depIssue) +
-        '\n这不表示可跳过 coding 出口或进入 code-review（Code Review）；须修复工程依赖或取得用户对放弃本阶段的明示后再执行 --clear-state。',
+        '\n须按当前授权修复工程依赖后重跑；依赖失败不构成编译通过。',
       suggestion:
         'harness 将自动尝试 ohpm install 并重编译（声明齐全且 profile 支持时）；' +
         '若依赖未在 oh-package.json5 声明，agent 须自行补声明后重跑；' +
         '仅在 ohpm 安装本身失败（registry/鉴权/网络）时按日志原因向用户求助。' +
-        '须向用户报告首条编译错误与 summary.next_action，禁止提议进入下一阶段。' +
+        '须报告首条编译错误与实际未完成项。' +
         (!depIssue.harnessNodeModulesReady ? ' framework/harness/node_modules 缺失时可直接在 framework/harness 执行 npm install。' : ''),
     };
   }
@@ -1116,7 +1062,7 @@ function classifyCodingCompileFailureCore(
     kind: 'project_build',
     explanation: '编译失败（非零退出或解析到 error），未识别为依赖安装问题。',
     suggestion:
-      '读取完整日志（details 中的日志路径），定位文件/行并回到编码阶段修复。' +
+      '读取完整日志（details 中的日志路径），定位文件/行并在授权范围内修复后重新编译。' +
       '该规则是真实编译闭环的出口，禁止用 SKIP / WARN 绕过。',
   };
 }
@@ -1178,24 +1124,16 @@ export function resolveCompileBlockingClass(kind: CodingCompileFailureKind): str
   if (
     kind === 'compile_timeout' ||
     kind === 'compile_incomplete_output' ||
-    kind === 'project_build'
+    kind === 'project_build' ||
+    kind === 'project_build_environment_inconsistent'
   ) {
     return CANONICAL_CODING_COMPILE_ID;
-  }
-  // f9c2e6b4 t2（codex 复核补接）：事务重跑后仍矛盾 = **外部条件**，必须落既有
-  // `externalBlocked` 契约才会被 dependency policy 认出来（isDeferrableExternalBlock
-  // 只查 deferrable_blocking_classes，默认集合就是 ['externalBlocked']）。
-  // 原实现把 kind 原样当 blocking_class，策略层认不出来 → 又回去让 agent 改代码，
-  // 等于 plan 要求的 WAITING/external 根本没接通。**复用既有契约，不造新状态。**
-  if (kind === 'project_build_environment_inconsistent') {
-    return 'externalBlocked';
   }
   return kind;
 }
 
 function buildCompilePassDetails(
   res: CompileRunResult,
-  modulesCount: number,
   /** 耗时文本（runner 遥测，直接进 details——subject 不承诺稳定，无需分域投影） */
   durationText: string,
   extraNote?: string,
@@ -1203,7 +1141,7 @@ function buildCompilePassDetails(
 ): string {
   return [
     extraNote ? `${extraNote}\n` : '',
-    `编译通过（涉及 ${modulesCount} 个 contract 模块，耗时 ${durationText}）。`,
+    `工程级编译通过（耗时 ${durationText}）。`,
     `命令：${res.command ?? '(unknown)'}`,
     ...(selection ? [describeProductSelection(selection)] : []),
     `元数据：${res.metaPath ?? '(无)'}`,
@@ -1265,24 +1203,9 @@ function buildCompileFailDetails(
 
 /** profile 侧：真实编译闭环 + 失败归因 + 依赖自动安装（原根目录 checkCodingHvigorBuild）。 */
 function checkCodingCompile(ctx: CheckContext): CheckResult[] {
-  if (isCapabilitySkipped(ctx.resolvedProfile, 'coding.compile')) {
-    const desc =
-      ruleDesc(ctx, 'structure_checks', 'coding_compile') ||
-      ruleDesc(ctx, 'structure_checks', 'coding_hvigor_build');
-    const details =
-      'project_profile 声明 coding.compile 为 SKIP：未调用真实编译（canonical id: coding_compile）。';
-    return duplicateCompileResults({
-      category: 'structure',
-      description: desc,
-      severity: 'BLOCKER',
-      status: 'SKIP',
-      details,
-    });
-  }
-
   const contracts = ctx.featureSpec.contracts;
-  const modules = contracts?.modules ?? [];
-  if (modules.length === 0) {
+  const modules = actualConstructionModules(ctx);
+  if (modules.length === 0 && !isCapabilitySkipped(ctx.resolvedProfile, 'coding.compile')) {
     const desc =
       ruleDesc(ctx, 'structure_checks', 'coding_compile') ||
       ruleDesc(ctx, 'structure_checks', 'coding_hvigor_build');
@@ -1299,6 +1222,31 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
     ruleDesc(ctx, 'structure_checks', 'coding_compile') ||
     ruleDesc(ctx, 'structure_checks', 'coding_hvigor_build');
 
+  const compiled = compileProject({
+    projectRoot: ctx.projectRoot, frameworkRoot: ctx.frameworkRoot, harnessRoot: ctx.harnessRoot,
+    resolvedProfile: ctx.resolvedProfile, feature: ctx.feature,
+  });
+  return compiled.checks.map(check => ({
+    ...check, description: desc,
+    ...(check.status === 'FAIL' ? { affected_files: modules.map(m => `${m.name} (module)`) } : {}),
+    ...(check.status === 'PASS' ? { details: `本 Feature 涉及 ${modules.length} 个 contract 模块。\n${check.details}` } : {}),
+  }));
+}
+
+export function compileProject(ctx: ProjectCompileContext): ProjectCompileResult {
+  const desc = '工程级真实编译';
+  if (isCapabilitySkipped(ctx.resolvedProfile, 'coding.compile')) {
+    const details =
+      'project_profile 声明 coding.compile 为 SKIP：未调用真实编译（canonical id: coding_compile）。';
+    return { checks: duplicateCompileResults({
+      category: 'structure',
+      description: desc,
+      severity: 'BLOCKER',
+      status: 'SKIP',
+      details,
+    }) };
+  }
+
   // t5（plan a7c3f9e2 ⑤）：**本作用域内只解析一次**，同一 ProductSelection 对象贯穿
   // 构建参数与分类/详情生成；构建期间外部配置改变也不得二次解析。
   const compileSelection = resolveProductSelection({ projectRoot: ctx.projectRoot, purpose: 'coding' });
@@ -1311,25 +1259,25 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
   // 编译，报"显式跳过不作为出口"比要求确认 product 更对症（fixture 回归锁）。
   if (compileSelection.source === 'unresolved' && !process.env.HARNESS_SKIP_HVIGOR) {
     const guidance = buildProductSelectionUnresolvedGuidance(compileSelection);
-    return duplicateCompileResults({
+    return { checks: duplicateCompileResults({
       category: 'structure',
       description: desc,
       severity: 'BLOCKER',
       status: 'FAIL',
       details: ['coding_compile（真实编译）失败：' + summarizeUnresolvedCause(compileSelection), guidance].join('\n'),
-      affected_files: modules.map(m => `${m.name} (module)`),
       failure_kind: 'project_build_environment_inconsistent',
-      blocking_class: resolveCompileBlockingClass('project_build_environment_inconsistent'),
+      blocking_class: 'externalBlocked',
       suggestion:
         '编译形态未确认属外部/工程配置问题，不得通过改代码绕过。' +
         '请按 details 中的指引确认 product（init.product_selection / record-product-selection / env）后重跑。',
-    });
+    }) };
   }
 
   const compileBaseOpts = {
     projectRoot: ctx.projectRoot,
-    harnessRoot: HARNESS_ROOT,
+    harnessRoot: ctx.harnessRoot,
     feature: ctx.feature,
+    reportDir: ctx.reportDir,
     phase: 'coding',
     skipEnvVar: 'HARNESS_SKIP_HVIGOR',
     frameworkRoot: ctx.frameworkRoot,
@@ -1348,7 +1296,7 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
 
     // f9c2e6b4 t2：配置错误但路径实际存在 → **原样重跑一次构建事务**再下结论。
     // 这一步不启动 agent、不消耗内容重试预算：矛盾（"说找不到、但它就在那儿"）本身
-    // 就不该由改代码来解决。重跑仍矛盾 → 保留 environment_inconsistent，由裁决层归 external。
+    // 先由工具做一次事务恢复。仍失败保留原事实，交统一处置决定合法作者/等待。
     if (firstFailure.kind === 'project_build_environment_inconsistent') {
       buildTxnRetryLines = [
         '--- 构建事务重跑（f9c2e6b4 t2）---',
@@ -1358,8 +1306,8 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
       const afterRetry = classifyCodingCompileFailure({ ...res, errors: res.errors ?? [] }, ctx, compileSelection);
       buildTxnRetryLines.push(
         isCompilePass(res)
-          ? '重跑结果：PASS（首次失败为一次性环境不一致，已自证）'
-          : `重跑结果：仍失败（kind=${afterRetry.kind}）——不再启动 agent，交裁决层归外部条件`,
+          ? '重跑结果：PASS（本次事务恢复成功，不推断首次失败根因）'
+          : `重跑结果：仍失败（kind=${afterRetry.kind}）——保留调查缺口，交统一处置与当前合法作者`,
       );
       firstFailure = afterRetry;
     }
@@ -1420,13 +1368,13 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
   }
 
   if (isCompilePass(res)) {
-    return duplicateCompileResults({
+    return { checks: duplicateCompileResults({
       category: 'structure',
       description: desc,
       severity: 'BLOCKER',
       status: 'PASS',
-      details: buildCompilePassDetails(res, modules.length, `${res.durationMs} ms`, depsAutoFixNote, compileSelection),
-    });
+      details: buildCompilePassDetails(res, `${res.durationMs} ms`, depsAutoFixNote, compileSelection),
+    }), execution: res };
   }
 
   const failure =
@@ -1436,7 +1384,7 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
       ? withUnconfirmedFormLead(overrideFailure, compileSelection)
       : classifyCodingCompileFailure({ ...res, errors: res.errors ?? [] }, ctx, compileSelection);
 
-  return duplicateCompileResults({
+  return { checks: duplicateCompileResults({
     category: 'structure',
     description: desc,
     severity: 'BLOCKER',
@@ -1448,14 +1396,33 @@ function checkCodingCompile(ctx: CheckContext): CheckResult[] {
       [...buildTxnRetryLines, ...installExtraLines],
       compileSelection,
     ),
-    affected_files: modules.map(m => `${m.name} (module)`),
     failure_kind: failure.kind,
     blocking_class: resolveCompileBlockingClass(failure.kind),
+    structured: { compiler_diagnostics: structuredClone(res.errors ?? []) },
     suggestion: failure.suggestion,
-  });
+  }), execution: res };
+}
+
+function actualConstructionModules(ctx: CheckContext): ContractsSpec['modules'] {
+  const contracts = ctx.featureSpec.contracts;
+  const files = implementationFiles(ctx.projectRoot, ctx.feature, contracts, process.env.MAISON_GOAL_RUN_ID?.trim());
+  return projectImplementationModules(ctx.projectRoot, contracts?.modules)
+    .filter(module => contracts?.modules?.some(hint => hint.package_path === module.package_path)
+      || files.some(file => file.startsWith(module.package_path + '/')))
+    .map(module => {
+      const declared = contracts?.modules?.find(hint => hint.package_path === module.package_path);
+      if (declared) return declared;
+      const meta = readFileIfExists(path.join(ctx.projectRoot, module.package_path, 'src/main/module.json5'));
+      let kind: string | undefined;
+      try { kind = meta ? (parseJson5(meta) as { module?: { type?: string } }).module?.type : undefined; } catch { /* original build/config checks retain the error */ }
+      return { ...module, layer: module.package_path.split('/')[0], change_type: 'modify',
+        format: kind === 'entry' || kind === 'feature' ? 'HAP' : kind === 'shared' ? 'HSP' : kind === 'har' ? 'HAR' : '' };
+    });
 }
 
 function runStructureChecks(ctx: CheckContext, analyses: FileAnalysis[]): CheckResult[] {
+  if (ctx.featureSpec.contracts) ctx = { ...ctx, featureSpec: { ...ctx.featureSpec,
+    contracts: { ...ctx.featureSpec.contracts, modules: actualConstructionModules(ctx) } } };
   const out: CheckResult[] = [];
   out.push(...checkNoHardcodedStrings(ctx, analyses));
   // resource_integrity 已退役：资源合法性唯一真源=coding_compile 真实构建
@@ -1512,8 +1479,8 @@ function runTraceabilityChecks(ctx: CheckContext): CheckResult[] {
 }
 
 // ---------------------------------------------------------------------------
-// t5（plan e6a3c9f4）：checkCodingLint — lite/exit 轨与修正链路的快速 lint 派发
-// （profile-host-loader.ts 可选接口；check-exit.ts / correction-commands.ts 派发点
+// t5（plan e6a3c9f4）：checkCodingLint — 修正链路的快速 lint 派发
+// （profile-host-loader.ts 可选接口；correction-commands.ts 派发点
 // 此前空转退化 WARN——"coding.lint 声明 BLOCKER 但 provider 空缺"已知债清偿）。
 // 范围=高置信静态子集，不跑 hvigor 编译：
 //   - ArkUI 静态规则（bindsheet 双关/push 无守卫/单例多订阅/裁剪重叠，自带行内豁免）
@@ -1615,8 +1582,34 @@ async function checkCodingLint(ctx: CheckContext): Promise<CheckResult[]> {
 
 export const profileCodingHost: ProfileCodingHost = {
   sourceFileSuffixes: ['.ets'],
+  isGeneratedArtifact(projectRoot, file, feature) {
+    if (path.basename(file) === 'test-report.md') {
+      const report = resolveFeatureArtifact(projectRoot, feature, 'test-report.md').actualPath;
+      return path.resolve(projectRoot, file) === report && fs.existsSync(report)
+        && fs.readFileSync(report, 'utf8').startsWith(TEST_REPORT_GENERATED_MARKER);
+    }
+    if (!file.endsWith('/BuildProfile.ets')) return false;
+    try {
+      return classifyGeneratedSourceChange(projectRoot, { path: file, how: 'modified' }, {
+        product: resolveDeviceTestProduct(projectRoot), buildMode: resolveDeviceTestBuildMode(),
+      }).kind === 'generated_legit';
+    } catch { return false; }
+  },
   runStructureChecks,
   runTraceabilityChecks,
   checkCodingCompile,
+  compileProject,
+  checkProjectArchitecture(ctx) {
+    const modules = projectImplementationModules(ctx.projectRoot)
+      .filter(module => ctx.files.some(file => file.startsWith(module.package_path + '/')))
+      .map(module => {
+        const meta = readFileIfExists(path.join(ctx.projectRoot, module.package_path, 'src/main/module.json5'));
+        let kind: string | undefined;
+        try { kind = meta ? (parseJson5(meta) as { module?: { type?: string } }).module?.type : undefined; } catch { /* The original config/build checker reports malformed config. */ }
+        return { ...module, layer: module.package_path.split('/')[0], change_type: 'modify',
+          format: kind === 'shared' ? 'HSP' : kind === 'har' ? 'HAR' : 'HAP' };
+      });
+    return modules.length ? checkProjectExportEntries({ ...ctx, modules }) : [];
+  },
   checkCodingLint,
 };

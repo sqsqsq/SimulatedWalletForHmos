@@ -1,3 +1,4 @@
+import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
 // ============================================================================
 // capability-resolution.ts — deterministic pre-check capability resolver
 // ============================================================================
@@ -6,16 +7,17 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { auditSchemaSupport, validateLiteSchema } from './lite-json-schema';
+import { ArtifactSchemaError, resolveArtifactContent } from './artifact-content';
 import { stableStringify } from './phase-evidence-manifest';
 import { inferLegacyProjectRoot, isInsideProjectRoot, resolveDependencyPath, validateProjectRelativePath } from './project-relative-path';
 import { decodeTextFile, SpecLoader } from './spec-loader';
 import { loadWorkflowSpec, workflowForExistingRun } from '../../workflow-loader';
 import { loadGoalManifestFromRun } from './goal-manifest';
-import { deriveBlueprintSkillInput } from './blueprint-skill-projection';
+import { deriveBlueprintSkillInput, deriveRequestBlueprintSkillInput, compareAuthoritativeContent } from './blueprint-skill-projection';
 import { artifactReadCandidatePaths, catalogPath, featureFilePath, loadFrameworkConfig, relFeaturesDir } from '../../config';
 import type { CheckResult } from './types';
 import { normalizeDeviceTestCases } from './device-test-case-kernel';
+import { changeUnitPath, parseChangeUnitFeatureId } from './change-unit-path';
 import {
   ASSURANCE_RANK,
   contractFingerprint,
@@ -122,6 +124,9 @@ export interface CapabilityResolutionReport {
 }
 
 export interface CapabilityResolutionOptions {
+  /** Internal canonical design diagnostic, not a phase admission or configurable override. */
+  purpose?: 'design-authority-probe';
+  authorityReaders?: IdentityNeutralDigestReaders;
   frameworkRoot: string;
   projectRoot: string;
   feature?: string;
@@ -148,6 +153,8 @@ interface ProviderResult {
   dependencies: ResolutionDependency[];
   detail?: string;
   value?: unknown;
+  /** Same parse only; never persisted or trusted independently of successful normalization. */
+  rawValue?: unknown;
   artifacts?: Record<string, unknown>;
 }
 
@@ -197,6 +204,7 @@ function resolveArtifact(
   explicitPath?: string,
   subject?: PhaseInputContext['subject'],
   supplied?: { value: unknown; dependencies: ResolutionDependency[] },
+  authorityReaders?: IdentityNeutralDigestReaders,
 ): ProviderResult {
   const inventory = loadArtifactInventory(frameworkRoot);
   const registered = inventory.artifacts.find((artifact) => artifact.id === source.artifact);
@@ -214,7 +222,13 @@ function resolveArtifact(
   }
   if (!modern) dependencies.splice(0, dependencies.length, ...dedupeDependencies(dependencies));
   const selected = dependencies.find((entry) => entry.exists);
-  if (!selected) return supplied ? { state: 'resolved', value: supplied.value, dependencies: dedupeDependencies([...dependencies, ...supplied.dependencies]), detail: 'resolved blueprint artifact' } : { state: 'absent', dependencies, detail: `${source.artifact} missing` };
+  if (!selected) {
+    if (!supplied) return { state: 'absent', dependencies, detail: `${source.artifact} missing` };
+    const parsed = resolveArtifactContent(source.artifact, supplied.value, { frameworkRoot });
+    return { state: parsed.issues.length ? 'invalid' : 'resolved', value: parsed.value,
+      dependencies: dedupeDependencies([...dependencies, ...supplied.dependencies]),
+      detail: parsed.issues.length ? JSON.stringify(parsed.issues) : 'resolved blueprint artifact' };
+  }
   if (selected.sha256 === null) {
     return { state: 'invalid', dependencies, detail: `${source.artifact} is not a readable file: ${selected.path}` };
   }
@@ -222,22 +236,20 @@ function resolveArtifact(
     try {
       const raw = fs.readFileSync(selected.path, 'utf8');
       let artifacts: Record<string, unknown> | undefined;
-      let value = /\.ya?ml$|\.json$/i.test(selected.path) ? YAML.parse(raw) : raw;
+      let projectedValue: unknown;
+      let value = /\.ya?ml$|\.json$/i.test(selected.path) ? authorityReaders?.readArtifact?.(selected.path) ?? YAML.parse(raw) : raw;
+      const rawValue = value;
       if (typeof value?.source === 'string' && /^derive\.blueprint-(acceptance|contracts):/.test(value.source)) {
         const sourceFeature = feature ?? (typeof value.feature === 'string' ? value.feature : undefined);
         if (sourceFeature === undefined) return { state: 'invalid', dependencies, detail: 'blueprint projection requires its explicit source subject' };
         const kind = value.source.startsWith('derive.blueprint-acceptance:') ? 'acceptance' : 'contracts';
-        const projected = deriveBlueprintSkillInput(projectRoot, sourceFeature, frameworkRoot, kind);
+        const projected = deriveBlueprintSkillInput(projectRoot, sourceFeature, frameworkRoot, kind, authorityReaders);
         dependencies.push(...projected.dependencies);
-        if (projected.state !== 'resolved' || stableStringify(value) !== stableStringify(projected.artifacts?.[source.artifact])) return { state: 'invalid', dependencies, detail: projected.detail ?? 'blueprint projection stale; return to design owner' };
-        artifacts = projected.artifacts;
-      }
-      const schema = YAML.parse(fs.readFileSync(path.join(frameworkRoot, 'specs/artifact-schemas', registered.schema), 'utf8'));
-      const supported = auditSchemaSupport(Object.fromEntries(Object.entries(schema).filter(([key]) => !key.startsWith('x-'))));
-      if (supported.length) throw new Error(`unsupported artifact schema: ${JSON.stringify(supported)}`);
-      const issues = validateLiteSchema(value, schema);
-      if (issues.length || value === undefined || value === null || value === '') {
-        return { state: 'invalid', dependencies, detail: JSON.stringify(issues.length ? issues : ['empty content']) };
+        projectedValue = projected.artifacts?.[source.artifact];
+        if (projected.state === 'invalid') return { state: 'invalid', dependencies, detail: projected.detail ?? 'blueprint projection invalid; return to design owner' };
+        if (!projectedValue || value.source !== (projectedValue as { source?: unknown }).source || value.feature !== (projectedValue as { feature?: unknown }).feature) return { state: 'invalid', dependencies,
+          detail: `${source.artifact === 'acceptance@1' ? 'spec' : 'plan'}: blueprint artifact source stale; return to responsibility phase` };
+        artifacts = { ...projected.artifacts, [source.artifact]: value };
       }
       if (['acceptance@1', 'contracts@1', 'use-cases@1'].includes(source.artifact)) {
         if (feature === undefined && !subject) throw new Error('request subject required');
@@ -249,9 +261,19 @@ function resolveArtifact(
         const parsed = feature === undefined ? loader.loadRequestArtifacts(resolved) : loader.loadFeatureSpec(feature, resolved);
         if (parsed.shape_issues?.length) return { state: 'invalid', dependencies, detail: parsed.shape_issues.join('; ') };
         value = source.artifact === 'acceptance@1' ? parsed.acceptance : source.artifact === 'contracts@1' ? parsed.contracts : parsed.useCases;
+      } else {
+        const parsed = resolveArtifactContent(source.artifact, value, { frameworkRoot });
+        if (parsed.issues.length) return { state: 'invalid', dependencies, detail: JSON.stringify(parsed.issues) };
+        value = parsed.value;
       }
-      return { state: 'resolved', dependencies, value, artifacts, detail: selected.path };
-    } catch (error) { return { state: 'invalid', dependencies, detail: String(error) }; }
+      if (value === undefined || value === null || value === '') return { state: 'invalid', dependencies, detail: 'empty content' };
+      if (projectedValue && compareAuthoritativeContent(projectedValue, value).state !== 'aligned') return { state: 'invalid', dependencies, detail: 'blueprint authority content changed; return to responsibility phase' };
+      if (artifacts) artifacts[source.artifact] = value;
+      return { state: 'resolved', dependencies, value, rawValue, artifacts, detail: selected.path };
+    } catch (error) {
+      if (error instanceof ArtifactSchemaError) throw error;
+      return { state: 'invalid', dependencies, detail: String(error) };
+    }
   }
   return { state: 'resolved', dependencies, detail: selected.path };
 }
@@ -260,6 +282,12 @@ function sourceTreeDependency(projectRoot: string): ResolutionDependency[] {
   // The configured module catalog is the stable, bounded input for source-target derivation.
   // A repository root directory is intentionally not hashed as a pseudo-source artifact.
   return [dependency(catalogPath(projectRoot), 'derive')];
+}
+
+function resolvedSourceFileSet<T extends { path: string }>(value: T[], dependencies: ResolutionDependency[]): ProviderResult {
+  const files = [...new Map(value.map(file => [file.path, file])).values()];
+  files.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+  return { state: 'resolved', value: files, dependencies: dedupeDependencies(dependencies) };
 }
 
 function resolveDerive(
@@ -272,11 +300,11 @@ function resolveDerive(
     const names = source.provider_id === 'derive.test-targets' ? options.request.targets.tests : options.request.targets.files;
     const value = options.request.sourceContents.filter(file => names.includes(file.path));
     const dependencies = options.request.baseline.head === 'WORKTREE' ? value.map(file => dependency(path.resolve(projectRoot, file.path), 'derive')) : [];
-    return value.length ? { state: 'resolved', dependencies, value } : { state: 'absent', dependencies, detail: 'requested source targets absent' };
+    return value.length ? resolvedSourceFileSet(value, dependencies) : { state: 'absent', dependencies, detail: 'requested source targets absent' };
   }
   if (source.provider_id === 'derive.blueprint-acceptance' || source.provider_id === 'derive.blueprint-contracts') {
-    if (feature === undefined) return { state: 'absent', dependencies: [], detail: 'request has no blueprint Feature' };
-    return deriveBlueprintSkillInput(projectRoot, feature, options.frameworkRoot, source.provider_id === 'derive.blueprint-acceptance' ? 'acceptance' : 'contracts');
+    if (feature === undefined) return options.request ? deriveRequestBlueprintSkillInput(projectRoot, options.request, options.frameworkRoot, source.provider_id === 'derive.blueprint-acceptance' ? 'acceptance' : 'contracts') : { state: 'absent', dependencies: [], detail: 'request has no blueprint design source' };
+    return deriveBlueprintSkillInput(projectRoot, feature, options.frameworkRoot, source.provider_id === 'derive.blueprint-acceptance' ? 'acceptance' : 'contracts', options.authorityReaders);
   }
   if (options.inputContext) {
     if (source.provider_id === 'derive.requirement') {
@@ -289,9 +317,16 @@ function resolveDerive(
       const targets = source.provider_id === 'derive.codebase'
         ? options.codeTargets ?? options.testTargets
         : options.testTargets;
-      if (!targets?.length) return { state: 'absent', dependencies: [], detail: 'explicit source targets missing' };
+      if (!targets?.length) {
+        const hasBoundDesign = options.inputContext.expected_bindings?.some(binding => binding.input_id === 'contracts');
+        if (source.provider_id === 'derive.codebase' && options.phase === 'coding' && hasBoundDesign
+          && options.inputContext.obligations.implementation === 'required' && fs.existsSync(projectRoot)) {
+          return { ...resolvedSourceFileSet([], sourceTreeDependency(projectRoot)), detail: '已有绑定设计，尚无具体初始源码目标；在项目内调研或创建实现，空输入不证明实现完成。' };
+        }
+        return { state: 'absent', dependencies: [], detail: 'explicit source targets missing' };
+      }
       let safeTargets: string[];
-      try { safeTargets = targets.map(target => validateProjectRelativePath(projectRoot, target, 'source target')); }
+      try { safeTargets = targets.map(target => path.posix.normalize(validateProjectRelativePath(projectRoot, target, 'source target'))); }
       catch (error) { return { state: 'invalid', dependencies: [], detail: String(error) }; }
       const deps = safeTargets.map(target => dependency(path.resolve(projectRoot, target), 'derive'));
       const unreadable = deps.find(dep => dep.exists && !dep.sha256);
@@ -299,10 +334,10 @@ function resolveDerive(
       const missing = deps.find(dep => !dep.exists);
       if (missing) return { state: 'absent', dependencies: deps, detail: 'source target missing: ' + missing.path };
       // e7a2c4f1 §10.4④：二进制资源（PNG 等）只给路径 + sha256，不按 UTF-8 解码内联进 prompt。
-      return { state: 'resolved', dependencies: deps, value: targets.map((target, i) => {
+      return resolvedSourceFileSet(safeTargets.map((target, i) => {
         const content = decodeTextFile(fs.readFileSync(deps[i].path));
         return content === null ? { path: target, sha256: deps[i].sha256, binary: true } : { path: target, content };
-      }) };
+      }), deps);
     }
     if (source.provider_id === 'derive.visual-reference' && !feature) {
       return { state: 'absent', dependencies: [], detail: 'request visual references require an explicit provider input' };
@@ -371,8 +406,7 @@ function resolveDerive(
       // execution_identity 等于当前阶段身份（phase:<feature>:spec，不跨身份导入历史 goal 残留
       // 决策）。intent_fallback / 缺字段旧版 SSOT / corrupt / 跨身份一律**不解锁**，继续落
       // 到 change.md（legacy）。corrupt 按 absent 继续、不升 invalid、不抢 fidelity 门禁裁决权。
-      // **只在 spec 阶段启用**（review P1）：lite 的 change 阶段也用 derive.requirement，但必须
-      // 保持纯 change.md 分支零变化——否则创建 spec SSOT 会让语义未变的 change closure 被判 stale。
+      // 只有旧 spec 入口读取此来源；现代调用由已绑定的 requirement 提供。
       const change = featureFilePath(projectRoot, feature, 'change.md');
       if (options.phase === 'spec') {
         const ssotState = loadFidelityIntentSsotState(projectRoot, feature);
@@ -421,12 +455,7 @@ function resolveDerive(
             '<feature> --requirement "<需求文本>"`（或 `--requirement-file <path>`）。',
         };
       }
-      // 非 spec（lite change 等）：保留既有纯 change.md 分支（逐元素零变化——SSOT 不加载、不匹配、
-      // 不绑定，spec SSOT 的创建/变化不得影响 change closure 的新鲜度判定）。
-      const deps = [dependency(change, 'derive')];
-      return fs.existsSync(change)
-        ? { state: 'resolved', dependencies: deps, detail: change }
-        : { state: 'absent', dependencies: deps, detail: 'goal requirement/change.md missing' };
+      return { state: 'absent', dependencies: [], detail: 'requirement missing' };
     }
     // plan f3a8c6d2 t5a（plan c4e8a1f7 T2 收口）：pixel_1to1 意图但一张参考图都取不到＝**输入缺失**，走既有
     // capability input unresolved 通道（readiness/next_action/assess/merged-report 四处投影
@@ -534,17 +563,79 @@ function isLedgerOnlyBindingDrift(expected: InputBinding, actual: InputBinding, 
 
 const fullFingerprint = (value: unknown): string => crypto.createHash('sha256').update(stableStringify(value)).digest('hex');
 
+function isSourceFileSet(source: ContractInputSource): boolean {
+  return source.kind === 'derive' && (source.provider_id === 'derive.codebase' || source.provider_id === 'derive.test-targets');
+}
+
+/** Legacy file arrays are reusable only when their original order reproduces the frozen digest. */
+function sourceFileSetBindingMatches(projectRoot: string, expected: InputBinding, actual: InputBinding, value: unknown, legacyRoot?: string): boolean {
+  if (expected.input_id !== actual.input_id || stableStringify(expected.source) !== stableStringify(actual.source)
+    || !Array.isArray(value)) return false;
+  const recorded = dedupeDependencies(expected.dependencies.map(dep => ({ ...dep, path: resolveDependencyPath(projectRoot, dep.path, legacyRoot) })));
+  if (stableStringify(recorded) !== stableStringify(dedupeDependencies(actual.dependencies))) return false;
+  if (expected.content_fingerprint === actual.content_fingerprint) return true;
+  if (expected.source_refs.length !== value.length) return false;
+  try {
+    const files = new Map(value.map(file => [file.path, file]));
+    const refs = expected.source_refs.map(ref => path.posix.normalize(validateProjectRelativePath(projectRoot, ref, 'source reference')));
+    if (new Set(refs).size !== files.size || refs.some(ref => !files.has(ref))) return false;
+    return expected.content_fingerprint === fullFingerprint(refs.map((ref, i) => ({ ...files.get(ref), path: expected.source_refs[i] })));
+  } catch { return false; }
+}
+
+/** Project a frozen file binding after verified research/classification; never rewrite the frozen scope. */
+export function projectSourceFileBinding(
+  projectRoot: string, binding: InputBinding, targets: readonly string[], research: ReadonlySet<string>,
+  otherTargets: readonly string[], legacyRoot?: string,
+): InputBinding {
+  if (!isSourceFileSet(binding.source)) return binding;
+  const original = binding.source_refs.map(ref => path.posix.normalize(ref.replace(/\\/g, '/')));
+  const selected = [...new Set(targets)];
+  if (original.length === selected.length && original.every(ref => selected.includes(ref))) return binding;
+  if (selected.some(ref => !original.includes(ref) && !research.has(ref))
+    || original.some(ref => !selected.includes(ref) && !otherTargets.includes(ref))) return binding;
+  const read = (files: string[]): { value: unknown; binding: InputBinding } | null => {
+    const result = resolveDerive(projectRoot, undefined, binding.source as Extract<ContractInputSource, { kind: 'derive' }>, {
+      projectRoot, frameworkRoot: '', phase: '', track: 'full', codeTargets: files, testTargets: files,
+      inputContext: { schema_version: '1.1', subject: { feature: '' }, obligations: {}, required_outputs: [] },
+    });
+    if (result.state !== 'resolved' || result.value === undefined) return null;
+    return { value: result.value, binding: { ...binding,
+      dependencies: dedupeDependencies([...binding.dependencies.filter(dep => dep.role !== 'derive')
+        .map(dep => dependency(resolveDependencyPath(projectRoot, dep.path, legacyRoot), dep.role)), ...result.dependencies]),
+      source_refs: result.dependencies.filter(dep => dep.exists).map(dep => path.relative(projectRoot, dep.path).replace(/\\/g, '/')),
+      content_fingerprint: fullFingerprint(result.value) } };
+  };
+  const unchanged = read(original);
+  if (!unchanged || !sourceFileSetBindingMatches(projectRoot, binding, unchanged.binding, unchanged.value, legacyRoot)) return binding;
+  return read(selected)?.binding ?? binding;
+}
+
 /**
  * plan c4e7a9b2 §3.4 B2：登记 artifact（derive.blueprint-* 与同名 artifact 同一 schema）的身份中立摘要；
  * 未登记或算不出（引用解析失败）为 null——调用方回落全值哈希。旧绑定存的是全值哈希，只能按全值命中。
  */
-function identityNeutralFingerprint(projectRoot: string, source: ContractInputSource, value: unknown): string | null {
+function identityNeutralFingerprint(projectRoot: string, source: ContractInputSource, value: unknown, authorityReaders?: IdentityNeutralDigestReaders): string | null {
   const artifact = source.kind === 'artifact' ? source.artifact
     : source.provider_id === 'derive.blueprint-acceptance' ? 'acceptance@1' : source.provider_id === 'derive.blueprint-contracts' ? 'contracts@1' : undefined;
   if (!artifact) return null;
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { identityNeutralDigest } = require('./change-unit-design-preparation') as typeof import('./change-unit-design-preparation');
-  return identityNeutralDigest(projectRoot, artifact, value);
+  return identityNeutralDigest(projectRoot, artifact, value, authorityReaders);
+}
+
+function artifactBindingMatches(options: CapabilityResolutionOptions, binding: InputBinding, value: unknown, rawValue?: unknown): boolean {
+  const matches = (candidate: unknown): boolean => fullFingerprint(candidate) === binding.content_fingerprint
+    || identityNeutralFingerprint(options.projectRoot, binding.source, candidate, options.authorityReaders) === binding.content_fingerprint;
+  if (matches(value)) return true;
+  if (binding.source.kind !== 'artifact' || binding.source.artifact !== 'use-cases@1') return false;
+  if (rawValue !== undefined && matches(rawValue)) return true;
+  type BoundUseCase = { ui_bindings?: Array<{ user_actions?: Array<{ calls: string[] | string }> }> };
+  const legacy = structuredClone(value) as BoundUseCase & { use_cases?: BoundUseCase[] };
+  for (const uc of [legacy, ...(legacy.use_cases ?? [])]) for (const ui of uc.ui_bindings ?? []) for (const action of ui.user_actions ?? []) {
+    if (Array.isArray(action.calls) && action.calls.length === 1) action.calls = action.calls[0];
+  }
+  return matches(legacy);
 }
 
 /**
@@ -553,11 +644,11 @@ function identityNeutralFingerprint(projectRoot: string, source: ContractInputSo
  * 记录侧依赖路径经 `resolveDependencyPath` 重定位后再比对；不传即按记录原样比对。
  */
 export function readBoundInput(options: CapabilityResolutionOptions, binding: InputBinding, legacyRoot?: string): unknown {
-  const supplied = binding.source.kind === 'artifact' && binding.source.artifact === 'use-cases@1' && options.feature && !options.request
-    ? deriveBlueprintSkillInput(options.projectRoot, options.feature, options.frameworkRoot, 'contracts') : undefined;
+  const supplied = binding.source.kind === 'artifact' && binding.source.artifact === 'use-cases@1' && options.feature && !options.request && !['ut', 'testing'].includes(options.phase)
+    ? deriveBlueprintSkillInput(options.projectRoot, options.feature, options.frameworkRoot, 'contracts', options.authorityReaders) : undefined;
   const result = binding.source.kind === 'derive' ? resolveDerive(options.projectRoot, options.feature, binding.source, options)
     : resolveArtifact(options.frameworkRoot, options.projectRoot, options.feature, binding.source, true, options.request?.inputs[binding.input_id], options.inputContext?.subject,
-      supplied?.state === 'resolved' && supplied.artifacts?.['use-cases@1'] !== undefined ? { value: supplied.artifacts['use-cases@1'], dependencies: supplied.dependencies } : undefined);
+      supplied?.state === 'resolved' && supplied.artifacts?.['use-cases@1'] !== undefined ? { value: supplied.artifacts['use-cases@1'], dependencies: supplied.dependencies } : undefined, options.authorityReaders);
   // plan e7a2c4f1 §3.4（G02/G04）：「确定性对齐」的边界写死为**身份明确 + 内容指纹相等**。
   // 放开的只有**账本形状**：依赖项字节漂移、以及依赖聚合清单的增删——解析值逐字节相同时
   // 那是同一份内容（换了注释/空白、多走了一次 attempt），不是内容变化。
@@ -575,11 +666,15 @@ export function readBoundInput(options: CapabilityResolutionOptions, binding: In
   const existenceDrift = (dep: ResolutionDependency): boolean => fs.existsSync(boundPath(dep)) !== dep.exists;
   const boundSame = (dep: ResolutionDependency): boolean =>
     binding.dependencies.some(bound => boundPath(bound) === dep.path && bound.exists === dep.exists && bound.role === dep.role);
+  const sourceSetMatches = result.state === 'resolved' && result.value !== undefined && isSourceFileSet(binding.source) && sourceFileSetBindingMatches(options.projectRoot, binding, {
+    ...binding,
+    dependencies: [...binding.dependencies.filter(dep => dep.role !== 'derive').map(dep => dependency(boundPath(dep), dep.role)), ...result.dependencies],
+    content_fingerprint: fullFingerprint(result.value),
+  }, result.value, legacyRoot);
   if (result.state !== 'resolved' || result.value === undefined
     || binding.dependencies.some(existenceDrift)
     || result.dependencies.some(dep => !boundSame(dep))
-    || (fullFingerprint(result.value) !== binding.content_fingerprint
-      && identityNeutralFingerprint(options.projectRoot, binding.source, result.value) !== binding.content_fingerprint)) {
+    || (isSourceFileSet(binding.source) ? !sourceSetMatches : !artifactBindingMatches(options, binding, result.value, result.rawValue))) {
     throw new Error(`input binding stale; return to scope owner: ${result.detail ?? binding.input_id}`);
   }
   return result.value;
@@ -590,13 +685,13 @@ export function readBoundInput(options: CapabilityResolutionOptions, binding: In
  * a plan phase. D1：`runId` 可缺省——无 run 时统一入口读 feature 冻结记录的有效范围，
  * 其余判据（找 `contracts@1` / `derive.blueprint-contracts` 绑定后 `readBoundInput`）一行不改。
  */
-export function readRunBoundContracts(projectRoot: string, frameworkRoot: string, feature: string, runId?: string): import('./types').ContractsSpec {
-  const { loadEffectiveExecutionScope } = require('./goal-run-creation') as typeof import('./goal-run-creation');
-  const scope = loadEffectiveExecutionScope(projectRoot, feature, runId);
+export function readRunBoundContracts(projectRoot: string, frameworkRoot: string, feature: string, runId?: string, authorityReaders?: IdentityNeutralDigestReaders, executionScope?: import('./execution-scope').ExecutionScope): import('./types').ContractsSpec {
+  const { resolveEffectiveScopeSource } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+  const scope = executionScope ?? resolveEffectiveScopeSource(projectRoot, feature, runId)?.scope;
   const binding = scope?.obligations.flatMap(obligation => [...obligation.basis, ...(obligation.satisfied_by ?? []).filter((ref): ref is InputBinding => 'input_id' in ref)])
     .find(binding => binding.source.kind === 'artifact' ? binding.source.artifact === 'contracts@1' : binding.source.provider_id === 'derive.blueprint-contracts');
   if (!binding) throw new Error('frozen construction contract missing; return to design owner');
-  return readBoundInput({ projectRoot, frameworkRoot, feature, phase: 'coding', track: 'full' }, binding, inferLegacyProjectRoot(projectRoot, scope)) as import('./types').ContractsSpec;
+  return readBoundInput({ projectRoot, frameworkRoot, feature, phase: 'coding', track: 'full', authorityReaders }, binding, inferLegacyProjectRoot(projectRoot, scope)) as import('./types').ContractsSpec;
 }
 
 function resolveApplicability(
@@ -659,16 +754,19 @@ function resolveInput(
   resolved?: ResolvedPhaseInputs,
 ): InputResolution {
   const attempts: SourceAttempt[] = [];
-  for (const source of input.sources) {
+  const currentAuthority = (source: ContractInputSource): boolean => source.kind === 'derive' && source.provider_id.startsWith('derive.blueprint-');
+  const sources = options.purpose === 'design-authority-probe'
+    ? [...input.sources.filter(currentAuthority), ...input.sources.filter(source => !currentAuthority(source))] : input.sources;
+  for (const source of sources) {
     const sourceId = source.kind === 'artifact' ? source.artifact : source.provider_id;
     const invalidation = options.inputContext?.invalidated_sources?.[sourceId];
-    const suppliedValue = source.kind === 'artifact' && source.artifact === 'use-cases@1' && !options.request ? resolved?.artifacts[source.artifact] : undefined;
+    const suppliedValue = source.kind === 'artifact' && source.artifact === 'use-cases@1' && !options.request && !['ut', 'testing'].includes(options.phase) ? resolved?.artifacts[source.artifact] : undefined;
     const suppliedInputs = suppliedValue === undefined ? [] : Object.values(resolved?.values ?? {}).filter(value => value.state === 'resolved' && (value.binding.source.kind === 'derive' && value.binding.source.provider_id.startsWith('derive.blueprint-') || value.binding.source.kind === 'artifact' && ['contracts@1', 'acceptance@1'].includes(value.binding.source.artifact)));
     let result: ProviderResult = invalidation ? { state: 'invalid', dependencies: [], detail: invalidation }
       : source.kind === 'artifact'
         ? !options.feature && resolved && !options.request?.inputs[input.id] ? { state: 'absent', dependencies: [], detail: 'request has no Feature artifact' }
           : resolveArtifact(options.frameworkRoot, options.projectRoot, options.feature, source, !!resolved, options.request?.inputs[input.id], options.inputContext?.subject,
-            suppliedValue !== undefined ? { value: suppliedValue, dependencies: suppliedInputs.flatMap(value => value.state === 'resolved' ? value.binding.dependencies : []) } : undefined)
+            suppliedValue !== undefined ? { value: suppliedValue, dependencies: suppliedInputs.flatMap(value => value.state === 'resolved' ? value.binding.dependencies : []) } : undefined, options.authorityReaders)
         : resolveDerive(options.projectRoot, options.feature, source, options);
     if (resolved && result.state === 'resolved' && result.value === undefined) {
       result = { ...result, state: 'invalid', detail: 'provider returned no consumable content' };
@@ -687,15 +785,26 @@ function resolveInput(
     let binding: InputBinding | undefined;
     if (result.state === 'resolved' && resolved) {
       const full = fullFingerprint(result.value);
+      const expected = options.inputContext?.expected_bindings?.find(b => b.input_id === input.id);
+      const cuDependencies: ResolutionDependency[] = [];
+      if (source.kind === 'artifact' && source.artifact === 'contracts@1' && options.feature?.startsWith('cu-')) {
+        const identity = parseChangeUnitFeatureId(options.feature);
+        const file = changeUnitPath(options.projectRoot, identity.blueprintId, identity.changeUnitId);
+        // CU 是本阶段施工映射实际消费的 canonical 输入，所有该类冻结绑定都登记同一依赖。
+        cuDependencies.push(dependency(file, 'artifact'));
+      }
       binding = { input_id: input.id, source, dependencies: dedupeDependencies(attempts.flatMap(attempt => attempt.dependencies)),
         source_refs: result.dependencies.filter(d => d.exists).map(d => path.relative(options.projectRoot, d.path).replace(/\\/g, '/')),
-        content_fingerprint: identityNeutralFingerprint(options.projectRoot, source, result.value) ?? full };
-      const expected = options.inputContext?.expected_bindings?.find(b => b.input_id === input.id);
+        content_fingerprint: identityNeutralFingerprint(options.projectRoot, source, result.value, options.authorityReaders) ?? full };
+      binding.dependencies = dedupeDependencies([...binding.dependencies, ...cuDependencies]);
       const legacyRequirementResupply = expected?.input_id === 'requirement'
         && expected.dependencies.length === 0 && expected.source_refs.length === 0
         && stableStringify({ ...binding, dependencies: [], source_refs: [] }) === stableStringify(expected);
-      if (expected && stableStringify(expected) !== stableStringify(binding)
-        && !legacyRequirementResupply && !isLedgerOnlyBindingDrift(expected, binding, full)) {
+      if (expected && (isSourceFileSet(source)
+        ? !sourceFileSetBindingMatches(options.projectRoot, expected, binding, result.value)
+        : stableStringify(expected) !== stableStringify(binding)
+          && !legacyRequirementResupply && !isLedgerOnlyBindingDrift(expected, binding,
+            artifactBindingMatches(options, expected, result.value, result.rawValue) ? expected.content_fingerprint : full))) {
         result = { ...result, state: 'invalid', detail: 'input binding stale; return to scope owner' };
         attempt.state = 'invalid'; attempt.detail = result.detail;
       } else {
@@ -705,7 +814,7 @@ function resolveInput(
           const artifact = source.provider_id === 'derive.blueprint-acceptance' ? 'acceptance@1' : 'contracts@1';
           resolved.artifacts[artifact] = result.value;
         }
-        if (result.artifacts?.['use-cases@1']) resolved.artifacts['use-cases@1'] = result.artifacts['use-cases@1'];
+        if (result.artifacts?.['use-cases@1'] && !['ut', 'testing'].includes(options.phase)) resolved.artifacts['use-cases@1'] = result.artifacts['use-cases@1'];
       }
     }
     if (result.state === 'resolved') {
@@ -816,6 +925,7 @@ export function resolveRequestInputs(projectRoot: string, frameworkRoot: string,
   const inputContext: PhaseInputContext = { schema_version: '1.1', subject: { request_sha256: request.request_sha256 }, obligations: {}, required_outputs: [] };
   const resolved: ResolvedPhaseInputs = { phase: request.phase, context: inputContext, values: {}, artifacts: {} };
   const selected = phase.inputs.filter(input => request.inputs[input.id] !== undefined
+    || (request.blueprint && input.sources.some(source => source.kind === 'derive' && ['derive.blueprint-acceptance', 'derive.blueprint-contracts'].includes(source.provider_id)))
     || (request.targets.files.length > 0 && input.sources.some(source => source.kind === 'derive' && source.provider_id === 'derive.codebase'))
     || (request.targets.tests.length > 0 && input.sources.some(source => source.kind === 'derive' && source.provider_id === 'derive.test-targets')));
   if (request.phase === 'review') selected.push({ id: 'review_report', sources: [{ kind: 'artifact', artifact: 'review-report@1' }] });
@@ -851,7 +961,7 @@ export function resolveCapabilityInputs(options: CapabilityResolutionOptions): {
     && (() => {
       const workflow = loadWorkflowSpec(options.frameworkRoot, loadFrameworkConfig(options.projectRoot).active_workflow ?? 'spec-driven');
       return (options.goalRunId
-        ? workflowForExistingRun(workflow, loadGoalManifestFromRun(options.projectRoot, options.goalRunId, { feature: options.feature, featuresDir: relFeaturesDir(options.projectRoot) }), options.frameworkRoot)
+        ? workflowForExistingRun(workflow, loadGoalManifestFromRun(options.projectRoot, options.goalRunId, { feature: options.feature, featuresDir: relFeaturesDir(options.projectRoot) }), options.frameworkRoot, options.projectRoot)
         : workflow).schema_version !== '1.2';
     })();
   if (!legacyDesign && (indexed.contract.schema_version === '1.1') !== !!options.inputContext) {
@@ -875,7 +985,6 @@ export function resolveCapabilityInputs(options: CapabilityResolutionOptions): {
   // Only old workflow invocations retain the former track contract until P7 migration.
   if (legacyDesign && options.phase === 'coding') declaredCapabilities = [
     { id: 'capability_coding_full_context', axis: 'functional', inputs: ['codebase', 'plan', 'contracts', 'acceptance'], tracks: ['full'], on_missing: 'fail' },
-    { id: 'capability_coding_lite_context', axis: 'functional', inputs: ['codebase', 'change'], tracks: ['lite'], on_missing: 'fail' },
     ...indexed.phase.capabilities.filter(capability => ['capability_coding_spec_context', 'capability_coding_visual_context'].includes(capability.id)).map(capability => ({ ...capability, tracks: ['full'] as FeatureTrackName[] })),
   ];
   if (legacyDesign && options.phase === 'review') declaredCapabilities = indexed.phase.capabilities.filter(capability => !['capability_review_narrative_context', 'capability_review_use_cases'].includes(capability.id)).map(capability => capability.id === 'capability_review_design_context' ? { ...capability, inputs: ['spec', 'plan', 'contracts'] } : capability);
@@ -888,6 +997,11 @@ export function resolveCapabilityInputs(options: CapabilityResolutionOptions): {
   }
   const capabilities = declaredCapabilities.filter(capability => !legacyDesign || !['capability_plan_existing_design', 'capability_spec_existing_acceptance'].includes(capability.id)).map((capability) =>
     resolveCapability(legacyDesign && options.phase !== 'coding' ? { ...capability, tracks: ['full'] } : capability, indexed.phase, options, artifactProducers, resolve));
+  // Source targets are a declared UT input even when no capability consumes them.
+  // Resolve the existing input so repair bindings retain their test domain rather than masquerading as product code.
+  if (inputs && options.testTargets?.length) for (const input of indexed.phase.inputs) {
+    if (input.sources.some(source => source.kind === 'derive' && source.provider_id === 'derive.test-targets')) resolve(input);
+  }
   if (inputs && options.feature) {
     const inventory = loadArtifactInventory(options.frameworkRoot);
     for (const name of inputs.context.required_outputs) {

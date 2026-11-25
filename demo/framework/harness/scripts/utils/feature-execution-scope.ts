@@ -36,7 +36,7 @@ import {
   buildFeatureScopeCandidate, featureScopeCandidateFingerprint, featureTrackDeclPath, resolveFeatureExecutionScope, resolveWithPriorEvidence,
 } from './feature-track';
 import { inferRepoLayout } from '../../repo-layout';
-import { computeRequirementShaFromText } from './fidelity-shared';
+import { computeRequirementShaFromText, type FidelityTarget } from './fidelity-shared';
 import { resolveWorkflowSpec, type WorkflowSpec } from '../../workflow-loader';
 import type { CheckResult } from './types';
 
@@ -398,7 +398,7 @@ export function registerFeatureScopeTransfer(input: {
 }
 
 /** `successorRunId` 的 events 里有一条 `supersede`：target = `sourceRunId`、superseding = 自己（goal-runner 在出生后写入的审计事件）。 */
-function isAuditedSuccessor(projectRoot: string, feature: string, sourceRunId: string, successorRunId: string): boolean {
+export function isAuditedSuccessor(projectRoot: string, feature: string, sourceRunId: string, successorRunId: string): boolean {
   let events: ReturnType<typeof loadAuthoritativeRunEvents>;
   try { events = loadAuthoritativeRunEvents(projectRoot, feature, successorRunId); } catch { return false; }
   return events.some(event => {
@@ -560,16 +560,7 @@ export function ensureFeatureExecutionScopeFrozen(input: {
   }
 }
 
-/**
- * D1.5 / D2.7 的**唯一**无 run 收尾函数：两个出口（普通阶段尾部、`--sync-closure`）都调它，
- * 三步顺序与判据零重复：
- *
- *   ① 消费本阶段 script-report 里的修订输入 → 追加进 feature 冻结记录的 `revisions[]`；
- *   ② 重新读取有效范围；
- *   ③ 按 §6.5 四条件检查并生成无 run 完成原件。
- *
- * 有 run 身份时整个函数是 no-op（run 有自己的 runtime 收尾路径）。
- */
+/** Compatibility exit for independent checks; only GoalPhaseRuntime advances full delivery. */
 export function applyFeatureScopeRevisionsThenMaybeComplete(input: {
   projectRoot: string;
   frameworkRoot: string;
@@ -577,94 +568,14 @@ export function applyFeatureScopeRevisionsThenMaybeComplete(input: {
   phase: string;
   workflowTrack: string;
   runId?: string;
-  /** 本轮已确认闭环的阶段（用于按当前证据补既有满足证明）——与 run 路径同义。 */
   completedPhases?: ReadonlySet<string>;
 }): { revisionApplied: boolean; completionPath?: string; skippedReason?: string } {
   if (input.runId?.trim()) return { revisionApplied: false, skippedReason: 'run-authority' };
-  const { projectRoot, frameworkRoot, feature } = input;
-  // 与冻结入口**同一条**锁前置：说不清权威时不写任何东西（含修订与完成原件）。
-  const lockBlocker = featureAuthorityLockBlocker(projectRoot, feature, input.runId);
-  if (lockBlocker) throw new Error(lockBlocker.details ?? '[execution-scope] 无法确定权威');
-  let record = readFeatureFrozenScope(projectRoot, feature);
+  const record = readFeatureFrozenScope(input.projectRoot, input.feature);
   if (!record) return { revisionApplied: false, skippedReason: 'no-frozen-record' };
   if (currentFeatureScopeTransfer(record)) return { revisionApplied: false, skippedReason: 'transferred' };
-  // D1.2：收尾同样要核候选指纹——候选被改而记录未经修订时，不得基于旧冻结范围生成完成原件。
-  const candidateFingerprint = featureScopeCandidateFingerprint(projectRoot, feature);
-  if (candidateFingerprint !== record.candidate_fingerprint) {
-    throw new Error(`[execution-scope] 候选已变更而冻结范围未经修订，收尾不予继续 | candidate_fingerprint=${candidateFingerprint.slice(0, 16)} frozen_candidate_fingerprint=${record.candidate_fingerprint.slice(0, 16)}`);
-  }
-
-  /* eslint-disable @typescript-eslint/no-require-imports */
-  const { executionCompletionPhases } = require('./execution-scope') as typeof import('./execution-scope');
-  const { resolveScopeRevisionProposal } = require('./feature-track') as typeof import('./feature-track');
-  const completionModule = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
-  /* eslint-enable @typescript-eslint/no-require-imports */
-
-  // ① 修订：触发面与校验**与 run 路径同一个函数**（`resolveScopeRevisionProposal`）——
-  //    单提案、请求边界、已完成阶段补证明、impact 继承/修正、失效 satisfied_by 剔除、
-  //    「范围变了就必须有新来源」全部同源。边界是「写完本阶段结果、退出前」，
-  //    **不以 closure 成功为条件**（§6.7）。
-  const workflow = resolveWorkflowSpec(projectRoot, { frameworkRoot });
-  const proposals = readPhaseScopeRevisionInputs(projectRoot, feature, input.phase, frameworkRoot);
-  let revisionApplied = false;
-  const previous = featureEffectiveScope(record!);
-  // 第五轮建议 2：已闭环阶段交给提案校验去补既有满足证明——不接的话，一次合法修订会把
-  // 已经闭环的阶段重新加回未满足义务，白跑一遍。取法与判据复用**同一个** clean-pass 收集器：
-  // 修订前链上没有 issue 的阶段就是「本次可以自证闭环」的阶段，不另造一套完成判定。
-  const previousChain = executionCompletionPhases(previous).map(String);
-  const cleanIssues = completionModule.collectCleanPassIssues({
-    projectRoot, feature, chain: previousChain, executionScope: previous, frameworkRoot,
-  });
-  const completedPhases = input.completedPhases
-    ?? new Set(previousChain.filter(phase => !cleanIssues.some(issue => issue.phase === phase)));
-  const outcome = resolveScopeRevisionProposal({
-    projectRoot, frameworkRoot, feature, workflow,
-    proposals,
-    previous,
-    // 授权边界取**出生段的链**（`previous` 是应用过修订的有效范围，链会随义务满足而缩短/变空——
-    // 拿它当边界时，重复收尾会把同一份合法提案判成越权、连后面的 no-op 判断都到不了）。
-    authorizedPhases: record!.execution_scope.phase_chain,
-    completedPhases,
-  });
-  if (outcome) {
-    record = appendFeatureScopeRevision({ projectRoot, feature, nextScope: outcome.scope, trigger: { phase: input.phase }, revisionInput: outcome.input }).record;
-    revisionApplied = true;
-  }
-
-  // ② 重新读取有效范围（修订后的那一份）
-  const scope = featureEffectiveScope(record!);
-
-  // ③ 四条件：无 run 身份 + 有冻结记录（上面已确保）、completion_target=feature、无 unresolved、
-  //    完整完成链每个阶段 clean-pass（与 goal 侧**同一个** `shouldGenerateFeatureCompletion`）。
-  const chain = executionCompletionPhases(scope).map(String);
-  const gate = completionModule.shouldGenerateFeatureCompletion(scope, {
-    projectRoot, feature, chain, executionScope: scope, frameworkRoot,
-  });
-  if (!gate.eligible) {
-    return { revisionApplied, skippedReason: gate.issues.length ? `non_clean_pass: ${gate.issues.slice(0, 3).map(issue => `[${issue.phase}] ${issue.condition}`).join('; ')}` : 'scope_not_complete' };
-  }
-  const { originalAbs } = completionModule.generateFeatureCompletion({
-    projectRoot, feature, chain,
-    workflowTrack: input.workflowTrack,
-    runId: null,
-    runDirAbs: featureFilePath(projectRoot, feature, 'completion'),
-    phaseRunIds: {},
-    executionScope: scope,
-    frameworkRoot,
-  });
-  return { revisionApplied, completionPath: originalAbs };
-}
-
-/** 读本阶段 script-report 上的修订输入（runtime 的同一读取面：`checks[].scope_revision_input`）。 */
-function readPhaseScopeRevisionInputs(projectRoot: string, feature: string, phase: string, frameworkRoot: string): ExecutionScopeInput[] {
-  const abs = path.join(featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot), 'script-report.json');
-  if (!fs.existsSync(abs)) return [];
-  try {
-    const report = JSON.parse(fs.readFileSync(abs, 'utf8')) as { checks?: Array<{ scope_revision_input?: ExecutionScopeInput }> };
-    return (report.checks ?? []).map(check => check.scope_revision_input).filter((input): input is ExecutionScopeInput => !!input);
-  } catch {
-    return [];
-  }
+  return { revisionApplied: false, skippedReason: featureEffectiveScope(record).completion_target === 'feature'
+    ? 'goal-runtime-required' : 'request-terminal' };
 }
 
 /**
@@ -680,6 +591,7 @@ export function resolveBirthExecutionScope(
   workflow: WorkflowSpec,
   frameworkRoot?: string,
   requirement?: string,
+  manifestFidelity?: FidelityTarget,
 ): { scope: ExecutionScope | undefined; source: 'feature-record' | 'candidate' } {
   if (workflow.schema_version === '1.2') {
     const record = readFeatureFrozenScope(projectRoot, feature);
@@ -700,7 +612,7 @@ export function resolveBirthExecutionScope(
       return { scope: featureEffectiveScope(record), source: 'feature-record' };
     }
   }
-  return { scope: resolveFeatureExecutionScope(projectRoot, feature, workflow, frameworkRoot, requirement), source: 'candidate' };
+  return { scope: resolveFeatureExecutionScope(projectRoot, feature, workflow, frameworkRoot, requirement, manifestFidelity), source: 'candidate' };
 }
 
 /**
@@ -708,7 +620,7 @@ export function resolveBirthExecutionScope(
  * 这里在该 supersede 上下文里按**当前输入**重生成候选（与 `--prepare-scope` 同一个 `buildFeatureScopeCandidate`，
  * 只在内存里、不写回 feature.yaml），再经 `resolveWithPriorEvidence` 复用既往阶段证据；不整份继承源 run 范围，
  * 也不读 feature 既有候选（其定义类满足依据绑定在派生文件刷新后即过期，会把 spec/plan 误排成执行阶段）。
- * 主 Agent 的四项输入从源 run 有效范围继承：完成终点、请求结果、请求动作（= 源 run 的完成链）、
+ * 主 Agent 的四项输入从源 run 有效范围继承：完成终点、请求结果、请求动作（完成链及必需定义的既有责任方）、
  * 影响判断（结论与理由原样，来源路径按当前字节重新绑定）；需求取合并增量后的最终文本。
  * feature 冻结记录在此**不作范围来源、不做候选漂移检查**，只作血缘核对：
  * 有记录时，当前转交对象必须就是本次 supersede 源，否则拒绝出生。
@@ -720,6 +632,7 @@ export function resolveSuccessorExecutionScope(
   frameworkRoot: string | undefined,
   requirement: string | undefined,
   sourceRunId: string,
+  manifestFidelity?: FidelityTarget,
 ): ExecutionScope | undefined {
   if (workflow.schema_version !== '1.2') return undefined;
   const record = readFeatureFrozenScope(projectRoot, feature);
@@ -731,22 +644,29 @@ export function resolveSuccessorExecutionScope(
         : `[execution-scope] feature 范围仍由 feature 载体持有（未转交任何 run），没有 run 可 supersede——完成后修正请先按当前输入追加 feature 范围修订，再起新 run（不带 --supersede）`);
     }
   }
-  const previous = loadEffectiveExecutionScope(projectRoot, feature, sourceRunId);
-  if (!previous) throw new Error(`[execution-scope] 源 run ${sourceRunId} 没有可读的有效执行范围，无法继承请求输入——请用 --prepare-scope 生成候选后起新 run`);
   const root = frameworkRoot ?? inferRepoLayout(projectRoot).frameworkRoot;
+  const previous = loadEffectiveExecutionScope(projectRoot, feature, sourceRunId, root);
+  if (!previous) throw new Error(`[execution-scope] 源 run ${sourceRunId} 没有可读的有效执行范围，无法继承请求输入——请用 --prepare-scope 生成候选后起新 run`);
   const impact = previous.request_impact;
   const basisPaths = [...new Set((impact?.basis ?? []).flatMap(binding => binding.source_refs ?? []))];
+  // A temporary chain omits blocked owners, not the delivery obligations they still owe.
+  const requestedPhases = [...new Set([
+    ...executionCompletionPhases(previous),
+    ...previous.obligations.filter(obligation => obligation.applicability === 'required'
+      && (!obligation.satisfied_by?.length || ['acceptance-context', 'design-context'].includes(obligation.kind))).map(obligation => obligation.owner_phase),
+    // Unknown evidence is re-derived below; treating its owner as an explicit request would make it required.
+  ])];
   const candidate = buildFeatureScopeCandidate({
     projectRoot, frameworkRoot: root, feature,
     completionTarget: previous.completion_target,
     requestedResults: [...previous.requested_results],
-    requestedPhases: executionCompletionPhases(previous),
+    requestedPhases,
     ...(impact && basisPaths.length ? { impact: { userVisibleBehaviorChange: impact.user_visible_behavior_change, reason: impact.reason, basisPaths } } : {}),
     ...(requirement?.trim() ? { requirement } : {}),
   });
   // 需求血缘按 manifest.requirement 原文算（与 computeRunRequirementSha 同口径，不 trim）：需求未变即与源 run 相同、复用不受影响。
   return resolveWithPriorEvidence(candidate, workflow, {
-    projectRoot, feature, frameworkRoot: root, requirement: requirement?.trim() || undefined,
+    projectRoot, feature, frameworkRoot: root, requirement: requirement?.trim() || undefined, manifestFidelity,
     ...(requirement?.trim() ? { requirementSha: computeRequirementShaFromText(projectRoot, feature, requirement) } : {}),
   });
 }
@@ -786,12 +706,12 @@ function phasesWithExistingEvidence(projectRoot: string, feature: string, workfl
  */
 export function resolveBirthScopeForManifest(
   projectRoot: string,
-  manifest: { feature: string; requirement?: string; execution_scope?: unknown },
+  manifest: { feature: string; requirement?: string; execution_scope?: unknown; fidelity?: FidelityTarget },
   workflow: WorkflowSpec,
   frameworkRoot?: string,
 ): ExecutionScope | undefined {
   if (workflow.schema_version !== '1.2') return manifest.execution_scope ? validateExecutionScope(manifest.execution_scope) : undefined;
-  const resolved = resolveBirthExecutionScope(projectRoot, manifest.feature, workflow, frameworkRoot, manifest.requirement);
+  const resolved = resolveBirthExecutionScope(projectRoot, manifest.feature, workflow, frameworkRoot, manifest.requirement, manifest.fidelity);
   if (resolved.source === 'feature-record') return resolved.scope;
   return manifest.execution_scope ? validateExecutionScope(manifest.execution_scope) : resolved.scope;
 }

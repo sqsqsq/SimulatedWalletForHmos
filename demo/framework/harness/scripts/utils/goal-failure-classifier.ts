@@ -11,6 +11,12 @@ import {
   type DependencyPolicy,
   DEFAULT_DEPENDENCY_POLICY,
 } from './phase-transition-policy';
+import { AGGREGATE_RUN_STATUS_CHECK_IDS, requiredSummaryCheckGaps, resultBasisOwner } from './check-disposition';
+import type { CurrentDisposition } from './check-disposition';
+import { digestDirectoryTree, EXCLUDED_SEGMENTS } from './product-source-snapshot';
+import { normalizeCheckId } from './phase-alias';
+import { existingProjectPathSpelling, isInsideProjectRoot, validateProjectRelativePath } from './project-relative-path';
+import { CANONICAL_CODING_COMPILE_ID, LEGACY_CODING_COMPILE_ID, CANONICAL_UT_COMPILE_ID, LEGACY_UT_COMPILE_ID } from '../../capability-registry';
 
 export type FailureKind =
   | 'deterministic_gate_or_artifact_missing'
@@ -182,66 +188,6 @@ export const CUMULATIVE_HALT_FAMILY: ReadonlySet<FailureKind> = new Set<FailureK
 ]);
 
 /**
- * f9c2e6b4 t3：重试耗尽时的**责任归属**——哪些 FailureKind 属"外部条件未满足"。
- *
- * 立项事故 run 20260803T103413Z-3f72a8：耗尽后产生端发
- * `assess_halt:phase_verdict:halt; failure_kind=project_build`，被 `normalizeIncidentId`
- * 截到首个 `:` 变成 `assess_halt`，registry 固定 `operator` → **WAITING/human**。
- * 真实责任类别在这一步被抹平，而 WAITING 会让 supervisor 永不拉起。
- *
- * 本集合**复用既有 FailureKind 分类**，不新建正则、不新建第二套责任表——
- * 它只回答一个问题：这个失败是"内容没做对"（重启无用，人来看）还是"外部条件不满足"
- * （环境恢复后可继续）。不在集合内的一律按内容失败处理（保守：内容失败 → TERMINAL，
- * 不会让 supervisor 反复拉起一个注定再死的 run）。
- */
-export const EXTERNAL_RETRY_RESPONSIBILITY_KINDS: ReadonlySet<FailureKind> = new Set<FailureKind>([
-  'toolchain',
-  'external_block',
-  'capture',
-  'agent_timeout',
-  'transient_api_error',
-  'agent_no_output',
-]);
-
-/**
- * plan b3e8d4c7 t3：**assess-halt 汇点的事故 id**。
- *
- * 该汇点（goal-runner 的 `action==='halt' && !haltReason`）承载多类 halt，f9c2e6b4 t3
- * 曾把它**整体**假设成"重试耗尽"，于是宿主 run 20260804T033834Z-99c0a1 里预算只用了 1/2、
- * 真因是"推荐无路由"，却被标 content_retry_exhausted + TERMINAL（halt_reason 说 exhausted、
- * reason 说 unclosed，自相矛盾，还让 supervisor 永不拉起）。
- *
- * `retries >= max` 只是**必要**条件——预算恰好用满时任何落进 catch-all 的 halt 都会被误标。
- * 充分证据须同时满足：来自 phase-outcome SSOT 的 halt（runner_action==='halt'）、
- * 本轮非 PASS、且未熔断。其余一律 fail-closed 到 framework_bug——**不给 catch-all 起精确名字**。
- */
-export function resolveAssessHaltIncident(input: {
-  retriesUsed: number;
-  maxRetriesPerPhase: number;
-  /** assess recommendation 的 SSOT 动作（仅当推荐派生自 phase outcome 时存在） */
-  runnerAction?: string;
-  verdict: string;
-  fused: boolean;
-  failureKind: FailureKind;
-}): 'content_retry_exhausted' | 'external_retry_exhausted' | 'framework_bug' {
-  const exhausted =
-    input.retriesUsed >= input.maxRetriesPerPhase &&
-    input.runnerAction === 'halt' &&
-    input.verdict !== 'PASS' &&
-    !input.fused;
-  if (!exhausted) return 'framework_bug';
-  return EXTERNAL_RETRY_RESPONSIBILITY_KINDS.has(input.failureKind)
-    ? 'external_retry_exhausted'
-    : 'content_retry_exhausted';
-}
-
-/** 同一 blocker_signature 在 CUMULATIVE_HALT_FAMILY 家族内累计出现达到此次数即 halt（非连续）。 */
-export const CUMULATIVE_HALT_THRESHOLD = 3;
-
-/** advance_blocked（script PASS 但 closure 打不开）累计出现达到此次数（含本次）即 halt 求人，不再退化到无限重试。 */
-export const ADVANCE_BLOCKED_HALT_THRESHOLD = 2;
-
-/**
  * Blocker ids where retry without user input is structurally pointless.
  * Grep-verified against harness/scripts/check-*.ts (no ghost ids).
  * Coverage: spec/plan/review artifact gates + receipt trace/context gates.
@@ -267,7 +213,18 @@ export const DETERMINISTIC_GATE_BLOCKER_IDS = new Set<string>([
   'context_exploration_file_not_found',
   'verifier_report_missing',
   'verifier_report_path_missing',
+  // plan f7045213 §6.2 / 第二批：spec、plan 的设计权威对齐门（结果依据）。drift 与 invalid 两分支共用一个 id、
+  // 检查结果里没有可区分的结构字段，暂不进去向表；归因经本表不落代码回归，重试提示词不含回退指引。
+  'authoritative_content_aligned',
 ]);
+
+/**
+ * plan f7045213 §7：确定性门禁归因与受影响文件提取的同一份有效映射——
+ * 去向表登记的结果依据类检查（resultBasisOwner 非空）与既有的确定性门禁 id 表，不要求两边重复登记。
+ */
+export function isDeterministicGateBlockerId(id: string): boolean {
+  return DETERMINISTIC_GATE_BLOCKER_IDS.has(id) || resultBasisOwner(id) !== null;
+}
 
 export interface GoalSummaryBlocker {
   id?: string;
@@ -395,11 +352,14 @@ export function filterSignatureBlockers(summary: GoalSummaryLike | null | undefi
 }
 
 export interface GoalSummaryLike {
+  blocking_skips?: Array<{ id?: string; blocking_class?: string }>;
   verdict?: string;
   blocking_class?: string;
   failure_kind?: string;
   blockers?: GoalSummaryBlocker[];
   repair_candidates?: Array<{ id?: string; files?: string[] }>;
+  /** summary 的运行状态面板（writer 恒写）；超时分支据此还原去重前的聚合项事实（plan f7045213 R1）。 */
+  run_statuses?: Array<{ id?: string; status?: string }>;
 }
 
 /** Machine-related content paths only; prose/notes/HEAD are deliberately absent. */
@@ -489,17 +449,13 @@ function blockerIds(summary: GoalSummaryLike | null | undefined): string[] {
     .sort();
 }
 
-function topBlockingMeta(summary: GoalSummaryLike | null | undefined): {
-  blocking_class?: string;
-  failure_kind?: string;
-} {
-  if (!summary) return {};
-  if (summary.blocking_class || summary.failure_kind) {
-    return { blocking_class: summary.blocking_class, failure_kind: summary.failure_kind };
-  }
-  const b = summary.blockers?.[0];
-  if (!b) return {};
-  return { blocking_class: b.blocking_class, failure_kind: b.classification };
+/**
+ * plan 4e6fb3b6 §4：外部阻断看**全部** blocker——summary 顶层或任一 blocker 属外部阻断类即成立。
+ * 此前只看顶层或第一个 blocker，外部 blocker 排在后面时落到代码回归。
+ */
+function hasDeferrableExternalBlocker(summary: GoalSummaryLike, policy: DependencyPolicy): boolean {
+  if (isDeferrableExternalBlock(summary.blocking_class, summary.failure_kind, policy)) return true;
+  return (summary.blockers ?? []).some((b) => isDeferrableExternalBlock(b.blocking_class, b.classification, policy));
 }
 
 /**
@@ -560,6 +516,17 @@ export function isAllFrameworkBugBlockers(summary: GoalSummaryLike | null | unde
 }
 
 /**
+ * plan f7045213 §4.4 返修 R1：阻断清单里去重掉的聚合运行状态项（run_statuses 记为 FAIL、清单里却没有它）。
+ * 只供超时决策表的"全部 framework_bug"判定使用——那张表按去重之前的事实定稿：聚合项算一条非框架阻断，
+ * 于是"唯一源失败是 framework_bug + 聚合项"的超时轮仍归 agent_timeout 续作。清单、签名与非超时路径不受影响。
+ */
+function hasDedupedAggregateRunStatus(summary: GoalSummaryLike | null | undefined): boolean {
+  const listed = new Set((summary?.blockers ?? []).map(b => b.id));
+  return (summary?.run_statuses ?? []).some(s =>
+    typeof s.id === 'string' && AGGREGATE_RUN_STATUS_CHECK_IDS.has(s.id) && s.status === 'FAIL' && !listed.has(s.id));
+}
+
+/**
  * P0-B（§七.3）：跨 attempt 比较用的**有效** signature。PASS+timeout 常无普通 blocker
  * → 空 signature 会被 shouldHaltNoProgress 的 `!priorBlockerSignature` 短路、熔断恒不
  * 触发（逃逸）。agent_timeout 无 blocker 时构造专用 signature `agent_timeout@<phase>`，
@@ -579,7 +546,8 @@ export function buildEffectiveBlockerSignature(
 }
 
 /**
- * Classify harness failure for guard + retry-context. Unknown ids → code_regression (prefer retry).
+ * Classify harness failure for guard + retry-context. Unknown ids → code_regression (prefer retry)——
+ * 兜底只在外部阻断、框架阻断及其它专名判定都不成立时生效（plan 4e6fb3b6 §4 保留）。
  * P0-B/P0-D：agent 级信号（signals）优先于 blocker 归因——超时/断流 attempt 的
  * deterministic blocker 只是"没跑完"的派生症状，按症状归因即误熔断（bc-openCard 现场）。
  */
@@ -605,7 +573,7 @@ export function classifyFailureKind(
     if (fresh && hasIntegrityBlocker(currentSummary)) {
       return 'framework_integrity_block';
     }
-    if (fresh && isAllFrameworkBugBlockers(currentSummary)) {
+    if (fresh && isAllFrameworkBugBlockers(currentSummary) && !hasDedupedAggregateRunStatus(currentSummary)) {
       return 'framework_bug';
     }
     // 旧 await_human_confirm 不再压过超时事实；恢复后由当前视觉 checker 重算机器证据。
@@ -627,19 +595,21 @@ export function classifyFailureKind(
   if (hasIntegrityBlocker(currentSummary)) {
     return 'framework_integrity_block';
   }
-  const meta = topBlockingMeta(currentSummary);
-  if (
-    isDeferrableExternalBlock(meta.blocking_class, meta.failure_kind, dependencyPolicy)
-  ) {
+  if (hasDeferrableExternalBlocker(currentSummary, dependencyPolicy)) {
     return 'external_block';
   }
-  // P0-3：非超时轮全 framework_bug（门禁自身崩溃）→ 首触 halt 指向回灌源仓；混装（框架
-  // bug + 内容 blocker）走既有归因——内容 blocker 仍可修，不因框架 bug 把整轮判死。
-  if (isAllFrameworkBugBlockers(currentSummary)) {
+  // 真正的框架 FAIL 保持原归因；明确的框架执行缺口只在没有真实 blocker 时归框架。
+  if (aggregateBlockerActionability(currentSummary).hasFramework || !(currentSummary?.blockers?.length)
+    && requiredSummaryCheckGaps(currentSummary).some(check => check.blocking_class === 'framework_internal')) {
     return 'framework_bug';
   }
   const ids = blockerIds(currentSummary);
-  if (ids.some((id) => DETERMINISTIC_GATE_BLOCKER_IDS.has(id))) {
+  if (ids.some(isDeterministicGateBlockerId)) {
+    return 'deterministic_gate_or_artifact_missing';
+  }
+  // plan f7045213 §4.4：聚合的运行状态项只在没有任何源 blocker 时留在清单里——失败只由关键的
+  // 阻断跳过或必需文档缺失引起，是门禁没跑完/产物缺失，不是代码回归。
+  if (ids.length > 0 && ids.every((id) => AGGREGATE_RUN_STATUS_CHECK_IDS.has(id))) {
     return 'deterministic_gate_or_artifact_missing';
   }
   // legacy compatibility：旧 await_human_confirm 不是通行证，也不再进入等待用户的 kind；
@@ -701,7 +671,7 @@ export function extractDeterministicAffectedFiles(
 ): string[] {
   const out = new Set<string>();
   for (const b of summary?.blockers ?? []) {
-    if (!b.id || !DETERMINISTIC_GATE_BLOCKER_IDS.has(b.id)) continue;
+    if (!b.id || !isDeterministicGateBlockerId(b.id)) continue;
     for (const f of b.affected_files ?? []) {
       if (f.trim()) out.add(f.trim().replace(/\\/g, '/'));
     }
@@ -709,22 +679,46 @@ export function extractDeterministicAffectedFiles(
   return [...out];
 }
 
+/** 目录摘要的条目上限：UT 的 ohosTest 源码目录通常很小，上限只兜异常大的目录。 */
+const DIRECTORY_SNAPSHOT_MAX_ENTRIES = 5000;
+
 function hashFileContent(absPath: string): string {
   const buf = fs.readFileSync(absPath);
   return crypto.createHash('sha256').update(buf).digest('hex');
 }
 
-/** Snapshot existence + content hash (not mtime). */
+/**
+ * Snapshot existence + content hash (not mtime).
+ * 路径可为绝对或相对工程根：生产检查的 affected_files 多为绝对路径（如 featureFilePath），
+ * 若一律 join 到 projectRoot 会拼成不存在的路径、快照恒 exists:false，真实修复被判无进展。
+ * 键统一取工程根下的相对路径（工程外的保留规范化绝对路径），同一文件两种写法前后对得上。
+ */
 export function snapshotArtifacts(
   projectRoot: string,
-  relativePaths: string[],
+  paths: string[],
+  excludeDirectoryPath?: (relativePath: string) => boolean,
 ): ArtifactSnapshot {
   const snap: ArtifactSnapshot = {};
-  for (const rel of relativePaths) {
-    const norm = rel.replace(/\\/g, '/');
-    const abs = path.join(projectRoot, norm);
+  for (const p of paths) {
+    const abs = path.isAbsolute(p) ? path.normalize(p) : path.join(projectRoot, p);
+    const rel = path.relative(projectRoot, abs);
+    const norm = (rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : abs).replace(/\\/g, '/');
     if (!fs.existsSync(abs)) {
       snap[norm] = { exists: false, contentHash: '' };
+      continue;
+    }
+    let isDirectory: boolean;
+    try {
+      isDirectory = fs.lstatSync(abs).isDirectory();
+    } catch {
+      return {}; // plan 31063a73 §3.2 返修：入口检查失败（EIO/EACCES 等）同样整份快照为空，不冒到 runtime
+    }
+    if (isDirectory) {
+      // plan 31063a73 §3.2：目录条目按目录树内容求摘要（如 UT blocker 给的模块 ohosTest 源码目录）。
+      // 超限或读取失败时本轮整份快照为空——走既有"缺少可比基线"分支；空哈希在比较器里没有"不可比"语义。
+      const digest = digestDirectoryTree(projectRoot, abs, DIRECTORY_SNAPSHOT_MAX_ENTRIES, excludeDirectoryPath);
+      if (digest === null) return {};
+      snap[norm] = { exists: true, contentHash: digest };
     } else {
       try {
         snap[norm] = { exists: true, contentHash: hashFileContent(abs) };
@@ -756,45 +750,199 @@ export function artifactsProgressed(
   return false;
 }
 
+/** 回退重复只接受完整、同key的实际内容基线；失败读取不等于零改动。 */
+export function compareRelatedInputSnapshots(prior: unknown, current: ArtifactSnapshot): 'changed' | 'unchanged' | 'unknown' {
+  if (!prior || typeof prior !== 'object' || Array.isArray(prior)) return 'unknown';
+  const previous = prior as ArtifactSnapshot;
+  const keys = Object.keys(current).sort();
+  if (keys.length === 0 || keys.join('\0') !== Object.keys(previous).sort().join('\0')) return 'unknown';
+  for (const snapshot of [previous, current]) {
+    for (const key of keys) {
+      const entry = snapshot[key];
+      if (!entry || typeof entry !== 'object' || typeof entry.exists !== 'boolean' || typeof entry.contentHash !== 'string'
+        || (entry.exists ? !/^[0-9a-f]{64}$/i.test(entry.contentHash) : entry.contentHash !== '')) return 'unknown';
+    }
+  }
+  return keys.some(key => previous[key].exists !== current[key].exists
+    || previous[key].contentHash.toLowerCase() !== current[key].contentHash.toLowerCase()) ? 'changed' : 'unchanged';
+}
+
 export interface NoProgressGuardInput {
   failureKind: FailureKind;
   priorBlockerSignature: string | null;
   currentBlockerSignature: string;
   priorArtifactSnapshot: ArtifactSnapshot | null;
   currentArtifactSnapshot: ArtifactSnapshot;
-  /**
-   * content 失败的相关文件集合是否已由机器证据解析且非空
-   * （`extractContentRelatedFiles` = `repair_candidates[].files` ∪ `blockers[].affected_files`）。
-   */
+  /** @deprecated Historical diagnostic only; byte snapshots are not completed evaluations. */
   relevantEvidenceKnown?: boolean;
+  previousEvaluation?: CompletionEvaluation | null;
+  currentEvaluation?: CompletionEvaluation;
+  comparableHistory?: readonly CompletionEvaluation[];
+  feedbackDelivered?: boolean;
+  authorReturned?: boolean;
+}
+
+/** A view of existing result/input facts, not another persisted progress record. */
+export interface CompletionEvaluation {
+  /** Same request, authorization and applicable acceptance version. */
+  acceptanceKey: string;
+  /** Relevant author inputs, excluding generated report/transport metadata. */
+  inputs: ArtifactSnapshot;
+  disposition: CurrentDisposition;
+  /** Actual completed tool/check families; absent means the full view. Never an author dispatch queue. */
+  checkFamilies?: readonly string[];
+  /** Required checks and independent verification actually finished for these inputs. */
+  completed: boolean;
+}
+
+const sortedRefs = (refs: readonly string[] | undefined): string[] => [...new Set(refs ?? [])].sort();
+
+function scopedProblems(problems: CurrentDisposition['problems'], families?: readonly string[]): CurrentDisposition['problems'] {
+  if (families === undefined) return problems;
+  return problems.filter(problem => {
+    const source = problem.source_phase ?? problem.phase;
+    return source !== '*' && source !== 'scope' && families.includes(source);
+  });
+}
+
+function comparisonScope(evaluation: CompletionEvaluation): string {
+  return evaluation.checkFamilies === undefined ? 'full' : JSON.stringify(sortedRefs(evaluation.checkFamilies));
+}
+
+export function problemIdentity(problem: CurrentDisposition['completionBlocking'][number], includeRouting = false): string {
+  const finding = problem.id.startsWith('open_finding:');
+  return JSON.stringify({
+    id: finding ? 'open_finding' : problem.id,
+    // A verified finding follows its real object, not the label or reviewer that reported it.
+    ...(!finding || includeRouting ? { phase: problem.source_phase ?? problem.phase } : {}),
+    ...(includeRouting ? { owner: problem.owner, propagated_from: problem.propagated_from } : {}),
+    action: problem.action, affects: problem.affects,
+    // The subject-bound verifier report remains mandatory evidence, but its
+    // regenerated filename is not a new product defect or acceptance condition.
+    files: sortedRefs(problem.id === 'attestation_present' && problem.action === 'repair' ? [] : problem.files), evidence: sortedRefs(problem.evidence),
+  });
+}
+
+export function completionProblemSignature(disposition: CurrentDisposition, checkFamilies?: readonly string[]): string {
+  return JSON.stringify([...new Set(scopedProblems(disposition.completionBlocking, checkFamilies).filter(problem => problem.action === 'repair')
+    .map(problem => problemIdentity(problem)))].sort());
+}
+
+export function dispositionFacts(disposition: CurrentDisposition, checkFamilies?: readonly string[]): string {
+  const facts = (problems: CurrentDisposition['problems']): string[] => [...new Set(scopedProblems(problems, checkFamilies).map(problem => problemIdentity(problem, true)))].sort();
+  return JSON.stringify({ ...(checkFamilies === undefined ? { completionEligible: disposition.completionEligible, releaseReady: disposition.releaseReady } : {}),
+    problems: facts(disposition.problems), completion: facts(disposition.completionBlocking),
+    release: facts(disposition.releaseBlocking), disclosed: facts(disposition.disclosed) });
+}
+
+function nativeCompileCheck(id: string): boolean {
+  const raw = id.startsWith('open_finding:') ? id.slice('open_finding:'.length).split(':').at(-1)! : id;
+  const normalized = normalizeCheckId(raw.replace(/^adhoc_/, ''));
+  return normalized === CANONICAL_CODING_COMPILE_ID || normalized === LEGACY_CODING_COMPILE_ID
+    || normalized === CANONICAL_UT_COMPILE_ID || normalized === LEGACY_UT_COMPILE_ID;
+}
+
+/** Only native object facts identify a compiler error; report paths and line numbers do not. */
+export function nativeCompileDiagnosticRefs(check: { id: string; structured?: unknown }, projectRoot: string): string[] | undefined {
+  if (!nativeCompileCheck(check.id)) return undefined;
+  const diagnostics = (check.structured as { compiler_diagnostics?: unknown } | null)?.compiler_diagnostics;
+  if (!Array.isArray(diagnostics) || !diagnostics.length) return [];
+  const refs = new Set<string>();
+  for (const diagnostic of diagnostics) {
+    if (!diagnostic || typeof diagnostic !== 'object' || typeof diagnostic.file !== 'string' || !diagnostic.file.trim()
+      || typeof diagnostic.code !== 'string' || !diagnostic.code.trim() || typeof diagnostic.message !== 'string' || !diagnostic.message.trim()) return [];
+    try {
+      const declared = path.resolve(projectRoot, diagnostic.file.replace(/\\/g, '/'));
+      const relative = validateProjectRelativePath(projectRoot, path.relative(projectRoot, declared), 'compiler diagnostic');
+      if (relative.split('/').some(segment => EXCLUDED_SEGMENTS.has(segment))) return [];
+      const actual = existingProjectPathSpelling(projectRoot, declared);
+      if (!actual || !fs.statSync(actual).isFile()) return [];
+      const realRoot = fs.realpathSync(projectRoot), realFile = fs.realpathSync(actual);
+      if (!isInsideProjectRoot(realRoot, realFile)) return [];
+      const file = path.relative(realRoot, realFile).replace(/\\/g, '/');
+      if (file.split('/').some(segment => EXCLUDED_SEGMENTS.has(segment))) return [];
+      const ref = `compiler:${JSON.stringify([file, diagnostic.code.trim(), diagnostic.message.trim()])}`;
+      if (refs.has(ref)) return []; // Distinct diagnostics with this same object cannot be disambiguated by a line number.
+      refs.add(ref);
+    } catch { return []; }
+  }
+  return [...refs].sort();
+}
+
+export function hasFindingIdentities(disposition: CurrentDisposition, checkFamilies?: readonly string[]): boolean {
+  // The common reader supplies bound acceptance/CU/case/step refs, never report names or invoke timestamps.
+  return scopedProblems([...disposition.problems, ...disposition.completionBlocking, ...disposition.releaseBlocking, ...disposition.disclosed], checkFamilies)
+    .every(problem => nativeCompileCheck(problem.id) ? !!problem.evidence?.some(ref => ref.startsWith('compiler:'))
+      : !problem.id.startsWith('open_finding:') || !!problem.evidence?.some(ref => ref.trim().length > 0));
+}
+
+function completedEvaluation(evaluation: CompletionEvaluation | null | undefined): evaluation is CompletionEvaluation {
+  return !!evaluation?.completed && evaluation.acceptanceKey.trim().length > 0
+    && compareRelatedInputSnapshots(evaluation.inputs, evaluation.inputs) === 'unchanged';
+}
+
+function comparableRepairs(evaluation: CompletionEvaluation): boolean {
+  return completedEvaluation(evaluation) && hasFindingIdentities(evaluation.disposition, evaluation.checkFamilies)
+    && !scopedProblems(evaluation.disposition.completionBlocking, evaluation.checkFamilies).some(problem => problem.action === 'verify' || problem.action === 'wait');
+}
+
+function otherVerifiedClosure(previous: CompletionEvaluation, current: CompletionEvaluation): boolean {
+  if (current.checkFamilies === undefined) return false;
+  const allCurrent = [...current.disposition.problems, ...current.disposition.completionBlocking, ...current.disposition.releaseBlocking, ...current.disposition.disclosed];
+  const source = (problem: CurrentDisposition['problems'][number]): string => problem.source_phase ?? problem.phase;
+  const refs = (problem: CurrentDisposition['problems'][number]): string[] => {
+    const evidence = sortedRefs(problem.evidence);
+    if (!evidence.length && problem.id.startsWith('open_finding:')) return [];
+    return (evidence.length ? evidence : [problem.id]).map(ref => JSON.stringify({ source: source(problem), files: sortedRefs(problem.files), ref }));
+  };
+  for (const old of previous.disposition.completionBlocking) {
+    const family = source(old);
+    if (old.action !== 'repair' || family === '*' || family === 'scope' || current.checkFamilies.includes(family)) continue;
+    if (!hasFindingIdentities(current.disposition, [family]) || allCurrent.some(problem => source(problem) === family && (problem.action === 'wait' || problem.action === 'verify'))) continue;
+    const remaining = new Set(allCurrent.filter(problem => source(problem) === family).flatMap(refs));
+    if (refs(old).some(ref => !remaining.has(ref))) return true;
+  }
+  return false;
+}
+
+/** Reuse, comparison eligibility and baseline advancement are one decision. */
+export function evaluateCompletionProgress(input: {
+  previous?: CompletionEvaluation | null; current: CompletionEvaluation;
+  /** Existing completed result views, in chronological order; a version change ends the comparison window. */
+  history?: readonly CompletionEvaluation[]; feedbackDelivered: boolean;
+  /** A completed native author invocation handed the relevant work back after receiving feedback. */
+  authorReturned?: boolean;
+}): { evaluation: CompletionEvaluation | null; reused: boolean; halt: boolean } {
+  const { previous, current } = input;
+  if (!completedEvaluation(current)) return { evaluation: previous ?? null, reused: false, halt: false };
+  if (!completedEvaluation(previous) || previous.acceptanceKey !== current.acceptanceKey || comparisonScope(previous) !== comparisonScope(current)) return { evaluation: current, reused: false, halt: false };
+  const change = compareRelatedInputSnapshots(previous.inputs, current.inputs);
+  // A real new relevant set establishes its own baseline; it cannot prove anything about the old set.
+  if (change === 'unknown') return { evaluation: current, reused: false, halt: false };
+  const handedBack = input.feedbackDelivered && input.authorReturned === true;
+  const identified = hasFindingIdentities(previous.disposition, previous.checkFamilies) && hasFindingIdentities(current.disposition, current.checkFamilies);
+  if ((!handedBack || !identified) && change === 'unchanged' && dispositionFacts(current.disposition, current.checkFamilies) === dispositionFacts(previous.disposition, previous.checkFamilies)) {
+    // Other families/global constraints still update the full view without advancing this comparison.
+    return { evaluation: dispositionFacts(current.disposition) === dispositionFacts(previous.disposition) ? previous : current, reused: true, halt: false };
+  }
+  if (!identified) return { evaluation: current, reused: false, halt: false };
+  if (!input.feedbackDelivered || change !== 'changed' && !handedBack || !comparableRepairs(previous) || !comparableRepairs(current)) return { evaluation: current, reused: false, halt: false };
+  const signature = completionProblemSignature(current.disposition, current.checkFamilies);
+  if (signature === '[]') return { evaluation: current, reused: false, halt: false };
+  let repeated = false;
+  for (const prior of [...input.history ?? [], previous]) {
+    if (prior.acceptanceKey !== current.acceptanceKey || comparisonScope(prior) !== comparisonScope(current)) { repeated = false; continue; }
+    if (comparableRepairs(prior) && compareRelatedInputSnapshots(prior.inputs, current.inputs) !== 'unknown'
+      && completionProblemSignature(prior.disposition, prior.checkFamilies) === signature) repeated = true;
+  }
+  return { evaluation: current, reused: false, halt: repeated && !otherVerifiedClosure(previous, current) };
 }
 
 /**
- * Halt when a signature-halt kind repeats with zero progress (2nd+ identical failure).
- * T6 起覆盖 {deterministic_gate, toolchain, capture, visual_gap}：
- *   - deterministic/toolchain/capture：基建/缺件类，盲重试无益 → identical signature 即 halt
- *     （toolchain/capture 无 watched artifact，artifactsProgressed 恒 false，纯靠 signature 重复判定，
- *      达成"工具链/采集反复失败不吃视觉迭代预算"的预算分流）。
- *   - visual_gap：同一组视觉门禁 signature 重复（coding 上一轮"修"未改变任何失败门禁）= 无改善 → 熔断求人，
- *     避免 homepage 那种"3 轮把卡包瞎挪、视觉门禁原样复现"的空转。
- *   - code_regression：相关集合**已知**时仍要求可比内容基线（不得用空快照冒充"无改动"）；
- *     相关集合**未知或为空**时（无 repair candidate、无 blocker affected_files）意味着
- *     没解析出可修目标＝本阶段无路可走，同签名重复即停（plan e7a2c4f1 §3.6，覆盖
- *     1f3d7a92 §3.3 顺带选的"退回有界重试烧满 max_retries_per_phase"出路——那条路在三轮
- *     宿主实测里 8 次同签名零进展、且终态理由 `content_retry_exhausted` 把账本问题说成
- *     内容问题）。**空集只说明"没解析出目标"，不能说成"证明了没修"**，调用点的文案因此
- *     必须写「相关目标未知」。不新增 halt reason，仍走既有 `no_progress_guard`。
+ * Boolean compatibility view of the same completion decision. Old signatures and byte snapshots
+ * alone do not prove a completed acceptance evaluation or that feedback reached the author.
  */
 export function shouldHaltNoProgress(input: NoProgressGuardInput): boolean {
-  const priorKeys = Object.keys(input.priorArtifactSnapshot ?? {}).sort();
-  const currentKeys = Object.keys(input.currentArtifactSnapshot).sort();
-  const comparableContentBaseline = priorKeys.length > 0 && currentKeys.length > 0 &&
-    JSON.stringify(priorKeys) === JSON.stringify(currentKeys);
-  const eligible = SIGNATURE_HALT_KINDS.has(input.failureKind) ||
-    (input.failureKind === 'code_regression' &&
-      (input.relevantEvidenceKnown === true ? comparableContentBaseline : true));
-  if (!eligible) return false;
-  if (!input.priorBlockerSignature || input.priorBlockerSignature.length === 0) return false;
-  if (input.priorBlockerSignature !== input.currentBlockerSignature) return false;
-  return !artifactsProgressed(input.priorArtifactSnapshot, input.currentArtifactSnapshot);
+  return !!input.currentEvaluation && evaluateCompletionProgress({ previous: input.previousEvaluation, current: input.currentEvaluation,
+    history: input.comparableHistory, feedbackDelivered: input.feedbackDelivered === true, authorReturned: input.authorReturned }).halt;
 }

@@ -37,6 +37,8 @@ export interface ExecutionKeyInputs {
 
 export interface ExecutionKeyRecord {
   schema_version: '1.0';
+  /** 原样携带受管调用身份；旧记录/普通请求无需登记。 */
+  goal_invocation?: { run_id: string; phase: string; attempt_id: string };
   execution_key: string;
   inputs: ExecutionKeyInputs;
   /** hylyre leg：Hylyre trace 绝对路径；UT leg 无 trace，恒空串（执行事实由冻结件组担保） */
@@ -77,6 +79,11 @@ export function utFrozenRunArtifacts(modules: readonly string[]): FrozenArtifact
     { top: `ut-result.${m}.json`, frozen: `frozen.ut-result.${m}.json`, group: 'execution' as const },
     { top: `hdc-test.${m}.log`, frozen: `frozen.hdc-test.${m}.log`, group: 'execution' as const },
   ]);
+}
+
+/** Module names are encoded by this profile's frozen UT result format. */
+export function utExecutionModules(record: Pick<ExecutionKeyRecord, 'frozen_files'>): string[] {
+  return (record.frozen_files ?? []).flatMap(name => /^frozen\.ut-result\.(.+)\.json$/.exec(name)?.[1] ?? []);
 }
 
 /** 把本 run 的顶层 timing/meta 冻结进 run 目录；返回冻结成功的文件名。 */
@@ -160,6 +167,22 @@ export interface ExecutionKeyRunView {
 /** plan 5e1c7a93 D2：run 目录段名——testing 侧恒 'hylyre'，UT 侧 'ut'。 */
 export type ExecutionKeyLeg = 'hylyre' | 'ut';
 
+/** Record the attempt before dispatch so a crash cannot expose an older success. */
+export function startExecutionKeyRun(reportsBase: string, leg: ExecutionKeyLeg, inputs: ExecutionKeyInputs): { runDir: string; record: ExecutionKeyRecord } {
+  const latest = listExecutionKeyRuns(reportsBase, leg)[0]?.record.run_started_at;
+  const prior = latest ? Date.parse(latest) : NaN;
+  const now = new Date(Math.max(Date.now(), Number.isFinite(prior) ? prior + 1 : 0));
+  const stamp = now.toISOString().replace(/[-:.]/g, '');
+  const runDir = path.join(reportsBase, stamp, leg);
+  const record: ExecutionKeyRecord = {
+    schema_version: '1.0', execution_key: computeExecutionKey(inputs), inputs,
+    trace_path: '', run_started_at: now.toISOString(), outcome: 'started',
+    trace_sha256: null, timing_complete: false, frozen_files: [],
+  };
+  writeExecutionKeyRecord(runDir, record);
+  return { runDir, record };
+}
+
 /** 扫描 <reportsBase>/<stamp>/<leg>/execution-key.json，按目录 stamp 降序（最新在前）。 */
 export function listExecutionKeyRuns(reportsBase: string, leg: ExecutionKeyLeg = 'hylyre'): ExecutionKeyRunView[] {
   const out: ExecutionKeyRunView[] = [];
@@ -190,6 +213,9 @@ export interface ReuseDecision {
 }
 
 export interface DecideReuseOptions {
+  invocation?: NonNullable<ExecutionKeyRecord['goal_invocation']>;
+  /** Existing leg-specific recovery observation may explain an environmental FAIL followed by PASS. */
+  conflictResolved?: (failure: ExecutionKeyRunView) => boolean;
   leg?: ExecutionKeyLeg;
   /** 本轮期望的冻结件集合；UT leg 由 utFrozenRunArtifacts(mods) 现算（整轮键 + 逐模块冻结件） */
   artifacts?: ReadonlyArray<FrozenArtifactSpec>;
@@ -198,6 +224,23 @@ export interface DecideReuseOptions {
    * 不排除的话最新一条永远是自己，复用恒不命中。
    */
   excludeRunDir?: string;
+}
+
+function sameInvocation(left: ExecutionKeyRecord['goal_invocation'], right: ExecutionKeyRecord['goal_invocation']): boolean {
+  return !!left && !!right && left.run_id === right.run_id && left.phase === right.phase && left.attempt_id === right.attempt_id;
+}
+
+/** A later PASS in the same unchanged attempt cannot erase its earlier FAIL. A fresh attempt may collect new evidence. */
+function precedingInvocationFailure(runs: ExecutionKeyRunView[], latest: ExecutionKeyRunView,
+  invocation = latest.record.goal_invocation): ExecutionKeyRunView | undefined {
+  for (const view of runs.slice(runs.indexOf(latest) + 1)) {
+    if (view.record.execution_key !== latest.record.execution_key) break;
+    // A consumer cannot replace the work identity of the PASS being evaluated.
+    if ((sameInvocation(view.record.goal_invocation, latest.record.goal_invocation ?? invocation)
+      || !latest.record.goal_invocation && !!view.record.goal_invocation)
+      && view.record.outcome !== 'success' && view.record.outcome !== 'started') return view;
+  }
+  return undefined;
 }
 
 /**
@@ -247,11 +290,14 @@ export function decideReuse(
 ): ReuseDecision {
   const artifacts = opts.artifacts ?? FROZEN_RUN_ARTIFACTS;
   const exclude = opts.excludeRunDir ? path.resolve(opts.excludeRunDir) : null;
-  const latest = listExecutionKeyRuns(reportsBase, opts.leg ?? 'hylyre')
-    .filter(r => !exclude || path.resolve(r.runDir) !== exclude)[0];
+  const runs = listExecutionKeyRuns(reportsBase, opts.leg ?? 'hylyre')
+    .filter(r => !exclude || path.resolve(r.runDir) !== exclude);
+  const latest = runs[0];
   if (!latest) return { reusable: null, reason: '无 execution-key 历史 run' };
   const identity = isExecutionRecordReusable(latest.record, latest.runDir, { executionKey, artifacts, label: latest.dirStamp });
   if (!identity.ok) return { reusable: null, reason: identity.reason };
+  const conflict = precedingInvocationFailure(runs, latest, opts.invocation ?? latest.record.goal_invocation);
+  if (conflict && !opts.conflictResolved?.(conflict)) return { reusable: null, reason: `同调用观察冲突：${conflict.dirStamp}=${conflict.record.outcome}，${latest.dirStamp}=success；输入未变，保留原失败待复验` };
   const frozen = latest.record.frozen_files ?? [];
   const present = (name: string): boolean => frozen.includes(name) && fs.existsSync(path.join(latest.runDir, name));
   const missingDerived = artifacts.filter(f => f.group === 'derived' && !present(f.frozen));
@@ -265,6 +311,51 @@ export function decideReuse(
     };
   }
   return { reusable: latest, reason: `最近同键 run ${latest.dirStamp} 成功、证据完整（执行事实与派生副本均已冻结）` };
+}
+
+// ---------------------------------------------------------------- 同调用失败事实
+
+export interface SameInvocationFailureOptions {
+  excludeRunDir?: string;
+  leg?: ExecutionKeyLeg;
+  artifacts?: ReadonlyArray<FrozenArtifactSpec>;
+  /**
+   * 各 leg 用既有 reader 验证原执行结果与已知环境障碍是否仍适用。
+   * 工具失败与产品断言失败保留各自事实，本函数不猜产品语义。
+   */
+  usable?: (view: ExecutionKeyRunView) => boolean;
+}
+
+/**
+ * plan 6fd6c8c1 §4.2：**失败事实消费**——最新一条同键记录若属于同一 run/phase/attempt、
+ * 冻结执行事实完整且仍适用，则原 gate 继续读它的 trace/结果与候选，不重复真机执行。
+ * 与 decideReuse 分离：outcome=failed 永远不是成功候选，也不重建 run.ok=true。
+ * 身份三元组沿用现成 goal_invocation 字段，不造新身份；无 Goal 身份的轻量请求不命中。
+ */
+export function findSameInvocationFailure(
+  reportsBase: string,
+  executionKey: string,
+  invocation: NonNullable<ExecutionKeyRecord['goal_invocation']>,
+  opts: SameInvocationFailureOptions = {},
+): ExecutionKeyRunView | null {
+  const artifacts = opts.artifacts ?? FROZEN_RUN_ARTIFACTS;
+  const runs = listExecutionKeyRuns(reportsBase, opts.leg ?? 'hylyre')
+    .filter(view => !opts.excludeRunDir || path.resolve(view.runDir) !== path.resolve(opts.excludeRunDir));
+  const newest = runs[0];
+  const latest = newest?.record.outcome === 'success' ? precedingInvocationFailure(runs, newest, invocation) : newest;
+  const record = latest?.record;
+  const identity = record?.goal_invocation;
+  if (!latest || !record || record.execution_key !== executionKey || !identity) return null;
+  if (record.outcome === 'success' || record.outcome === 'started') return null;
+  if (identity.run_id !== invocation.run_id || identity.phase !== invocation.phase
+    || identity.attempt_id !== invocation.attempt_id) return null;
+  const frozen = record.frozen_files ?? [];
+  if (record.trace_path && !fs.existsSync(record.trace_path)) return null;
+  const complete = artifacts.filter(f => f.group === 'execution')
+    .every(f => frozen.includes(f.frozen) && fs.existsSync(path.join(latest.runDir, f.frozen)));
+  if (!complete) return null;
+  if (opts.usable && !opts.usable(latest)) return null;
+  return latest;
 }
 
 // ---------------------------------------------------------------- 稳定性

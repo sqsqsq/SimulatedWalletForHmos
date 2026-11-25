@@ -1,3 +1,5 @@
+import { executeCheck } from './utils/check-execution';
+import { implementationFiles } from './utils/diff-scope';
 // ============================================================================
 // Review 阶段脚本 Harness — check-review.ts
 // ============================================================================
@@ -13,7 +15,9 @@
 // 语义级检查由 AI Harness (verify-review.md) 完成，不在本脚本范围内。
 // ============================================================================
 
-import { isHardPixelContract } from './utils/fidelity-shared';
+import { loadFidelityIntentSsot, isHardPixelContract } from './utils/fidelity-shared';
+import { loadUiSpecFile, uiSpecAbsPath } from './utils/ui-spec-shared';
+import { parseReviewIssueRows, reviewIssueRequiresRepair } from './utils/repair-candidates';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
@@ -30,6 +34,7 @@ import {
   tableHasColumns,
   getColumnValues,
   extractDeclaredVerdict,
+  extractReviewVerdict,
 } from './utils/markdown-parser';
 import { relFeatureArtifact, relFeatureFile, featureFilePath, conventionsPath, relConventions, resolveFeatureArtifact } from '../config';
 import { loadPhaseRuleWithOverlays } from '../profile-loader';
@@ -41,6 +46,7 @@ import { checkFactsArtifact } from './utils/context-facts';
 import { checkUpstreamVerdictGate } from './utils/upstream-verdict-gate';
 import { checkChangeUnitFeatureProjection } from './utils/change-unit-feature-projection';
 import { resolveRequestInputs } from './utils/capability-resolution';
+import { realProjectPath } from './utils/project-relative-path';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -71,7 +77,7 @@ function loadDesign(ctx: CheckContext): string | null {
 
 function reviewTargetFiles(ctx: CheckContext<'feature' | 'request'>): string[] {
   if (ctx.subject === 'request') return ctx.request.targets.files;
-  if (!ctx.resolvedInputs) return ctx.featureSpec.contracts?.files ?? [];
+  if (!ctx.resolvedInputs) return implementationFiles(ctx.projectRoot, ctx.feature, ctx.featureSpec.contracts, process.env.MAISON_GOAL_RUN_ID?.trim());
   const code = ctx.resolvedInputs.values.code;
   return code?.state === 'resolved' && Array.isArray(code.value) ? code.value.map((file: { path: string }) => file.path) : [];
 }
@@ -80,21 +86,25 @@ function checkReviewContext(ctx: CheckContext): CheckResult[] {
   const results: CheckResult[] = [];
   if (ctx.resolvedInputs?.context.obligations.implementation === 'required') {
     for (const id of ['contracts', 'acceptance']) if (ctx.resolvedInputs.values[id]?.state !== 'resolved') results.push({
-      id: 'review_required_design', category: 'structure', severity: 'BLOCKER', status: 'FAIL', description: '组合实现审查必须有有效设计与验收', details: `required comparison missing: ${id}`, suggestion: '回设计责任方补齐真实对照输入，不能以独立代码审查替代实现验收。',
+      id: 'review_required_design', category: 'structure', severity: 'BLOCKER', status: 'SKIP', failure_kind: 'capability_missing', description: '组合实现审查必须有有效设计与验收', details: `required comparison unavailable; review not executed: ${id}`, suggestion: '回设计责任方补齐真实对照输入，不能以独立代码审查替代实现验收。',
     });
   }
   const files = reviewTargetFiles(ctx);
+  if (!files.length && (ctx.resolvedInputs?.context.obligations.implementation === 'required' || ctx.featureSpec.contracts?.files?.length)) {
+    results.push({ id: 'review_context_source_files', category: 'structure', description: '审查必须有可读取的实际源码输入', severity: 'BLOCKER', status: 'FAIL',
+      failure_kind: 'missing_source_from_contracts', details: '缺少实际源码输入，不能以预测文件表或旧报告代替实现审查。', suggestion: '核对实际代码、diff 和输入解析；不要求为预测位置创建空壳。' });
+  }
   const missingSources = files.filter(f => (ctx.resolvedInputs || f.endsWith('.ets')) && !fs.existsSync(path.join(ctx.projectRoot, f)));
   if (missingSources.length > 0) {
     results.push({
       id: 'review_context_source_files',
       category: 'structure',
-      description: 'Review 阶段需要 contracts.files 声明的源码文件真实存在',
+      description: 'Review 阶段需要 实际审查输入源码文件真实存在',
       severity: 'BLOCKER',
       status: 'FAIL',
-      details: `${missingSources.length}/${files.length} 个 contracts.files 源码文件不存在：\n${missingSources.slice(0, 20).map(f => `  - ${f}`).join('\n')}`,
+      details: `${missingSources.length}/${files.length} 个实际审查源码文件不存在：\n${missingSources.slice(0, 20).map(f => `  - ${f}`).join('\n')}`,
       affected_files: missingSources,
-      suggestion: '先确认 coding 阶段是否完成；若 contracts.files 过期，回到 design/coding 同步契约，不要让用户手工猜缺哪一层。',
+      suggestion: '核对实际 diff 与源码读取结果；私有定位变化更新派生材料，真实源码缺失交 coding 修复。',
       failure_kind: 'missing_source_from_contracts',
       blocking_class: 'review_context',
     });
@@ -285,7 +295,7 @@ function checkIssueCategoryValues(ctx: CheckContext<'feature' | 'request'>, repo
 
   const allowed = new Set([
     '分层违规', '接口不一致', '资源引用', '命名规范',
-    '硬编码', '逻辑错误', '异常处理', '性能', '安全', '其他',
+    '硬编码', '逻辑错误', '异常处理', '性能', '安全', '视觉保真', '其他',
   ]);
 
   const values = table.rows.map(r => (r[catCol] || '').trim());
@@ -532,31 +542,37 @@ function checkScopeDeclaration(ctx: CheckContext, report: string): CheckResult[]
   }];
 }
 
-function checkConclusionWithVerdict(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
-  const section = getSectionContent(report, '结论') ?? getSectionContent(report, '审查结论');
-  if (!section) {
+export function checkConclusionWithVerdict(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
+  const affected_files = [ctx.subject === 'request' ? ctx.request.inputs.review_report : relFeatureArtifact(ctx.projectRoot, ctx.feature, 'review-report.md')];
+  const declaration = extractReviewVerdict(report);
+  if (!declaration.sectionFound) {
     return [{
       id: 'conclusion_with_verdict', category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', 'conclusion_with_verdict'),
       severity: 'BLOCKER', status: 'FAIL',
-      details: '未找到「结论」或「审查结论」章节。',
+      details: '未找到「结论」或「审查结论」章节。', affected_files,
     }];
   }
 
   // 声明式提取：锚定「审查结论:」声明行 + 最长优先，杜绝 '通过'⊂'不通过' 子串误读
   // 与「判定依据/下一步建议」枚举裁决词造成的整段污染。
-  const { verdict: foundVerdict } = extractDeclaredVerdict(section, ['有条件通过', '不通过', '通过']);
+  const foundVerdict = declaration.verdict;
 
   if (!foundVerdict) {
     return [{
       id: 'conclusion_with_verdict', category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', 'conclusion_with_verdict'),
       severity: 'BLOCKER', status: 'FAIL',
-      details: '「结论」中未找到可机读的审查结论声明行。',
+      details: '「结论」中未找到可机读的审查结论声明行。', affected_files,
       suggestion: '请在结论中写出明确的声明行，例如 `**审查结论**: 不通过`（裁决词须紧邻在"审查结论:"之后）。',
     }];
   }
 
+  const required = parseReviewIssueRows(report).filter(row => reviewIssueRequiresRepair(row, ctx.subject === 'request' ? null : loadFidelityIntentSsot(ctx.projectRoot, ctx.feature)));
+  if (foundVerdict === '通过' && required.length > 0) {
+    return [{ id: 'conclusion_with_verdict', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'conclusion_with_verdict'),
+      severity: 'BLOCKER', status: 'FAIL', affected_files, details: `仍有 ${required.length} 项必须返修，不能声明通过。`, suggestion: '修复真实缺陷后复审；误报须更正原报告再重验。' }];
+  }
   const table = getIssueTable(report);
   if (table) {
     const severityCol = table.headers.findIndex(h =>
@@ -572,7 +588,7 @@ function checkConclusionWithVerdict(ctx: CheckContext<'feature' | 'request'>, re
           id: 'conclusion_with_verdict', category: 'structure',
           description: ruleDesc(ctx, 'structure_checks', 'conclusion_with_verdict'),
           severity: 'BLOCKER', status: 'FAIL',
-          details: `存在 ${blockerCount} 个 BLOCKER 问题，但结论为"${foundVerdict}"而非"不通过"。`,
+          details: `存在 ${blockerCount} 个 BLOCKER 问题，但结论为"${foundVerdict}"而非"不通过"。`, affected_files,
           suggestion: '当存在 BLOCKER 级问题时，结论必须为"不通过"。',
         }];
       }
@@ -582,7 +598,7 @@ function checkConclusionWithVerdict(ctx: CheckContext<'feature' | 'request'>, re
           id: 'conclusion_with_verdict', category: 'structure',
           description: ruleDesc(ctx, 'structure_checks', 'conclusion_with_verdict'),
           severity: 'BLOCKER', status: 'WARN',
-          details: `无 BLOCKER 问题，但结论为"不通过"。`,
+          details: `无 BLOCKER 问题，但结论为"不通过"。`, affected_files,
           suggestion: '无 BLOCKER 时结论通常为"通过"或"有条件通过"。',
         }];
       }
@@ -593,7 +609,7 @@ function checkConclusionWithVerdict(ctx: CheckContext<'feature' | 'request'>, re
     id: 'conclusion_with_verdict', category: 'structure',
     description: ruleDesc(ctx, 'structure_checks', 'conclusion_with_verdict'),
     severity: 'BLOCKER', status: 'PASS',
-    details: `结论为"${foundVerdict}"，与问题统计一致。`,
+    details: `结论为"${foundVerdict}"，与问题统计一致。`, affected_files,
   }];
 }
 
@@ -646,11 +662,10 @@ function checkIssueToFile(ctx: CheckContext<'feature' | 'request'>, report: stri
   const allFiles = new Set<string>();
   for (const row of table.rows) {
     const cell = (row[fileCol] || '').trim();
-    cell.split(/[,，\n]/)
-      .map(f => f.replace(/`/g, '').trim())
-      .map(f => f.replace(/:\d+(?:-\d+)?$/, ''))
-      .filter(f => /\.(?:ets|tsx?|m?js|json5?|py|java|kt|swift)$/.test(f))
-      .forEach(f => allFiles.add(f));
+    cell.split(/[,，、\n]/)
+      .map(file => file.replace(/`/g, '').trim().replace(/:\d+(?:-\d+)?$/, ''))
+      .filter(file => file && file !== '-')
+      .forEach(file => allFiles.add(file));
   }
 
   if (allFiles.size === 0) {
@@ -659,14 +674,22 @@ function checkIssueToFile(ctx: CheckContext<'feature' | 'request'>, report: stri
       description: ruleDesc(ctx, 'traceability_checks', 'issue_to_file'),
       severity: 'BLOCKER', status: 'SKIP',
       details: '问题清单中无可解析的文件路径。',
+      ...(table.rows.length === 0 ? { structured: { applicability: 'not_applicable' } } : {}),
     }];
   }
 
   const missing: string[] = [];
+  const invalid: string[] = [];
   for (const filePath of allFiles) {
-    const fullPath = path.join(ctx.projectRoot, filePath);
-    const bound = ctx.subject === 'request' && ctx.request.sourceContents.some(file => path.resolve(ctx.projectRoot, file.path) === fullPath);
-    if (!bound && !fs.existsSync(fullPath)) missing.push(filePath);
+    try {
+      const fullPath = realProjectPath(ctx.projectRoot, filePath, 'review issue file');
+      const bound = ctx.subject === 'request' && ctx.request.sourceContents.some(file =>
+        path.resolve(ctx.projectRoot, file.path) === path.resolve(ctx.projectRoot, filePath));
+      if (!bound && (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile())) missing.push(filePath);
+    } catch (error) {
+      missing.push(filePath);
+      invalid.push(`${filePath}：${(error as Error).message}`);
+    }
   }
 
   if (missing.length === 0) {
@@ -682,8 +705,8 @@ function checkIssueToFile(ctx: CheckContext<'feature' | 'request'>, report: stri
     id: 'issue_to_file', category: 'traceability',
     description: ruleDesc(ctx, 'traceability_checks', 'issue_to_file'),
     severity: 'BLOCKER', status: 'FAIL',
-    details: `${missing.length}/${allFiles.size} 个引用文件不存在：\n${missing.slice(0, 10).map(f => `  - ${f}`).join('\n')}${missing.length > 10 ? `\n  ... 还有 ${missing.length - 10} 个` : ''}`,
-    affected_files: missing,
+    details: `${missing.length}/${allFiles.size} 个引用文件不存在或路径无效：\n${missing.slice(0, 10).map(f => `  - ${f}`).join('\n')}${missing.length > 10 ? `\n  ... 还有 ${missing.length - 10} 个` : ''}${invalid.length ? '\n' + invalid.slice(0, 10).join('\n') : ''}`,
+    affected_files: [ctx.subject === 'request' ? ctx.request.inputs.review_report : relFeatureArtifact(ctx.projectRoot, ctx.feature, 'review-report.md')],
     suggestion: '请确认问题清单中的文件路径是否正确。',
   }];
 }
@@ -722,14 +745,14 @@ function checkIssueToCodingRule(ctx: CheckContext<'feature' | 'request'>, report
 
   const categories = table.rows.map(r => (r[catCol] || '').trim()).filter(Boolean);
   const traceable = categories.filter(c => c in categoryToRule);
-  const total = categories.length;
+  const total = categories.filter(c => c !== '视觉保真').length;
 
   if (total === 0) {
     return [{
       id: 'issue_to_coding_rule', category: 'traceability',
       description: ruleDesc(ctx, 'traceability_checks', 'issue_to_coding_rule'),
       severity: 'MINOR', status: 'SKIP',
-      details: '问题清单无分类数据。',
+      details: categories.length ? '视觉保真分类消费保真严格度，不强求 coding-rules 映射。' : '问题清单无分类数据。',
     }];
   }
 
@@ -864,9 +887,17 @@ export function checkVisualFidelityReview(ctx: CheckContext, report: string): Ch
   const reportRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'review-report.md');
   const pixel = isHardPixelContract(ctx); // post-impl2 P1-4：视觉评审维度抬升=裁决类，只在 hard contract 生效
 
-  const hasDimension = /视觉保真|视觉维度|visual[\s_-]?fidelity/i.test(report);
-  const missingEvidence = VISUAL_REVIEW_EVIDENCE.filter(e => !e.re.test(report));
-  const evidenceHit = VISUAL_REVIEW_EVIDENCE.length - missingEvidence.length;
+  const hasDimension = getSectionContent(report, '视觉保真') !== null
+    || /视觉保真|视觉维度|visual[\s_-]?fidelity/i.test(getSectionContent(report, '审查方法') ?? getSectionContent(report, '审查维度') ?? '');
+  const uiSpec = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+  const applicableEvidence = VISUAL_REVIEW_EVIDENCE.filter((_, index) => {
+    if (!uiSpec) return true;
+    if (index === 0) return (uiSpec.assets ?? []).some(asset => asset.acquisition === 'crop' && !asset.placeholder);
+    if (index === 3) return uiSpec.screens.some(screen => screen.must_have_elements?.length);
+    return true;
+  });
+  const missingEvidence = applicableEvidence.filter(e => !e.re.test(report));
+  const evidenceHit = applicableEvidence.length - missingEvidence.length;
   const boundaryNote =
     '【诚实边界】本 check 只确定性核"维度存在+证据被引用"；引用真实性由当前 AI verifier 的 issue_accuracy 与 item-level 证据绑定复验。';
 
@@ -899,7 +930,7 @@ export function checkVisualFidelityReview(ctx: CheckContext, report: string): Ch
     description: desc,
     severity: 'MAJOR',
     status: 'PASS',
-    details: `视觉保真维度存在，证据类别 ${evidenceHit}/${VISUAL_REVIEW_EVIDENCE.length} 命中${pixel ? '（pixel_1to1 全覆盖）' : ''}。\n${boundaryNote}`,
+    details: `视觉保真维度存在，证据类别 ${evidenceHit}/${applicableEvidence.length} 个适用类别命中${pixel ? '（pixel_1to1 全覆盖）' : ''}。\n${boundaryNote}`,
     affected_files: [reportRel],
   }];
 }
@@ -1013,35 +1044,6 @@ export function checkConventionsCoverage(ctx: CheckContext<'feature' | 'request'
   return result(errors.length ? 'FAIL' : 'PASS', errors.length ? errors.join('\n') : `全部 ${cards.length} 条惯例覆盖与声明一致；gate 仅验证引用存在性。`);
 }
 
-function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
-  try {
-    // t1d（plan e6a3c9f4）：编排边界附加产出来源，供报告/summary 定位真实产出方。
-    return fn().map(r => (r.source ? r : { ...r, source: checkId }));
-  } catch (err) {
-    const e = err as Error;
-    const isProgrammerError =
-      e instanceof TypeError || e instanceof RangeError || e instanceof SyntaxError;
-    return [{
-      id: checkId, category: 'structure',
-      description: `${checkId} 执行异常`,
-      severity: isProgrammerError ? 'BLOCKER' : 'MINOR',
-      status: isProgrammerError ? 'FAIL' : 'SKIP',
-      details: isProgrammerError
-        ? `[Harness 内部错误] ${e.message}\n${e.stack ?? ''}`
-        : `检查执行时发生错误：${e.message}`,
-      // P0-3（plan d9b4f7e2）：程序员错误=框架缺陷，结构化归因 framework_bug——goal-runner
-      // 据此首触 halt 指向回灌源仓，不再让 agent 把门禁崩溃当自身产物问题反复修。
-      ...(isProgrammerError
-        ? {
-            failure_kind: 'framework_bug',
-            blocking_class: 'framework_internal',
-            suggestion:
-              '门禁脚本自身异常（framework 缺陷，非本 feature 产物问题）——请把完整栈回灌 agent-maison 源仓修复；不要修改产物或 framework 发布件来绕过。',
-          }
-        : {}),
-    }];
-  }
-}
 
 const checker: PhaseChecker = {
   phase: 'review',
@@ -1087,7 +1089,7 @@ const checker: PhaseChecker = {
     ];
     results.push(...checkReviewContext(ctx));
     results.push(
-      ...safeRun(
+      ...executeCheck(ctx,
         () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'review', {
           factsContext: ctx.factsContext,
           resolvedInputs: ctx.resolvedInputs,
@@ -1100,35 +1102,35 @@ const checker: PhaseChecker = {
     );
 
     // --- Structure checks ---
-    results.push(...safeRun(() => checkRequiredChapters(ctx, report), 'required_chapters'));
-    results.push(...safeRun(() => checkIssueTableFormat(ctx, report), 'issue_table_format'));
-    results.push(...safeRun(() => checkSeverityValues(ctx, report), 'severity_values'));
-    results.push(...safeRun(() => checkIssueCategoryValues(ctx, report), 'issue_category_values'));
-    results.push(...safeRun(() => checkStatisticsSummary(ctx, report), 'statistics_summary'));
+    results.push(...executeCheck(ctx, () => checkRequiredChapters(ctx, report), 'required_chapters'));
+    results.push(...executeCheck(ctx, () => checkIssueTableFormat(ctx, report), 'issue_table_format'));
+    results.push(...executeCheck(ctx, () => checkSeverityValues(ctx, report), 'severity_values'));
+    results.push(...executeCheck(ctx, () => checkIssueCategoryValues(ctx, report), 'issue_category_values'));
+    results.push(...executeCheck(ctx, () => checkStatisticsSummary(ctx, report), 'statistics_summary'));
     // codex review P2：统计表可能刚被回写——后续检查读回写后的正文，避免一轮无意义 WARN
     report = loadReviewReport(ctx) ?? report;
-    results.push(...safeRun(() => checkReviewReferenceLint(ctx, report), 'review_reference_lint'));
-    results.push(...safeRun(() => checkScopeDeclaration(ctx, report), 'scope_declaration'));
-    results.push(...safeRun(() => checkConclusionWithVerdict(ctx, report), 'conclusion_with_verdict'));
-    results.push(...safeRun(() => checkMetadataHeader(ctx, report), 'metadata_header'));
+    results.push(...executeCheck(ctx, () => checkReviewReferenceLint(ctx, report), 'review_reference_lint'));
+    results.push(...executeCheck(ctx, () => checkScopeDeclaration(ctx, report), 'scope_declaration'));
+    results.push(...executeCheck(ctx, () => checkConclusionWithVerdict(ctx, report), 'conclusion_with_verdict'));
+    results.push(...executeCheck(ctx, () => checkMetadataHeader(ctx, report), 'metadata_header'));
     // P1-B（f2d8c4a6）：UI 需求须有视觉保真审查维度 + 证据引用（pixel_1to1 全覆盖）
-    results.push(...safeRun(() => checkVisualFidelityReview(ctx, report), 'visual_fidelity_review'));
+    results.push(...executeCheck(ctx, () => checkVisualFidelityReview(ctx, report), 'visual_fidelity_review'));
 
     // --- Traceability checks ---
-    results.push(...safeRun(() => checkIssueToFile(ctx, report), 'issue_to_file'));
-    results.push(...safeRun(() => checkIssueToCodingRule(ctx, report), 'issue_to_coding_rule'));
-    results.push(...safeRun(() => checkReviewScopeToDesign(ctx, report), 'review_scope_to_design'));
-    results.push(...safeRun(() => checkConventionsCoverage(ctx, report), 'conventions_coverage'));
-    results.push(...safeRun(() => checkChangeUnitFeatureProjection(ctx, 'review'), 'change_unit_feature_projection'));
+    results.push(...executeCheck(ctx, () => checkIssueToFile(ctx, report), 'issue_to_file'));
+    results.push(...executeCheck(ctx, () => checkIssueToCodingRule(ctx, report), 'issue_to_coding_rule'));
+    results.push(...executeCheck(ctx, () => checkReviewScopeToDesign(ctx, report), 'review_scope_to_design'));
+    results.push(...executeCheck(ctx, () => checkConventionsCoverage(ctx, report), 'conventions_coverage'));
+    results.push(...executeCheck(ctx, () => checkChangeUnitFeatureProjection(ctx, 'review'), 'change_unit_feature_projection'));
 
     // --- goal-fakepass-hardening 洞⑥：有条件通过闭环门禁 ---
-    results.push(...safeRun(() => checkConditionalPassClosure(ctx, report), 'conditional_pass_closure'));
+    results.push(...executeCheck(ctx, () => checkConditionalPassClosure(ctx, report), 'conditional_pass_closure'));
 
     // --- blind-visual-hardening d1 切片一：负面裁决闭环 + 上游裁决传播 ---
-    results.push(...safeRun(() => checkNegativeVerdictClosure(report), 'negative_verdict_closure'));
+    results.push(...executeCheck(ctx, () => checkNegativeVerdictClosure(report), 'negative_verdict_closure'));
     results.push(
-      ...safeRun(
-        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'review', runId: ctx.resolvedInputs ? process.env.MAISON_GOAL_RUN_ID : undefined }),
+      ...executeCheck(ctx,
+        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'review', frameworkRoot: ctx.frameworkRoot, resolvedInputs: ctx.resolvedInputs, runId: ctx.resolvedInputs ? process.env.MAISON_GOAL_RUN_ID : undefined }),
         'upstream_verdict_gate',
       ),
     );
@@ -1149,8 +1151,7 @@ const checker: PhaseChecker = {
 export function checkNegativeVerdictClosure(report: string): CheckResult[] {
   const id = 'negative_verdict_closure';
   const description = '负面产品裁决闭环门禁（结论=不通过 → 阻断 phase 闭环，修复重跑后方可推进）';
-  const section = getSectionContent(report, '结论') ?? getSectionContent(report, '审查结论') ?? '';
-  const { verdict } = extractDeclaredVerdict(section, ['有条件通过', '不通过', '通过']);
+  const { verdict } = extractReviewVerdict(report);
   if (verdict !== '不通过') {
     return [{
       id, category: 'structure', description,
@@ -1181,28 +1182,17 @@ export function checkNegativeVerdictClosure(report: string): CheckResult[] {
 function checkConditionalPassClosure(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const id = 'conditional_pass_closure';
   const description = '「有条件通过」闭环门禁（未闭环 MAJOR 不得推进）';
-  const section = getSectionContent(report, '结论') ?? getSectionContent(report, '审查结论') ?? '';
-  const { verdict } = extractDeclaredVerdict(section, ['有条件通过', '不通过', '通过']);
+  const { verdict } = extractReviewVerdict(report);
   if (verdict !== '有条件通过') {
     return [{ id, category: 'structure', description, severity: 'BLOCKER', status: 'PASS', details: `结论=${verdict ?? '未声明'}，本门禁不适用。` }];
   }
-  const table = getIssueTable(report);
-  let openMajors = 0;
-  if (table) {
-    const iSev = table.headers.findIndex((h) => h.includes('严重程度') || h.includes('严重等级'));
-    const iState = table.headers.findIndex((h) => h.includes('状态'));
-    for (const row of table.rows) {
-      const sev = iSev >= 0 ? (row[iSev] ?? '').trim() : '';
-      if (sev !== 'MAJOR') continue;
-      const state = iState >= 0 ? (row[iState] ?? '').trim() : '';
-      if (!/已关闭|已修复|closed|fixed/i.test(state)) openMajors++;
-    }
-  }
+  const openMajors = parseReviewIssueRows(report).filter(row => row.severity === 'MAJOR'
+    && reviewIssueRequiresRepair(row, ctx.subject === 'request' ? null : loadFidelityIntentSsot(ctx.projectRoot, ctx.feature))).length;
   if (openMajors === 0) {
     return [{
       id, category: 'structure', description,
       severity: 'BLOCKER', status: 'PASS',
-      details: '有条件通过但全部 MAJOR 已标记关闭（问题表状态列）。',
+      details: '必须返修的 MAJOR 已闭合；允许披露的视觉 MAJOR 保留原始统计与未关闭状态。',
     }];
   }
   return [{

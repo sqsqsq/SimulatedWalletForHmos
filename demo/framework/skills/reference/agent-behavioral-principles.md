@@ -1,6 +1,6 @@
 # Agent 行为规约 — Karpathy 四原则（Framework 全生命周期适配）
 
-> **输入协议边界**：以下 full=spec / lite=change 的 facts 建立与固定上游阅读口径仅适用于 1.0。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。默认入口尚未切换，不能自行补造调用上下文。
+> **输入协议边界（仅正式阶段与机器 request）**：只审查、解释或设计用例仍先阅读真实代码和依据，但不建立身份/facts、不创建正式产物、不进入阶段确认/闭环。以下落盘与量化要求只用于正式或机器请求；以下 旧出生协议为 spec 的 facts 建立与固定上游阅读口径仅适用于 1.0。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。调用上下文由实际入口解析，不自行补造。
 
 > **SSOT**：本文件是 framework 内 AI coding agent 的**行为层**约束，与 `framework/specs/phase-rules/`（产出结构）、`framework/harness/`（机械门禁）、`verify-*.md`（语义审查）叠加生效。
 >
@@ -18,14 +18,14 @@
 
 ### Framework 约束
 
-1. **每个阶段主产物写入前**，须完成 Research Sub-Phase 并落盘事实：**建立阶段**（full=spec / lite=change）写 `<features_dir>/<feature>/context/facts.md` 全量事实；**后续 delta 阶段**（plan/coding/review/ut/testing、lite 的 coding/exit）只追加 `## phase_delta: <phase>` 增量节，不重做全量探索。旧版 per-phase `context-exploration.md`（`schema_version: "1.1.0"`）仍作兼容路径读取。
+1. **每个阶段主产物写入前**，须完成 Research Sub-Phase 并落盘事实：**建立阶段**（旧出生协议为 spec）写 `<features_dir>/<feature>/context/facts.md` 全量事实；**后续 delta 阶段**（plan/coding/review/ut/testing）只追加 `## phase_delta: <phase>` 增量节，不重做全量探索。work-unit 独立复审除外：只读 facts，不追加增量节，新事实写入指定审查报告。旧版 per-phase `context-exploration.md`（`schema_version: "1.1.0"`）仍作兼容路径读取。
 2. **`source_code_paths` 须列出真实 Read/Grep 过的源码路径**；数量下限与磁盘存在性由 harness 在**建立阶段与旧 `context-exploration.md` 兼容路径**校验（delta 阶段只校验 `phase_delta` 节存在且非空——不校验数量不等于可以不读）。
 3. **文档与代码不一致时，以代码为准**，在 Code Facts 中显式标注差异。
 4. **探索深度由 `exploration_strategy` 决定**（v2.10）：plan/coding `default_mode: subagent`，spec/review/ut 用**复合评分**（模块 LOC、跨层、fan-out 等）；L1 trivial 命中豁免条件、L2_small 复合评分低于阈值同样豁免，L4 architectural 全阶段强制。须在 frontmatter 声明 `change_intent` / `estimated_loc_delta` / `touches_layers` / `adds_new_exports`。**该判定同样只在建立阶段与兼容路径生效**（`harness/scripts/utils/context-facts.ts`）——delta 阶段不按数量或 subagent 硬判，复杂问题该起子代理探索仍须起。
-5. **不确定时停下来问用户**，禁止静默猜测后继续写 spec/plan/code。
+5. **能由当前目标裁决的不确定，按目标裁决并留痕**；目标本身冲突或缺失且无法裁决时才停下来问用户（见下文[权威判定](#权威判定)）。禁止静默猜测后继续写 spec/plan/code。
 6. **计数/清单类量化 inventory 须脚本产出并留痕**：产物中写"全仓共 N 个 X"类断言时，必须由可复跑的脚本命令（带锚定的 grep/统计）产出，并留存命令与输出摘录——不接受徒手扫读的印象值（实例：宣称 43 个 namespace、实际 26 个）。
 7. **框架 / vendor 事实以当前 profile-addendum 与契约为准**：记忆（用户级 / 会话级 memory）只作搜索线索，不能作裁决依据；与 addendum、harness 输出冲突时以后者为准（plan 07a41ec6 T9）。
-8. **动笔前读宿主扩展的作者输入**：`<extension_dir>/manifest.yaml` 的 `provides.knowledge` 所列文件中适用于本阶段者，读后把路径写进 Code Facts；goal 模式下同一清单已注入阶段 prompt（plan a7c3e9d2）。`hooks/<phase>/on_context_load.md` 只进 verifier 上下文，不算送达。
+8. **动笔前读适用知识**：goal prompt 或现有 `--prepare-scope` / `--prepare-request` 的 knowledge 输出提供候选与原文路径；交互入口同时读 AGENTS/CLAUDE 的静态路由。按当前 Skill/phase 打开原生资产、manifest 1.1 适用知识和当前 profile 资料，候选须语义消歧，无命中仍探索完整索引；大材料分批读，不宣称已读完。实际依据沿既有 facts/provenance 引用，不新建已读台账；维护写回另遵守[知识读取与维护](../../docs/concepts/skill-contracts.md#知识读取与维护)。binding 三槽位不提前执行；`hooks/<phase>/on_context_load.md` 仍只进 verifier 上下文。manifest 1.0 声明不自动得到 1.1 路由。
 
 ### 各阶段反例 / 正例
 
@@ -100,6 +100,19 @@
 
 ---
 
+## 权威判定
+
+本节是"目标冲突怎么判"的唯一出处。goal 提示词、视觉 provider、verifier 与 harness 控制台收到的**目标简报**（需求原文、请求结果、明确不做、已授予的权限、已裁决的冲突）都从同一组装函数得出，判定办法指向这里。
+
+1. **目标由当前有效的授权与明确修订确定**：有权者最新的明确表述为准，可以是需求原文，也可以是之后明确的修订；其下依次是 spec 产物、设计参考、既往诊断候选。
+2. **证据不定义目标，但能证明实现是否符合目标**：截图、测试结果、真机断言的来源位置再低，也不能因此被排除。
+3. **裁判的缺陷与修法、执行者的裁决记录，都是可纠正的判断**：返修候选是待核验的假设，先对照目标；任何一方都可以用同一权威的正确解释或新的实测证据纠正另一方。
+4. **下位与上位冲突时按上位执行并留一行裁决记录**；只有上位表述彼此冲突且现有授权无法裁决时才问人。
+
+设备策略、人审闸门、原需求真实边界变更确认（不含预测模块/文件调整）等属于真实授权，不在本节"自行裁决"的范围内，照原流程停等。
+
+---
+
 ## 与 Context Exploration Gate 的关系
 
 | 本规约原则 | Gate 落点 |
@@ -116,8 +129,9 @@
 
 ## 弱模型自检清单（Research Sub-Phase 结束前）
 
-> 下列量化项按**建立阶段**（full=spec / lite=change）与旧 `context-exploration.md` 兼容路径逐条校验；
+> 下列量化项按**建立阶段**（旧出生协议为 spec）与旧 `context-exploration.md` 兼容路径逐条校验；
 > delta 阶段（plan/coding/review/ut/testing）只校验 `facts.md` 的 `## phase_delta: <phase>` 节存在且非空。
+> work-unit 独立复审除外：只读 facts，不追加增量节，新事实写入指定审查报告。
 
 ```
 [ ] 已完整阅读本文件四原则

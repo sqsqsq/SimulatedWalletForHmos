@@ -1,8 +1,22 @@
 # Skill 契约与能力解析
 
+责任解析由 `repair-responsibility.ts::resolveRepairResponsibility` 统一读取原始 produces/verifies、profile 测试根、绑定与义务；剩余队列只决定执行顺序，不决定产物归属。问题引入者、合法修改者、验证签发者分别表达，未知角色保持未知。verification 的真实负责方由目标产物和当前义务决定，不固定为 UT。
+
+`source/implementation` 允许 coding 修补本次实现直接引发的既有测试兼容问题；`coding_existing_test_preserved` 比较真实前置原文，保留全部旧用例定义和断言，不增加测试/断言/跳过。新增或改变测试仍由 `ut_source_and_dag` 负责；测试 PASS 沿真实执行和原验证接口签发。无法取得 UT 更新后的真实前版时，不可用更旧 Git 版本假作原件，交 UT 核验。现有 coding 报告披露修改及原因，不新增披露门禁。
+
 Skill contract 是 feature phase 的可执行输入声明。它定义产生的 artifact、验证入口，以及在 checker 开始前能够确定的能力输入；它不替代 phase rules、quality axes、closure 或 release 的既有裁决。
 
 每个 feature Skill 在 `skills/feature/<skill>/contract.yaml` 中维护契约；`harness/scripts/utils/skill-contract.ts` 负责加载，`check-contract-consistency.ts` 负责静态一致性校验。新增或调整 phase 时，先调整 contract，再调整 checker 与 Skill 文档。
+
+## 内容读取与确定投影（7d9c2e41）
+
+`artifact-content.ts::resolveArtifactContent` 为同一纯内容入口：文件、supplied、蓝图片段与合并产物共享 schema 及规范值；来源、权限、冻结绑定与语义仍由原责任层处理。calls 接受非空字符串或非空字符串列表，内部为有序列表、保留重复；coordinator/ui/trigger 不接受数组猜测。片段免除派生身份，合并后校验完整性；不要求无意义空集合。
+
+runtime 在现有 preInvokeWriteSnap 后、解析/提示/Agent 前准备本阶段确定部分，spec 仅 acceptance，plan 仅 contracts/use-cases；机器写入和 Agent 写入共用原 phase_write_observed。相同内容零写入，兼容增量保留；内容冲突交原 producer/设计 owner，I/O/程序异常不伪装成漂移。普通 Feature/request 和缺少相应设计内容保持原能力适用性，dry-run/post-agent 收尾不物化。
+
+本批在 checks 项新增可选 `acceptance_ids`/`affected_files`；其余原 checks 和 issue-verification 字段复用。旧合法报告缺字段时保留原发现，回原独立 verifier 批量补核；建议显式用 `acceptance_ids: []`，不静默丢弃实质问题。
+
+spec/plan 的实质问题直接来自当前 verifier 的 `verification_result.checks`；明确验收 ID、真实目标与当前证据后，由同次独立 issue-verification 核实。报告不进入自身 material，证据按当前材料已登记的原文或 identity-neutral 摘要语义绑定；仅身份变化不误废弃已核问题，真实目标/预期变化仍失效，不另设摘要账本。原有拒修账本/goal brief 回送理由，历史确认不能覆盖未读的新理由。具名 Page 方法定位不等于 UT 可执行，真实 unit/both 义务仍须由实际入口与执行证据兑现。
 
 ## 输入与 capability
 
@@ -40,7 +54,7 @@ capabilities:
 
 `PhaseInputContext` 是 P2/P6 交给共享内核的调用参数，不是新持久状态：subject、已判定的义务、required_outputs、可选 expected_bindings/invalidated_sources。Feature 使用真实 Feature identity，request 使用 request_sha256，两者互斥。绑定不匹配或上游明确宣告来源失效时 blocked，回原有 stale/correction 责任路径；不在解析器内重规划。
 
-artifact 内容先通过注册 schema 与 SpecLoader 既有字段校验。derive 返回实际内容而不是“project_root 可用”标志：requirement 只读当前调用文本，test-targets/codebase 只读显式且项目内的目标文件，adhoc-cases 使用既有用例归一化内核。静态 `DERIVE_PROVIDER_TYPES` 声明返回类型，1.1 每个 fallback 分支必须同类型；文本需求不能作为 acceptance 的等价替代。`derive.blueprint-acceptance/contracts` 的实际字段映射由 P3 实现，不在 P1 注册假 provider。
+artifact 内容先通过注册 schema 与 SpecLoader 既有字段校验。derive 返回实际内容而不是“project_root 可用”标志：requirement 只读当前调用文本，test-targets/codebase 只读显式且项目内的目标文件，adhoc-cases 使用既有用例归一化内核。静态 `DERIVE_PROVIDER_TYPES` 声明返回类型，1.1 每个 fallback 分支必须同类型；文本需求不能作为 acceptance 的等价替代。`derive.blueprint-acceptance/contracts` 复用 P3 的 typed 投影，直接消费设计期在 canonical 目标写入的 acceptance/contracts/use_cases，完整挂载、合并、只读校验与物化职责见[蓝图设计输入](blueprint-design-inputs.md)。
 
 Feature 调用把读取面拆成 `codeTargets` 与 `testTargets`：前者来自冻结 contracts/CU、当前有效义务及已核实 Research，后者再按 profile 的 UT 根识别；两者都只是调用期输入，不授予写权限。verification-only review/UT 不需要 implementation 义务也能读取 contracts 指定的现存产品源码。`contracts.files` 中由本阶段或后继阶段负责创建的缺失文件保留为授权产出，不拖垮同组现存输入；到了下游仍缺失时照常 blocked。
 
@@ -68,11 +82,11 @@ Feature evidence/恢复/verifier 使用同一 facts 路径；request 不调用 F
 
 workflow 1.2 用静态 `obligation_provider_id` 表达职责，`resolveExecutionScope` 统一计算执行范围；auto_chain 只提供稳定默认次序。P3/P6 提供规范化请求与有来源的业务事实，验收分层复用既有检查，未知保持具体缺口。候选中的契约指纹由出生入口从安装的 contracts 重算。
 
-完整交付有**两个载体**：① 交互路径把 execution_scope 冻结在 feature 级记录（`<features_dir>/<feature>/execution-scope.json`，机器单 writer，与候选文件分开）；② Goal 路径在 manifest/run_created 冻结，phase_chain、chain_override、start/end 必须同值投影。权威优先级是「本次关联的 run > feature 冻结记录」，说不清时明确报错、不选边。两条路都只读出生范围，Feature 候选和后来的 track/默认排序不覆盖它；同一 feature 后起 run 以**转交时 feature 的有效范围**出生并登记转交指纹。Scope 的控制边与依据仍在同一载体内，不建立平行图。
+新完整交付统一使用 run：同一 GoalPhaseRuntime 在 manifest/run_created 冻结范围，phase_chain、chain_override、start/end 同值投影。会话用非驻留 next/report，无人值守用 detached。feature 级 `execution-scope.json` 只保留旧范围/修订/完成的读取及正式转交；新完整交付不再首次冻结 feature 载体或由无 run 出口签完成。既有权威优先级和转交校验不变，同一 feature 后起 run 以转交时的有效范围出生，不重算旧成果；不建立平行图。
 
 P1 调用上下文、阶段指令、assess、完成验证和 CU expected execution 都经**同一个统一入口**读取该范围（有 run 身份读 run，无身份读 feature 冻结记录），消费方不自行判断载体。有效施工输入可承接信息要求，真正未完成的设计决策/控制前置仍回责任方；request-only 及 unknown 不签 Feature completion，全复用只验证现有结果，不造空 run。
 
-责任 checker 可在既有 CheckResult 中提出 `scope_revision_input`；两个载体的提案校验是**同一个函数**，feature 载体把修订记在冻结记录的 `revisions[]` 里（形状与 `scope_revised` 一致，无 run 字段）。合法修订在**同一 run / 同一条冻结记录**内追加一条即完成：不封卷、不释放 owner/锁、不生成后继，出生范围与失败历史不被改写，有效范围 = 出生 + 按 index 应用的修订。后继只留给失败修复型 supersede、用户显式改需求与建 run 未完成的修复；那条路上预算、权限和 pin 继承，前驱临时恢复状态保留到后继完成后沿既有 GC 清理。失败来源保持 PARTIAL/HALTED，其裸 PASS 不变成复用证据。默认 spec-driven 尚未切换，P3–P6 的具体 Skill 迁移和 P7 的公开切换继续按计划推进。
+责任 checker 可在既有 CheckResult 中提出 `scope_revision_input`，同一校验与回退重签规则继续用于 run 范围；旧 feature 记录的修订读取保持兼容。合法修订在同一 run 追加，出生范围与失败历史不改写；后继仍只用于既有 supersede/请求变化等适用场景，预算、权限与 pin 继承。request-only/unknown 不签 Feature completion，全复用只核现有结果，不造空 run。
 
 ## 输入读取矩阵与迁移责任（P1）
 
@@ -80,13 +94,12 @@ P1 调用上下文、阶段指令、assess、完成验证和 CU expected executi
 
 | 消费面 | 内容/字段 | 现有 reader | 来源与缺失行为 | 本次新产出/真实先行操作 | 绑定与 owner |
 |---|---|---|---|---|---|
-| spec | 需求原文、范围、代码和视觉参考 | capability-resolution、check-spec、verify-spec | 当前 requirement、源码、参考图；缺必需预期/参考则 blocked | 验收不明确才补 spec；正式需求先蓝图 | binding + 实际输出；P1/P3 |
+| spec | 需求原文、范围、代码和视觉参考 | capability-resolution、check-spec、verify-spec | 当前 requirement、源码、参考图；缺必需预期/参考则 blocked | 验收不明确才补 spec；先消费统一前门，小型同协议短蓝图，无 CU；中型/复杂及已有 CU 先完整设计/准入 | binding + 实际输出；P1/P3 |
 | plan | spec、criteria/boundaries、源码、ui-spec | SpecLoader、check-plan、verify-plan | 有效验收/获准切片；新设计缺口回责任方 | 仅未满足施工设计要求新 plan；共同决策不能在此重裁 | contracts/design_refs；P1/P3 |
 | coding | files/modules/interfaces/state_management、验收、use_cases、视觉契约 | SpecLoader、check-coding、verify-coding | 当前 contracts/验收与源码；required 缺失 blocked | 首次写入前 facts 与真实授权；不要求本次新 plan/spec | binding、源码和写集；P1/P4，投影 P3 |
 | review | diff/源码、对照契约、plan、验收、ui-spec | SpecLoader、check-review、verify-review | 真实审查目标；可选设计增强缺失诚实降级 | 已有代码可独立审查；review-report 是本阶段输出 | 输入 binding 与审查证据；P1/P4 |
 | ut | criteria/boundaries/ut_layer、use_cases/branches、目标符号、contracts | SpecLoader、check-ut、verify-ut | 有效验收或专项明确目标；不能从代码猜预期 | 必需单元证据；mock/确认等真实控制保留 | 目标与覆盖证据；P1/P5 |
 | testing | 用例意图、分层、contracts、review-report、设备/视觉目标 | SpecLoader、check-testing、verify-testing | 有效验收或 adhoc cases；必要输入缺失 blocked | 有设备义务才执行；构建/安装等操作先后保持 | 来源与实际设备输出；P1/P5 |
-| change/exit | change 原文与实现 | 旧 capability/SpecLoader/check-change/check-exit | 旧出生协议 artifact/derive | 仅旧运行兼容 | 旧 evidence；P7 |
 | 全局知识 | catalog/glossary/Graph/conventions/extension | 各 project checker、profile 与 collectContextFiles | 既有各自真源；optional 缺失不强造 bootstrap | 只完成请求的知识责任 | 实际引用；P6 |
 | 首 Skill facts | Code Facts/source_code_paths、ready/risk | context-facts、context-exploration、exploration-strategy | 当前调用 subject 与目标、真实调查；缺/坏 blocked | 写主产物前必须建立或承接 | facts 与来源；P1 内核，P2/P6 派发 |
 | 后继 facts/恢复 | 基线、phase_delta、来源新鲜度 | context-facts、goal-checkpoint | 显式 baseline；旧字段缺失不当零义务 | 保留原建立身份，只补当前增量 | 原基线 + 当前源；P1/P2 |
@@ -104,21 +117,16 @@ P1 调用上下文、阶段指令、assess、完成验证和 CU expected executi
 | ut | plan | plan@1 | capability_ut_design_context / prune |
 | ut | contracts | contracts@1 | capability_ut_design_context / prune |
 | ut | test_targets | derive.test-targets | capability_ut_design_context / prune |
-| change | requirement | derive.requirement | capability_change_context / fail |
-| change | codebase | derive.codebase | capability_change_context / fail |
-| exit | change | change@1 | capability_exit_context / fail |
-| exit | implementation | derive.codebase | capability_exit_context / fail |
 | review | code | derive.codebase | capability_review_code_context / fail |
 | review | spec | spec@1 | capability_review_design_context / prune |
 | review | plan | plan@1 → derive.test-targets | capability_review_design_context / prune |
 | review | contracts | contracts@1 | capability_review_design_context / prune |
 | review | acceptance | acceptance@1 | capability_review_acceptance_context / prune |
 | review | ui_spec | ui-spec@1 | capability_review_visual_context / prune |
-| coding | codebase | derive.codebase | capability_coding_full_context / fail；capability_coding_lite_context / fail |
+| coding | codebase | derive.codebase | capability_coding_full_context / fail |
 | coding | plan | plan@1 | capability_coding_full_context / fail |
 | coding | contracts | contracts@1 | capability_coding_full_context / fail |
 | coding | acceptance | acceptance@1 | capability_coding_full_context / fail |
-| coding | change | change@1 | capability_coding_lite_context / fail |
 | coding | spec | spec@1 | capability_coding_spec_context / prune |
 | coding | use_cases | use-cases@1 | capability_coding_spec_context / prune |
 | coding | ui_spec | ui-spec@1 | capability_coding_visual_context / prune |
@@ -171,6 +179,16 @@ Capability report 是进入质量轴的唯一桥接：
 这些投影不会新增公开 `PRUNED` 状态，也不会覆盖任何既有质量、phase advance、closure 或 release 规则。runner 收尾会以 `assertCapabilityConsumption(report, checks)` 双向对账：每个 active `resolved` capability 恰有一个同 ID `CheckResult`，其他状态没有；重复或反向矛盾均为错误。
 
 Goal manifest 可选提供稀疏的 `minimum_assurance`：`{ phase: degraded|full }`。它只会给 `assess@1` 增加 `insufficient_assurance` gap，绝不成为 release 或 closure waiver。满足 floor 的 `pruned` 会列入 `observed.degradations`，不另造 gap；但若带 producer 指针的上游裁剪令下游 `on_missing: fail` capability 变为 `blocked`，assess 会产生 `pruned` gap 并把回补定向到该 producer phase。
+
+## 知识读取与维护
+
+`assembleKnowledge` 从原知识源现算候选、原路径和读取要求，供 goal、现有 prepare 输出、设计入口与 verifier 使用；它不增加 InputBinding、裁决权或已读记录。画像/术语候选须结合易混项和反例消歧，CodeGraph 按目标导航并回查源码，core 只高亮。conventions 保持全文阅读，review 独立选择适用条目；组件 index/catalog 按 id 联读并反查定义/live 样本。背景资料读取当前 framework/profile 版本。原文过大则分批打开，预算不能豁免必读材料。
+
+读取、刷新派生和写长期规范是三件事。派生图谱/index 默认在相关 Feature/CU run 收口后、P3 前，由原维护入口按**已经获得的写入授权**刷新；收口不产生新授权，同模块仍有受影响活跃 run 时不在其工作树写。run 内确需更新图文件，须由既有权责链先把路径纳入 `contracts.files`；作者不能因为代码变动就 bootstrap，verifier 不写资产。不新增运行检测、锁或状态。graph nodes/core hash 不是可随意刷新的 derived 数据，原 drift/UT 义务保留。
+
+catalog/glossary、conventions 和组件策展仍由原 bootstrap writer 负责。已有明确确认覆盖相同条目/决定时直接复用，不重复询问；新增或变化的语义、规则和推荐项仍按原确认点，临时推测不升格长期规范。P1 owner 登记真实 `discovery.inputs.knowledge_assets` 与精确 `decision.knowledge_refs`；实现后才成立的结论先由 writer 归位，再经 P1 reconciliation 和 design preparation 升 CU 指针，最后 closure 校验。缺归位沿此责任链修复，不泛化成找用户重审。框架/profile 资料随发布维护，消费者只维护自己已获授权的资产。
+
+verifier 的 typed/legacy 装配共用适用知识和目标源码；正文及实际引用源影响既有 material fingerprint。材料变化不能复用 same-material PASS，允许的 prior-review 沿用仍明确披露未重审差异；不作全局知识版本或所有 run 失效。
 
 ## 维护清单
 

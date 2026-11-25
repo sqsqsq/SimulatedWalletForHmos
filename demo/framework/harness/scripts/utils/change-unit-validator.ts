@@ -8,6 +8,7 @@ import {
 } from './component-blueprint-model';
 import { loadCanonicalBlueprint, resolveComponentBlueprintRef, validateComponentBlueprintRefShape } from './component-blueprint-path';
 import { validateLiteSchema } from './lite-json-schema';
+import { blockerIssues, validateComponentBlueprint } from './component-blueprint-validator';
 import {
   CHANGE_UNIT_ARTIFACT,
   ChangeUnitIssue,
@@ -24,6 +25,8 @@ import {
 export interface ChangeUnitValidationContext {
   projectRoot?: string;
   canonicalPath?: string;
+  /** 展示可传 canonical 快照解析器；默认仍完整校验外部来源。 */
+  resolveBlueprintRef?: typeof resolveComponentBlueprintRef;
 }
 
 function loadChangeUnitSchema(): Record<string, unknown> {
@@ -102,7 +105,7 @@ function validateProvenanceSource(
     return;
   }
   try {
-    const resolved = resolveComponentBlueprintRef(context.projectRoot, ownerRef);
+    const resolved = (context.resolveBlueprintRef ?? resolveComponentBlueprintRef)(context.projectRoot, ownerRef);
     const ownerSourceRef = `${path.relative(context.projectRoot, resolved.canonicalPath).replace(/\\/g, '/')}#blueprint:${ownerRef.blueprint_id}`;
     const sourceRef = String(provenance.source_ref ?? '');
     if (sourceRef === ownerSourceRef) return;
@@ -131,7 +134,7 @@ function validateProvenanceSource(
     }
     if (current && current.component_id === ownerRef.component_id
       && Number.isInteger(current.revision) && Number(current.revision) > ownerRef.revision
-      && asRecord(asRecord(current.review_summary)?.admission)?.status === 'pass') {
+      && blockerIssues(validateComponentBlueprint(current, { projectRoot: context.projectRoot })).length === 0) {
       out.push(changeUnitIssue(
         'change_unit_blueprint_ref_stale',
         '$.component_blueprint_ref',

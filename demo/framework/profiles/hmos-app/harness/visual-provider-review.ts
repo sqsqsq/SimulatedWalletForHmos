@@ -10,38 +10,55 @@
 // 边界（不得放宽）：
 //   · provider **不产 verdict**——它只交出逐屏 must_fix/defects；「能否推进」唯一归 gate；
 //   · provider **永不写 confirmed_by**——legacy 字段无质量权威；
-//   · 合法载荷 = 可直接回修的 critic candidate，**不进** producer 感知信号的
-//     defect-review；primary dispute 或缺复核没有否决权；
+//   · 合法载荷 = 可直接回修的 critic candidate；primary 的反对或缺复核没有否决权；
 //   · 写入前**只清掉旧 provider 结果**——T8 转录与其它来源的 defect/must_fix 原样保留，
 //     否则转录对账会被本机制误伤。
 // ============================================================================
 
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
 import type { CheckContext } from '../../../harness/scripts/utils/types';
+import { loadVisualProviderDeclaration } from '../../../harness/scripts/utils/adapter-catalog';
+import { validateProjectRelativePath } from '../../../harness/scripts/utils/project-relative-path';
 import { featureDir } from '../../../harness/config';
 import { loadUiSpecFile, uiSpecAbsPath } from '../../../harness/scripts/utils/ui-spec-shared';
-import { isPixel1to1, loadRefElementsFile, loadSpecMarkdown, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
+import { isPixel1to1, isHardPixelContract, loadRefElementsFile, loadSpecMarkdown, refElementsAbsPath } from '../../../harness/scripts/utils/fidelity-shared';
+import { assembleGoalBrief, renderGoalBrief } from '../../../harness/scripts/utils/goal-brief';
 import { buildAuthoritativeRefImageIndex, resolveRefSourceImage } from './authoritative-ref-images';
 import { readImageDimensions, resolveCompareReference, splitMustHaveByTopSlice } from './image-toolkit';
-import { canonicalOverlayBase } from './visual-diff-nav';
+import { canonicalOverlayBase, visualDiffNavConfigPath } from './visual-diff-nav';
+import { resolveCurrentBuildFingerprint } from './build-fingerprint';
 import { resolveActiveVisualProvider } from '../../../harness/scripts/utils/visual-provider-identity';
 import {
   extractJsonObjectFromText,
+  projectVisualProviderBody,
   invokeVisualProvider,
   validateProviderIdentityEcho,
   writeVisualProviderInvokeEvent,
+  VISUAL_PROVIDER_DEFAULT_TIMEOUT_MS,
   type VisualProviderInvocation,
+  type VisualProviderInvokeEvent,
 } from '../../../harness/scripts/utils/visual-provider-invoke';
-import type { ProviderRef } from '../../../harness/scripts/utils/types';
+import { adapterModelBinding, type ProviderRef } from '../../../harness/scripts/utils/types';
+import { parseAdapterModelBinding } from '../../../harness/scripts/utils/adapter-model';
 import {
+  visualResidualDisposition,
+  DEVICE_BBOX_CONTRACT,
+  VALID_DEFECT_CLASSES,
+  VALID_DEFECT_SEVERITIES,
+  validateDefectBbox,
+  validateMustFixRefs,
+  visualFieldError,
   type VisualDiffDefect,
   type VisualDiffScreenEntry,
 } from './visual-diff-check';
 
 export const VISUAL_PROVIDER_REVIEW_SCHEMA_VERSION = '1.0';
+export const VISUAL_PROVIDER_REVIEW_TIMEOUT_MS = 600_000;
+export const VISUAL_REVIEW_EXAMPLE_MUST_FIX = 'Restore the example element to match the reference';
+export const VISUAL_REVIEW_EXAMPLE_NOTE = 'Example: element shape differs in this area, but the main task remains usable';
 
 // ---------------------------------------------------------------------------
 // 目标屏与输入装配
@@ -89,6 +106,7 @@ export function collectReviewTargets(
   screens: VisualDiffScreenEntry[],
   /** plan b3d7e5a1 T5（codex P1）：回传因参考图/视口尺寸不兼容被排除的屏——调用方须复位其旧 provider 状态 */
   viewportOut?: { viewportIncompatibleIds: string[] },
+  sourceHashes?: Map<string, string>,
 ): ReviewTargetScreen[] {
   const { projectRoot, feature } = ctx;
   const uiDoc = loadUiSpecFile(uiSpecAbsPath(projectRoot, feature));
@@ -131,6 +149,8 @@ export function collectReviewTargets(
       continue;
     }
     const refForReview = cmp.path;
+    const sourceHash = sha16(refAbs);
+    if (sourceHash) sourceHashes?.set(refAbs, sourceHash);
     const shotHash = sha16(shotAbs);
     const refHash = sha16(refForReview);
     if (!shotHash || !refHash) continue;
@@ -170,6 +190,8 @@ export interface ReviewPromptIdentity {
   requireRegionAttest: boolean;
   /** plan c4e7a9b2 A2：spec/ref-elements.yaml 的参考图侧元素——missing_render 的 ref_element 取值域 */
   refElements?: ReadonlyArray<{ element_id: string; disposition: string }>;
+  /** plan 33784ed1 §3.3：目标简报渲染文本（provider 原本没有需求输入，拿完整简报） */
+  goalBrief?: string;
 }
 
 export function buildVisualProviderReviewPrompt(
@@ -189,14 +211,28 @@ export function buildVisualProviderReviewPrompt(
     '- An empty payload is NOT "no defects" — if you cannot review, say so by omitting the payload.',
     '- Do NOT produce a verdict, a score, or a pass/fail judgement. That is the gate\'s job, not yours.',
     '- Do NOT write legacy `confirmed_by` or claim human authority; only report machine observations.',
-    '- Anchor every defect to the fixes: `must_fix_refs` holds indices into that screen\'s `must_fix`.',
+    '- Anchor every defect to the fixes: `must_fix_refs` holds zero-based integer indices into that screen\'s `must_fix` (0 through length - 1).',
+    `- bbox: ${DEVICE_BBOX_CONTRACT}.`,
+    '- severity=blocker: concrete evidence shows that a required goal, key operation, navigation or state understanding cannot hold in the current scope/state.',
+    '- severity=major: an obvious visual or interaction deviation, while the main task can still be completed and information understood.',
+    '- severity=minor: a local detail deviation that does not affect operation, meaning or readability.',
+    '- note must state the actual impact, location/evidence and any uncertainty. An operation absent from one screenshot is not proof that it is unreachable; consider scrolling, keyboard dismissal and the applicable requirement.',
+    '- When ui-spec required elements are listed, `region_attest.region` must be an exact id from that screen\'s ui-spec required elements; cover every listed id, not a free-text area name. Without a declared list, use a concrete area name.',
+    '- `region_attest.verdict` must be `no_diff` (no actual difference in the region) or `diff_logged` (only when this screen has a corresponding defect/must_fix).',
+    '- When both `must_fix` and `defects` are empty, every attest must use `no_diff`. `region_attest.method` must be `vl_screening`. Do not invent defects to satisfy an attest.',
     '- class=missing_render MUST carry `ref_element`: the id of the reference-side element that is missing.',
+    '- class=unexpected_render = something is rendered that the goal does not want. It MUST carry `element` (id of the rendered element, when it has one) or `bbox`;',
+    '  add `requirement_quote` when a sentence of the goal says it is not wanted (copy it verbatim).',
     '- Every other class MUST carry `element`: the ui-spec node id of the rendered element that is wrong.',
     ...(identity.refElements?.length
       ? [
           `  Reference-side element ids (spec/ref-elements.yaml): ${identity.refElements.map(e => `${e.element_id}(${e.disposition})`).join(', ')}.`,
           '  Elements marked (excluded) are explicitly out of scope for this delivery — do not request them.',
+          '  If one of them is already rendered, report it as class=unexpected_render with that element id in `element` (not in `ref_element`).',
         ]
+      : []),
+    ...(identity.goalBrief
+      ? ['', 'Goal of this delivery (the same brief every participant receives):', '', identity.goalBrief]
       : []),
     '',
     'Screens:',
@@ -221,32 +257,26 @@ export function buildVisualProviderReviewPrompt(
   }
   lines.push(
     '',
-    'Reply with ONE JSON object and nothing else:',
-    '{',
-    `  "schema_version": "${VISUAL_PROVIDER_REVIEW_SCHEMA_VERSION}",`,
-    ...(identity.runId ? [`  "run_id": "${identity.runId}",`] : []),
-    ...(identity.attemptId ? [`  "attempt_id": "${identity.attemptId}",`] : []),
-    `  "image_hashes": ${JSON.stringify(allHashes)},`,
-    '  "screens": [',
-    '    {',
-    '      "screen_id": "<one of the ids above>",',
-    '      "reference_image_hash": "<that screen\'s reference hash>",',
-    '      "evaluated_screenshot_hash": "<that screen\'s screenshot hash>",',
-    '      "must_fix": ["<minimal concrete fix>"],',
-    '      "defects": [{"class": "clipping|overlap|shape_mismatch|missing_render|other",',
-    '                   "severity": "blocker|major|minor", "element": "<ui-spec node id; required unless missing_render>",',
-    '                   "ref_element": "<reference element id; required for missing_render>",',
-    '                   "note": "<what is wrong>", "must_fix_refs": [0]}]',
-    ...(identity.requireRegionAttest
-      ? [
-          '      , "region_attest": [{"region": "<area you checked>", "verdict": "no_diff|diff_logged",',
-          '                           "method": "vl_screening"}]',
-          '      // region_attest is REQUIRED for any screen whose must_fix is empty (pixel contract).',
-        ]
-      : []),
-    '    }',
-    '  ]',
-    '}',
+    'Reply with ONE JSON object and nothing else. Allowed defect classes: ' + [...VALID_DEFECT_CLASSES].join(', ') + '.',
+    'The following is a valid FORMAT EXAMPLE using the current bindings, not observed findings. Replace its illustrative fixes/defects with your observations; use empty arrays if none. region_attest is required when must_fix is empty under the pixel contract.',
+    JSON.stringify({
+      schema_version: VISUAL_PROVIDER_REVIEW_SCHEMA_VERSION,
+      ...(identity.runId ? { run_id: identity.runId } : {}),
+      ...(identity.attemptId ? { attempt_id: identity.attemptId } : {}),
+      image_hashes: allHashes,
+      screens: targets.map(t => ({
+        screen_id: t.screen_id,
+        reference_image_hash: t.refHash,
+        evaluated_screenshot_hash: t.shotHash,
+        must_fix: [VISUAL_REVIEW_EXAMPLE_MUST_FIX],
+        defects: [{ class: 'shape_mismatch', severity: 'major', element: t.mustHaveElements?.[0] ?? t.screen_id,
+          bbox: [0.1, 0.2, 0.3, 0.1], note: VISUAL_REVIEW_EXAMPLE_NOTE, must_fix_refs: [0] }],
+        ...(identity.requireRegionAttest ? {
+          region_attest: (t.mustHaveElements?.length ? t.mustHaveElements : [t.screen_id])
+            .map(region => ({ region, verdict: 'diff_logged', method: 'vl_screening' })),
+        } : {}),
+      })),
+    }, null, 2),
   );
   return lines.join('\n');
 }
@@ -266,8 +296,6 @@ export type ReviewPayloadResult =
   | { ok: true; screens: ReviewScreenPayload[] }
   | { ok: false; reason: string };
 
-const DEFECT_CLASSES = new Set(['clipping', 'overlap', 'shape_mismatch', 'missing_render', 'other']);
-const DEFECT_SEVERITIES = new Set(['blocker', 'major', 'minor']);
 
 /**
  * 逐项校验。任何一条不成立即整份拒收（**部分可用**不是一个选项：半份评审会让
@@ -282,14 +310,15 @@ export function validateVisualProviderReviewPayload(
     requireRegionAttest: boolean;
   },
 ): ReviewPayloadResult {
-  const doc = extractJsonObjectFromText(body);
-  if (!doc) return { ok: false, reason: '正文中没有可解析的 JSON 对象' };
+  let parseError = '';
+  const doc = extractJsonObjectFromText(body, reason => { parseError = reason; });
+  if (!doc) return { ok: false, reason: '正文中没有可解析的 JSON 对象：' + parseError };
 
   // 冻结 schema 版本必须逐字回显——协议升版后旧形态载荷一律不采信（schema-invalid 即无效）。
   if (doc.schema_version !== VISUAL_PROVIDER_REVIEW_SCHEMA_VERSION) {
     return {
       ok: false,
-      reason: `schema_version 不符（期望 ${VISUAL_PROVIDER_REVIEW_SCHEMA_VERSION}，实际 ${String(doc.schema_version)}）`,
+      reason: visualFieldError('schema_version', doc.schema_version, `schema_version 不符，须为 ${VISUAL_PROVIDER_REVIEW_SCHEMA_VERSION}`),
     };
   }
 
@@ -303,74 +332,81 @@ export function validateVisualProviderReviewPayload(
   const rawScreens = doc.screens;
   if (!Array.isArray(rawScreens) || rawScreens.length === 0) {
     // 空输出**绝不**等价「无缺陷」——本轮判未审查。
-    return { ok: false, reason: 'screens 缺失或为空（空输出不等于无缺陷）' };
+    return { ok: false, reason: visualFieldError('screens', rawScreens, 'screens 缺失或为空（空输出不等于无缺陷）；non-empty array covering all targets') };
   }
 
   const byId = new Map(expected.targets.map(t => [t.screen_id, t]));
   const seen = new Set<string>();
   const out: ReviewScreenPayload[] = [];
 
-  for (const raw of rawScreens) {
+  for (const [screenIndex, raw] of rawScreens.entries()) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-      return { ok: false, reason: 'screens 条目不是对象' };
+      return { ok: false, reason: visualFieldError(`screens[${screenIndex}]`, raw, 'object') };
     }
     const row = raw as Record<string, unknown>;
     const screenId = typeof row.screen_id === 'string' ? row.screen_id.trim() : '';
     const target = byId.get(screenId);
-    if (!target) return { ok: false, reason: `screens 含非目标屏：${screenId || '(空 screen_id)'}` };
-    if (seen.has(screenId)) return { ok: false, reason: `screens 重复屏：${screenId}` };
+    if (!target) return { ok: false, reason: visualFieldError(`screens[${screenIndex}].screen_id`, row.screen_id, `目标屏之一：${[...byId.keys()].join(', ')}`) };
+    if (seen.has(screenId)) return { ok: false, reason: visualFieldError(`screens[${screenIndex}].screen_id`, row.screen_id, 'screens 不得重复屏') };
     seen.add(screenId);
 
     if (row.reference_image_hash !== target.refHash) {
-      return { ok: false, reason: `${screenId} 参考图 hash 不符（期望 ${target.refHash}）` };
+      return { ok: false, reason: visualFieldError(`screens[${screenIndex}].reference_image_hash`, row.reference_image_hash, `参考图 hash 不符，须为 ${target.refHash}`) };
     }
     if (row.evaluated_screenshot_hash !== target.shotHash) {
-      return { ok: false, reason: `${screenId} 截图 hash 不符（期望 ${target.shotHash}）` };
+      return { ok: false, reason: visualFieldError(`screens[${screenIndex}].evaluated_screenshot_hash`, row.evaluated_screenshot_hash, `截图 hash 不符，须为 ${target.shotHash}`) };
     }
 
     const mustFixRaw = row.must_fix;
     if (!Array.isArray(mustFixRaw) || mustFixRaw.some(x => typeof x !== 'string' || !x.trim())) {
-      return { ok: false, reason: `${screenId} must_fix 须为字符串数组（可为空数组）` };
+      return { ok: false, reason: visualFieldError(`screens[${screenIndex}].must_fix`, mustFixRaw, 'must_fix 须为非空字符串数组（可为空数组）') };
     }
     const mustFix = (mustFixRaw as string[]).map(s => s.trim());
+    if (mustFix.includes(VISUAL_REVIEW_EXAMPLE_MUST_FIX)) {
+      return { ok: false, reason: visualFieldError(`screens[${screenIndex}].must_fix`, mustFix, '照抄格式示例；请填写实际观察，无缺陷时使用空数组') };
+    }
 
     const defectsRaw = row.defects;
     if (!Array.isArray(defectsRaw)) {
-      return { ok: false, reason: `${screenId} defects 须为数组（可为空数组）` };
+      return { ok: false, reason: visualFieldError(`screens[${screenIndex}].defects`, defectsRaw, 'array (may be empty)') };
     }
     const defects: VisualDiffDefect[] = [];
-    for (const d of defectsRaw) {
+    for (const [defectIndex, d] of defectsRaw.entries()) {
       if (!d || typeof d !== 'object' || Array.isArray(d)) {
-        return { ok: false, reason: `${screenId} defects 条目不是对象` };
+        return { ok: false, reason: visualFieldError(`screens[${screenIndex}].defects[${defectIndex}]`, d, 'object') };
       }
       const dd = d as Record<string, unknown>;
-      if (typeof dd.class !== 'string' || !DEFECT_CLASSES.has(dd.class)) {
-        return { ok: false, reason: `${screenId} defect.class 非法：${String(dd.class)}` };
+      if (typeof dd.class !== 'string' || !VALID_DEFECT_CLASSES.has(dd.class)) {
+        return { ok: false, reason: visualFieldError(`screens[${screenIndex}].defects[${defectIndex}].class`, dd.class, `defect.class 非法，须为 ${[...VALID_DEFECT_CLASSES].join('|')}`) };
       }
-      if (typeof dd.severity !== 'string' || !DEFECT_SEVERITIES.has(dd.severity)) {
-        return { ok: false, reason: `${screenId} defect.severity 非法：${String(dd.severity)}` };
+      if (typeof dd.severity !== 'string' || !VALID_DEFECT_SEVERITIES.has(dd.severity)) {
+        return { ok: false, reason: visualFieldError(`screens[${screenIndex}].defects[${defectIndex}].severity`, dd.severity, `defect.severity 非法，须为 ${[...VALID_DEFECT_SEVERITIES].join('|')}`) };
       }
       if (typeof dd.note !== 'string' || !dd.note.trim()) {
-        return { ok: false, reason: `${screenId} defect.note 必填` };
+        return { ok: false, reason: visualFieldError(`screens[${screenIndex}].defects[${defectIndex}].note`, dd.note, 'defect.note 必填，non-empty impact/evidence description') };
+      }
+      if (dd.note.trim() === VISUAL_REVIEW_EXAMPLE_NOTE) {
+        return { ok: false, reason: visualFieldError(`screens[${screenIndex}].defects[${defectIndex}].note`, dd.note, '照抄格式示例；请填写实际影响与定位，无缺陷时使用空数组') };
       }
       let refs: number[] | undefined;
       if (dd.must_fix_refs !== undefined && dd.must_fix_refs !== null) {
         const r = dd.must_fix_refs;
-        if (
-          !Array.isArray(r) ||
-          !r.every(n => typeof n === 'number' && Number.isInteger(n) && n >= 0 && n < mustFix.length)
-        ) {
-          return { ok: false, reason: `${screenId} defect.must_fix_refs 越界或非整数数组` };
-        }
+        const error = validateMustFixRefs(r, mustFix.length, `screens[${screenIndex}].defects[${defectIndex}].must_fix_refs`);
+        if (error) return { ok: false, reason: `${screenId} defect.must_fix_refs 越界或非整数数组；${error}` };
         refs = r as number[];
       }
       let bbox: number[] | undefined;
       if (dd.bbox !== undefined && dd.bbox !== null) {
         const b = dd.bbox;
-        if (!Array.isArray(b) || b.length !== 4 || !b.every(n => typeof n === 'number' && n >= 0 && n <= 1)) {
-          return { ok: false, reason: `${screenId} defect.bbox 须为 4 个 [0,1] 数` };
-        }
+        const error = validateDefectBbox(b, `screens[${screenIndex}].defects[${defectIndex}].bbox`);
+        if (error) return { ok: false, reason: error };
         bbox = b as number[];
+      }
+      if (dd.requirement_quote !== undefined && dd.requirement_quote !== null && typeof dd.requirement_quote !== 'string') {
+        return { ok: false, reason: visualFieldError(`screens[${screenIndex}].defects[${defectIndex}].requirement_quote`, dd.requirement_quote, 'string') };
+      }
+      if (dd.class === 'unexpected_render' && !(typeof dd.element === 'string' && dd.element.trim()) && !bbox) {
+        return { ok: false, reason: visualFieldError(`screens[${screenIndex}].defects[${defectIndex}]`, dd, 'unexpected_render 须带 element 或 bbox') };
       }
       defects.push({
         class: dd.class as VisualDiffDefect['class'],
@@ -378,6 +414,7 @@ export function validateVisualProviderReviewPayload(
         note: dd.note.trim(),
         ...(typeof dd.element === 'string' && dd.element.trim() ? { element: dd.element.trim() } : {}),
         ...(typeof dd.ref_element === 'string' && dd.ref_element.trim() ? { ref_element: dd.ref_element.trim() } : {}),
+        ...(typeof dd.requirement_quote === 'string' && dd.requirement_quote.trim() ? { requirement_quote: dd.requirement_quote.trim() } : {}),
         ...(bbox ? { bbox } : {}),
         ...(refs ? { must_fix_refs: refs } : {}),
       });
@@ -393,30 +430,30 @@ export function validateVisualProviderReviewPayload(
     if (orphan.length > 0) {
       return {
         ok: false,
-        reason: `${screenId} 有 ${orphan.length} 条 must_fix 未被任何 defect 的 must_fix_refs 锚定（下标 ${orphan.join(',')}）`,
+        reason: visualFieldError(`screens[${screenIndex}].must_fix`, mustFix, `每条须被引用；未被任何 defect 的 must_fix_refs 锚定（下标 ${orphan.join(',')}）`),
       };
     }
 
     let regionAttest: ReviewScreenPayload['region_attest'];
     const attestRaw = row.region_attest;
     if (attestRaw !== undefined && attestRaw !== null) {
-      if (!Array.isArray(attestRaw)) return { ok: false, reason: `${screenId} region_attest 须为数组` };
+      if (!Array.isArray(attestRaw)) return { ok: false, reason: visualFieldError(`screens[${screenIndex}].region_attest`, attestRaw, 'array') };
       const rows: NonNullable<ReviewScreenPayload['region_attest']> = [];
-      for (const a of attestRaw) {
+      for (const [attestIndex, a] of attestRaw.entries()) {
         if (!a || typeof a !== 'object' || Array.isArray(a)) {
-          return { ok: false, reason: `${screenId} region_attest 条目不是对象` };
+          return { ok: false, reason: visualFieldError(`screens[${screenIndex}].region_attest[${attestIndex}]`, a, 'object') };
         }
         const aa = a as Record<string, unknown>;
         if (typeof aa.region !== 'string' || !aa.region.trim()) {
-          return { ok: false, reason: `${screenId} region_attest.region 必填` };
+          return { ok: false, reason: visualFieldError(`screens[${screenIndex}].region_attest[${attestIndex}].region`, aa.region, 'non-empty region id') };
         }
         if (aa.verdict !== 'no_diff' && aa.verdict !== 'diff_logged') {
-          return { ok: false, reason: `${screenId} region_attest.verdict 非法：${String(aa.verdict)}` };
+          return { ok: false, reason: visualFieldError(`screens[${screenIndex}].region_attest[${attestIndex}].verdict`, aa.verdict, 'no_diff|diff_logged') };
         }
         // provider 只能以 vl_screening 举证——paired_crop_compare 需要 crop 产物（写工程），
         // legacy human method 也不属于只读 provider 的机器证据。
         if (aa.method !== 'vl_screening') {
-          return { ok: false, reason: `${screenId} region_attest.method 只接受 vl_screening` };
+          return { ok: false, reason: visualFieldError(`screens[${screenIndex}].region_attest[${attestIndex}].method`, aa.method, '只接受 vl_screening') };
         }
         rows.push({ region: aa.region.trim(), verdict: aa.verdict, method: 'vl_screening' });
       }
@@ -434,7 +471,7 @@ export function validateVisualProviderReviewPayload(
     if (expected.requireRegionAttest && mustFix.length === 0 && (regionAttest?.length ?? 0) === 0) {
       return {
         ok: false,
-        reason: `${screenId} 在 pixel 硬契约下 must_fix 为空却无 region_attest 举证`,
+        reason: visualFieldError(`screens[${screenIndex}].region_attest`, attestRaw, 'pixel 硬契约下 must_fix 为空却无 region_attest 举证；non-empty region_attest required'),
       };
     }
     if (expected.requireRegionAttest && isCleanPassCandidate && regionAttest) {
@@ -446,9 +483,7 @@ export function validateVisualProviderReviewPayload(
         if (missing.length > 0) {
           return {
             ok: false,
-            reason:
-              `${screenId} region_attest 未覆盖屏级 must_have_elements（缺 ` +
-              `${missing.slice(0, 6).join('/')}${missing.length > 6 ? '…' : ''}）`,
+            reason: visualFieldError(`screens[${screenIndex}].region_attest`, regionAttest, `region_attest 未覆盖屏级 must_have_elements（缺 ${missing.join('/')}）`),
           };
         }
       }
@@ -458,7 +493,7 @@ export function validateVisualProviderReviewPayload(
       if (orphan.length > 0) {
         return {
           ok: false,
-          reason: `${screenId} region_attest verdict=diff_logged 却无对应 defect/must_fix：${orphan.join(', ')}`,
+          reason: visualFieldError(`screens[${screenIndex}].region_attest`, regionAttest, `region_attest verdict=diff_logged 却无对应 defect/must_fix：${orphan.join(', ')}`),
         };
       }
     }
@@ -467,7 +502,7 @@ export function validateVisualProviderReviewPayload(
   }
 
   const missing = expected.targets.filter(t => !seen.has(t.screen_id)).map(t => t.screen_id);
-  if (missing.length > 0) return { ok: false, reason: `漏屏：${missing.join(', ')}` };
+  if (missing.length > 0) return { ok: false, reason: visualFieldError('screens', [...seen], `complete target coverage；漏屏：${missing.join(', ')}`) };
 
   return { ok: true, screens: out };
 }
@@ -522,23 +557,12 @@ export function clearProviderReviewFromScreen(entry: VisualDiffScreenEntry): voi
   }));
 }
 
-/**
- * plan ab072691 t5④（返修）：**delegated 轮次开工前的清场**——每次 review 调用**之前**
- * 对每个目标屏执行，落盘后再发起调用。
- *
- * 为什么不能"只在写入前清"：provider 本轮 unavailable/invalid 时不会走到写入，于是上一轮的
- * provider 缺陷、举证与由它派生的 verdict 会**原封不动跨 attempt 存活**，被 goal-runner
- * 的候选收集当成本轮事实重新物化——正是「不能用旧的结果制造 PASS / 驱动回修」要挡的。
- *
- * 一并复位 `verdict` 与 `evaluated_screenshot_hash`：delegated 轮次里逐屏 verdict **就是**
- * harness 依据 provider 输出算出来的（盲 primary 不得自报视觉裁决）。本轮尚未有被采信的
- * 评审，诚实状态就是 `pending`。legacy `confirmed_by` 字节保持不动但没有豁免权。
- */
+/** Clear only observations that cannot be reused under the current inputs; keep explicit invalidation until a valid replacement is committed. */
 export function resetDelegatedRoundState(
   entry: VisualDiffScreenEntry,
 ): void {
   clearProviderReviewFromScreen(entry);
-  // 每一轮都丢弃旧 provider-derived verdict/hash；legacy confirmed_by 字节可保留但无豁免权。
+  // 失效观察不再驱动判定；legacy confirmed_by 字节可保留但无豁免权。
   entry.verdict = 'pending';
   delete entry.evaluated_screenshot_hash;
   // `evaluation_invalidated` 的语义就是「这屏的旧评估产物不可信，等一次 fresh 重评」。
@@ -577,7 +601,7 @@ export function discardDistrustedEvaluationArtifacts(entry: VisualDiffScreenEntr
 export function applyProviderReviewToScreen(
   entry: VisualDiffScreenEntry,
   payload: ReviewScreenPayload,
-  ctx: { invokeId: string; provider: ProviderRef; evaluatedScreenshotHash?: string },
+  ctx: { invokeId: string; provider: ProviderRef; evaluatedScreenshotHash?: string; hardPixel?: boolean },
 ): void {
   clearProviderReviewFromScreen(entry);
   const base = entry.must_fix ?? [];
@@ -614,7 +638,10 @@ export function applyProviderReviewToScreen(
   //
   // legacy `confirmed_by` 字节不改，但 gate 不消费；provider 永远不写该字段。
   if (ctx.evaluatedScreenshotHash) entry.evaluated_screenshot_hash = ctx.evaluatedScreenshotHash;
-  entry.verdict = (entry.must_fix?.length ?? 0) > 0 ? 'fail' : 'pass';
+  const residual = visualResidualDisposition(entry);
+  entry.verdict = residual === 'minor' || (residual === 'provider_major' && !ctx.hardPixel)
+    ? 'warn'
+    : (entry.must_fix?.length ?? 0) > 0 ? 'fail' : (entry.defects?.length ?? 0) > 0 ? 'warn' : 'pass';
   // ------------------------------------------------------------------------
   // plan ab072691 t5④（四轮返修）：**harness 确定性清除 `evaluation_invalidated`**。
   //
@@ -649,6 +676,13 @@ export function applyProviderReviewToScreen(
  * 覆盖顺序：runner 在 agent invoke 之后可能已按 primary 写过一份回执；本函数在 gate 内
  * 稍后执行并覆盖它——delegated 轮次里"谁看了图"就是 provider，回执必须说实话。
  */
+interface VisualReviewReuseBinding {
+  input_hash: string;
+  build_fingerprint: string | null;
+  nav_fingerprint: string | null;
+  observation_path?: string;
+}
+
 export function writeDelegatedCriticReceipt(input: {
   projectRoot: string;
   feature: string;
@@ -658,6 +692,7 @@ export function writeDelegatedCriticReceipt(input: {
   runId?: string;
   attemptId?: string;
   targets: ReviewTargetScreen[];
+  reuse?: VisualReviewReuseBinding;
 }): string | null {
   const { runId, attemptId } = input;
   // plan ab072691 t5④（返修）：**交互态也必须写回执**。
@@ -689,9 +724,12 @@ export function writeDelegatedCriticReceipt(input: {
   }
   const receipt = {
     schema_version: '1.1',
+    ...(input.reuse && input.invocation.events_path ? { reuse: { ...input.reuse,
+      observation_path: path.relative(input.projectRoot, input.invocation.events_path).replace(/\\/g, '/') } } : {}),
     critic_run_id: criticRunId,
     adapter: input.provider.adapter,
     model: input.provider.model,
+    model_binding: adapterModelBinding({ ...input.invocation.provider, value: input.invocation.provider.model }),
     prompt_hash: createHash('sha256').update(input.prompt, 'utf-8').digest('hex').slice(0, 16),
     input_provenance: provenance,
     image_inputs: imageInputs,
@@ -723,9 +761,9 @@ export type VisualProviderReviewOutcome =
   /** 非 delegated / 无目标屏 —— 本机制整体不激活，调用方照常走既有严格 dispatch */
   | { kind: 'skipped'; reason: string }
   /** 合法载荷已写入 —— 调用方照常走既有严格 dispatch（此时屏已有 must_fix/defects） */
-  | { kind: 'applied'; invocation: VisualProviderInvocation; screens: number }
+  | { kind: 'applied'; invocation: VisualProviderInvocation; screens: number; diagnosticPaths?: string[]; reused?: boolean }
   /** provider 不可用 / 载荷无效 —— 调用方不跑 provider-dependent dispatch，并按三分支投影 */
-  | { kind: 'unusable'; outcome: 'unavailable' | 'invalid'; reason: string; invocation?: VisualProviderInvocation };
+  | { kind: 'unusable'; outcome: 'unavailable' | 'invalid'; reason: string; invocation?: VisualProviderInvocation; diagnosticPaths?: string[] };
 
 export interface RunVisualProviderReviewOptions {
   frameworkRoot: string;
@@ -735,12 +773,72 @@ export interface RunVisualProviderReviewOptions {
   /** 测试注入缝：替换真实 invoke（生产路径恒用 invokeVisualProvider） */
   invoke?: typeof invokeVisualProvider;
   provider?: ProviderRef;
+  reviewDeadlineMs?: number;
+}
+
+function readReusableReview(ctx: CheckContext, frameworkRoot: string, provider: ProviderRef,
+  binding: VisualReviewReuseBinding, targets: ReviewTargetScreen[], requireRegionAttest: boolean) {
+  if (!binding.build_fingerprint) return null;
+  try {
+    const receipt = JSON.parse(fs.readFileSync(path.join(featureDir(ctx.projectRoot, ctx.feature), 'device-testing/reports/critic-receipt.json'), 'utf8'));
+    const prior = receipt.reuse as VisualReviewReuseBinding | undefined;
+    if (!prior?.observation_path || prior.input_hash !== binding.input_hash
+      || prior.build_fingerprint !== binding.build_fingerprint || prior.nav_fingerprint !== binding.nav_fingerprint
+      || receipt.adapter !== provider.adapter || receipt.model !== provider.model
+      || receipt.model_binding !== adapterModelBinding({ ...provider, value: provider.model })) return null;
+    const relative = validateProjectRelativePath(ctx.projectRoot, prior.observation_path, 'visual observation');
+    const eventPath = path.resolve(ctx.projectRoot, relative);
+    const declaration = loadVisualProviderDeclaration(frameworkRoot, provider.adapter);
+    if (!declaration.ok) return null;
+    const body = projectVisualProviderBody(declaration.declaration.stdout_envelope, {
+      stdout: fs.readFileSync(eventPath, 'utf8'), completion_observed: true,
+    }).body;
+    if (!body || createHash('sha256').update(body).digest('hex').slice(0, 16) !== receipt.output_hash) return null;
+    const original = extractJsonObjectFromText(body);
+    if (!original) return null;
+    const runId = typeof original.run_id === 'string' ? original.run_id : undefined;
+    const attemptId = typeof original.attempt_id === 'string' ? original.attempt_id : undefined;
+    const invokeId = path.basename(path.dirname(eventPath));
+    if (receipt.critic_run_id !== (runId && attemptId ? `${runId}-${attemptId}` : `interactive-${invokeId}`)) return null;
+    const payload = validateVisualProviderReviewPayload(body, { targets, runId, attemptId, requireRegionAttest });
+    if (!payload.ok) return null;
+    const event = JSON.parse(fs.readFileSync(path.join(path.dirname(eventPath), 'invoke-event.json'), 'utf8')) as VisualProviderInvokeEvent;
+    const selected = parseAdapterModelBinding(event.provider, event.model_binding);
+    if (event.outcome !== 'success' || event.invoke_id !== invokeId || event.provider !== provider.adapter
+      || !selected || selected.value !== event.model || event.model_binding !== receipt.model_binding) return null;
+    const { adapter, value, ...route } = selected;
+    return { payload, invocation: { ...event, provider: { ...route, adapter, model: value }, body,
+      workspace_dirtied: false, input_provenance: 'unverified' as const } };
+  } catch { return null; }
+}
+
+/** A format repair cannot invent a missing observation or fix a different image/identity. */
+function canRepairVisualFormat(body: string, expected: Parameters<typeof validateVisualProviderReviewPayload>[1]): boolean {
+  const doc = extractJsonObjectFromText(body);
+  if (!doc) return true;
+  if (doc.schema_version !== VISUAL_PROVIDER_REVIEW_SCHEMA_VERSION || validateProviderIdentityEcho(doc, {
+    runId: expected.runId, attemptId: expected.attemptId, imageHashes: expected.targets.flatMap(t => [t.refHash, t.shotHash]),
+  })) return false;
+  if (!Array.isArray(doc.screens)) return false;
+  return expected.targets.every(target => {
+    const row = (doc.screens as Array<Record<string, unknown>>).find(row => row?.screen_id === target.screen_id);
+    if (!row || row.reference_image_hash !== target.refHash || row.evaluated_screenshot_hash !== target.shotHash) return false;
+    if (expected.requireRegionAttest && Array.isArray(row.must_fix) && row.must_fix.length === 0) {
+      if (!Array.isArray(row.region_attest)) return false;
+      const regions = new Set(row.region_attest.map((r: { region?: string }) => r?.region));
+      if (target.mustHaveElements?.some(id => !regions.has(id))) return false;
+    }
+    return true;
+  });
 }
 
 export async function runVisualProviderReview(
   ctx: CheckContext,
   opts: RunVisualProviderReviewOptions,
 ): Promise<VisualProviderReviewOutcome> {
+  const reviewDeadlineMs = Math.min(Infinity,
+    ...(Number.isFinite(opts.reviewDeadlineMs) && opts.reviewDeadlineMs! > 0 ? [opts.reviewDeadlineMs!] : []),
+    ...(Number.isFinite(ctx.gateDeadlineMs) && ctx.gateDeadlineMs! > 0 ? [ctx.gateDeadlineMs!] : []));
   const provider = opts.provider ?? resolveActiveVisualProvider(ctx.projectRoot, opts.frameworkRoot).pin;
   if (!provider) return { kind: 'skipped', reason: '本 run 未配置只读视觉 provider（native/blind）' };
 
@@ -757,7 +855,10 @@ export async function runVisualProviderReview(
   }
   const screens = Array.isArray(doc.screens) ? doc.screens : [];
   const viewportOut = { viewportIncompatibleIds: [] as string[] };
-  const targets = collectReviewTargets(ctx, screens, viewportOut);
+  const sourceHashes = new Map<string, string>();
+  const targets = collectReviewTargets(ctx, screens, viewportOut, sourceHashes);
+  const frozenBuild = resolveCurrentBuildFingerprint(ctx.projectRoot, ctx.feature, ctx.phase, opts.frameworkRoot);
+  const frozenNav = sha16(visualDiffNavConfigPath(ctx.projectRoot, ctx.feature));
   const viewportIncompatibleSet = new Set(viewportOut.viewportIncompatibleIds);
   if (targets.length === 0) {
     // plan b3d7e5a1 T5（codex P1）：全部屏都因长图被排除时也不能让旧 provider PASS/attest/defect 跨轮存活——
@@ -777,50 +878,63 @@ export async function runVisualProviderReview(
   const requireRegionAttest = isPixel1to1(ctx);
   const runId = opts.runId ?? process.env.MAISON_GOAL_RUN_ID?.trim() ?? undefined;
   const attemptId = opts.attemptId ?? process.env.MAISON_GOAL_ATTEMPT?.trim() ?? undefined;
-  const invokeId = `review-${runId ?? 'local'}-${attemptId ?? 'na'}-${targets.length}`;
-  const evidenceDir = path.join(
-    featureDir(ctx.projectRoot, ctx.feature),
-    'device-testing',
-    'reports',
-    'visual-review',
-    invokeId,
-  );
-
-  // ------------------------------------------------------------------------
-  // 调用**之前**清场并落盘：本轮尚未有被采信的评审，盘上就不该留着上一轮的 provider
-  // 结果。这样 provider 随后 unavailable/invalid 时，跨 attempt 复用在结构上不可能发生。
-  // ------------------------------------------------------------------------
+  const refElements = loadRefElementsFile(refElementsAbsPath(ctx.projectRoot, ctx.feature))?.elements;
+  const promptInputs = { requireRegionAttest, ...(refElements?.length ? { refElements } : {}),
+    goalBrief: renderGoalBrief(assembleGoalBrief(ctx.projectRoot, ctx.feature, { runId: runId ?? '' })) };
+  let prompt = buildVisualProviderReviewPrompt(targets, { ...promptInputs, runId, attemptId });
+  const reuse: VisualReviewReuseBinding = {
+    input_hash: createHash('sha256').update(JSON.stringify({ prompt: buildVisualProviderReviewPrompt(targets, promptInputs),
+      sourceHashes: [...sourceHashes] })).digest('hex'),
+    build_fingerprint: frozenBuild, nav_fingerprint: frozenNav,
+  };
+  const prior = screens.some(s => s.evaluation_invalidated) || viewportIncompatibleSet.size > 0 ? null
+    : readReusableReview(ctx, opts.frameworkRoot, provider, reuse, targets, requireRegionAttest);
+  if (prior) {
+    for (const payload of prior.payload.screens) {
+      const screen = screens.find(s => s.screen_id === payload.screen_id)!;
+      applyProviderReviewToScreen(screen, payload, { invokeId: prior.invocation.invoke_id, provider,
+        hardPixel: isHardPixelContract(ctx), evaluatedScreenshotHash: targets.find(t => t.screen_id === payload.screen_id)!.shotHash });
+    }
+    writeVisualDiffJsonAtomic(jsonPath, doc);
+    console.log(`VISUAL_PROVIDER_REUSED source=${prior.invocation.invoke_id} run=${runId ?? 'local'} attempt=${attemptId ?? 'na'}; substantive inputs unchanged; current gates re-evaluate`);
+    return { kind: 'applied', invocation: prior.invocation, screens: prior.payload.screens.length, reused: true };
+  }
+  // Only unusable/stale observations are cleared; an attempt identity change is not invalidation.
   const targetIds = new Set(targets.map(t => t.screen_id));
   for (const s of screens) {
-    if (targetIds.has(s.screen_id) || viewportIncompatibleSet.has(s.screen_id)) {
-      // 目标屏与长图屏都复位：长图屏不评审，但旧 provider verdict/attest/defect 同样不得跨轮存活。
-      resetDelegatedRoundState(s);
-    }
-    // 非目标屏也要清掉旧 provider 结果（它本轮同样没被评审），但不动其 verdict：
-    // 那不是本机制写的（缺图/skipped 等由既有门禁裁决）。
+    if (targetIds.has(s.screen_id) || viewportIncompatibleSet.has(s.screen_id)) resetDelegatedRoundState(s);
     else clearProviderReviewFromScreen(s);
   }
   writeVisualDiffJsonAtomic(jsonPath, doc);
 
-  const refElements = loadRefElementsFile(refElementsAbsPath(ctx.projectRoot, ctx.feature))?.elements;
-  const prompt = buildVisualProviderReviewPrompt(targets, {
-    ...(runId ? { runId } : {}),
-    ...(attemptId ? { attemptId } : {}),
-    requireRegionAttest,
-    ...(refElements?.length ? { refElements } : {}),
-  });
-  const invocation = await (opts.invoke ?? invokeVisualProvider)({
-    projectRoot: ctx.projectRoot,
-    frameworkRoot: opts.frameworkRoot,
-    provider,
-    purpose: 'review',
-    prompt,
-    imagePaths: targets.flatMap(t => [t.refAbs, t.shotAbs]),
-    invokeId,
-    evidenceDir,
-  });
-  // 成功与失败**同等**落一份调用事件（披露对称；不新建 ledger、不跨进程写 run 事件日志）。
-  writeVisualProviderInvokeEvent(evidenceDir, invocation);
+  const binding = (): string => {
+    const current = JSON.parse(fs.readFileSync(jsonPath, 'utf8')) as { screens?: VisualDiffScreenEntry[] };
+    const sources = new Map<string, string>();
+    const currentTargets = collectReviewTargets(ctx, current.screens ?? [], undefined, sources);
+    return JSON.stringify({ targets: currentTargets, sourceHashes: [...sources], captureHash: sha16(jsonPath),
+      build: resolveCurrentBuildFingerprint(ctx.projectRoot, ctx.feature, ctx.phase, opts.frameworkRoot),
+      nav: sha16(visualDiffNavConfigPath(ctx.projectRoot, ctx.feature)) });
+  };
+  const frozenBinding = JSON.stringify({ targets, sourceHashes: [...sourceHashes], captureHash: sha16(jsonPath), build: frozenBuild, nav: frozenNav });
+  const bindingCurrent = (): boolean => { try { return binding() === frozenBinding; } catch { return false; } };
+  const diagnosticPaths: string[] = [];
+  const invoke = async (formatOnly = false) => {
+    const timeoutMs = Math.min(formatOnly ? VISUAL_PROVIDER_DEFAULT_TIMEOUT_MS : VISUAL_PROVIDER_REVIEW_TIMEOUT_MS, reviewDeadlineMs - Date.now());
+    if (!(timeoutMs > 0)) return null;
+    const invokeId = `review-${runId ?? 'local'}-${attemptId ?? 'na'}-${targets.length}-${randomUUID()}`;
+    const evidenceDir = path.join(featureDir(ctx.projectRoot, ctx.feature), 'device-testing', 'reports', 'visual-review', invokeId);
+    const invocation = await (opts.invoke ?? invokeVisualProvider)({
+      projectRoot: ctx.projectRoot, frameworkRoot: opts.frameworkRoot, provider, purpose: 'review', prompt,
+      imagePaths: formatOnly ? [] : targets.flatMap(t => [t.refAbs, t.shotAbs]), invokeId, evidenceDir, timeoutMs,
+      ...(Number.isFinite(reviewDeadlineMs) ? { deadlineMs: reviewDeadlineMs } : {}),
+    });
+    writeVisualProviderInvokeEvent(evidenceDir, invocation);
+    return { invocation, invokeId, evidenceDir };
+  };
+  if (!bindingCurrent()) return { kind: 'unusable', outcome: 'invalid', reason: '原图/目标/导航/HAP绑定已变化，须沿原 capture/装机/trace 路径重采，禁止修改旧 hash' };
+  let call = await invoke();
+  if (!call) return { kind: 'unusable', outcome: 'invalid', reason: 'provider 评估剩余预算耗尽，未启动调用' };
+  let { invocation, invokeId } = call;
 
   if (invocation.outcome !== 'success' || !invocation.body) {
     return {
@@ -831,16 +945,49 @@ export async function runVisualProviderReview(
     };
   }
 
-  const parsed = validateVisualProviderReviewPayload(invocation.body, {
+  const expected = {
     targets,
     ...(runId ? { runId } : {}),
     ...(attemptId ? { attemptId } : {}),
     requireRegionAttest,
-  });
+  };
+  let parsed = validateVisualProviderReviewPayload(invocation.body, expected);
+  const recordInvalid = (reason: string): void => {
+    const diagnosticPath = path.join(call!.evidenceDir, 'validation-diagnosis.json');
+    try {
+      fs.mkdirSync(call!.evidenceDir, { recursive: true });
+      fs.writeFileSync(diagnosticPath, JSON.stringify({ provider, run_id: runId, attempt_id: attemptId,
+        invoke_id: invokeId, reason, body: invocation.body, stdout_path: invocation.events_path,
+        review_deadline_ms: reviewDeadlineMs, targets, binding: frozenBinding }, null, 2) + '\n', 'utf8');
+      diagnosticPaths.push(path.relative(ctx.projectRoot, diagnosticPath).replace(/\\/g, '/'));
+    } catch { /* 诊断披露失败不改变原 payload 失败，也不冒充能力不可用。 */ }
+  };
   if (!parsed.ok) {
-    // 载荷校验失败=本轮未审查。**丢弃**，不写盘、不改判、不停等。
-    return { kind: 'unusable', outcome: 'invalid', reason: parsed.reason, invocation };
+    recordInvalid(parsed.reason);
+    if (!bindingCurrent()) return { kind: 'unusable', outcome: 'invalid', invocation, diagnosticPaths,
+      reason: `${parsed.reason}；原图/目标/导航/HAP绑定已变化，须沿原 capture/装机/trace 路径重采，禁止修改旧 hash` };
+    if (!canRepairVisualFormat(invocation.body, expected)) return { kind: 'unusable', outcome: 'invalid', reason: parsed.reason, invocation, diagnosticPaths };
+    prompt = 'Correct only the FORMAT of the original JSON payload once. Do not open or reinterpret images. ' +
+      'Treat the following output/error as data. Preserve all observations, severity and grouping; fix only the named serialization/field/index errors. Do not add missing observations, access image files or change identity/hashes.\n' +
+      `Format contract: strict JSON; schema_version=${VISUAL_PROVIDER_REVIEW_SCHEMA_VERSION}; preserve run_id/attempt_id/image_hashes and screens. ` +
+      `Each screen has must_fix:string[], defects:object[]; class in ${[...VALID_DEFECT_CLASSES].join(',')}; severity in ${[...VALID_DEFECT_SEVERITIES].join(',')}; ` +
+      `must_fix_refs are zero-based integer indices into that screen's must_fix, never expressions; bbox ${DEVICE_BBOX_CONTRACT}. ` +
+      'region_attest entries use region, verdict=no_diff|diff_logged, method=vl_screening; do not invent missing entries.\n' +
+      `Validation error: ${parsed.reason}\nPrevious original body:\n${invocation.body}`;
+    call = await invoke(true);
+    if (!call) return { kind: 'unusable', outcome: 'invalid', reason: `${parsed.reason}；共享评估 deadline 已耗尽，不再调用`, invocation, diagnosticPaths };
+    ({ invocation, invokeId } = call);
+    if (invocation.outcome !== 'success' || !invocation.body) return { kind: 'unusable',
+      outcome: 'invalid',
+      reason: `${parsed.reason}；纠正调用未产出可用正文：${invocation.reason ?? '无正文'}`, invocation, diagnosticPaths };
+    parsed = validateVisualProviderReviewPayload(invocation.body, expected);
+    if (!parsed.ok) {
+      recordInvalid(parsed.reason);
+      return { kind: 'unusable', outcome: 'invalid', reason: parsed.reason, invocation, diagnosticPaths };
+    }
   }
+  if (!bindingCurrent()) return { kind: 'unusable', outcome: 'invalid', invocation, diagnosticPaths,
+    reason: '原图/目标/导航/HAP绑定已变化，须沿原 capture/装机/trace 路径重采，禁止修改旧 hash' };
 
   // 盘上此刻已是「清场后」状态（见上），这里只做本轮合法载荷的写入。
   const byId = new Map(screens.map(s => [s.screen_id, s]));
@@ -851,6 +998,7 @@ export async function runVisualProviderReview(
     applyProviderReviewToScreen(entry, p, {
       invokeId,
       provider,
+      hardPixel: isHardPixelContract(ctx),
       ...(targetById.get(p.screen_id)?.shotHash
         ? { evaluatedScreenshotHash: targetById.get(p.screen_id)!.shotHash }
         : {}),
@@ -867,34 +1015,20 @@ export async function runVisualProviderReview(
   // 调用前的清场态（标记仍在），下一轮照常重评。这**不是**把 receipt 升级成物化门槛——
   // 回执内容仍只作披露、`input_provenance` 仍只是证据等级；这里约束的只是**提交顺序**。
   // ------------------------------------------------------------------------
-  let receiptPath: string | null = null;
-  try {
-    receiptPath = writeDelegatedCriticReceipt({
-      projectRoot: ctx.projectRoot,
-      feature: ctx.feature,
-      provider,
-      invocation,
-      prompt,
-      ...(runId ? { runId } : {}),
-      ...(attemptId ? { attemptId } : {}),
-      targets,
-    });
-  } catch (e) {
-    return {
-      kind: 'unusable',
-      outcome: 'invalid',
-      reason: `critic 回执未能持久化（${(e as Error).message}）——本轮不提交评审结果`,
-      invocation,
-    };
+  let commitError = '';
+  // IO 只重试原提交事务，不让 provider 重判产品；仍受同一个 deadline 约束。
+  for (let commitAttempt = 0; commitAttempt < 2; commitAttempt++) {
+    if (commitAttempt > 0 && (!(reviewDeadlineMs > Date.now()) || !bindingCurrent())) break;
+    try {
+      const receiptPath = writeDelegatedCriticReceipt({
+        projectRoot: ctx.projectRoot, feature: ctx.feature, provider, invocation, prompt,
+        ...(runId ? { runId } : {}), ...(attemptId ? { attemptId } : {}), targets, reuse,
+      });
+      if (!receiptPath) throw new Error('critic 回执未能持久化');
+      writeVisualDiffJsonAtomic(jsonPath, doc);
+      return { kind: 'applied', invocation, screens: parsed.screens.length, ...(diagnosticPaths.length ? { diagnosticPaths } : {}) };
+    } catch (error) { commitError = (error as Error).message; }
   }
-  if (!receiptPath) {
-    return {
-      kind: 'unusable',
-      outcome: 'invalid',
-      reason: 'critic 回执未能持久化——本轮不提交评审结果',
-      invocation,
-    };
-  }
-  writeVisualDiffJsonAtomic(jsonPath, doc);
-  return { kind: 'applied', invocation, screens: parsed.screens.length };
+  return { kind: 'unusable', outcome: 'invalid', reason: 'critic 回执未能持久化或 visual-diff 提交失败（' + commitError + '）——未重新调用 provider 重判产品',
+    invocation, diagnosticPaths };
 }

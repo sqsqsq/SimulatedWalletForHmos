@@ -1,19 +1,23 @@
 # 编码 Skill (`coding`)
 
-> **输入协议边界**：旧版固定上游阅读口径仅适用于历史 1.0 输入。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。新默认使用 1.1 输入，调用上下文必须由入口解析，不得自行补造。任何需要编译或跑测试的校验一律经框架执行器（专项 request CLI 或 `harness-runner --phase`）；不裸调 hvigor，也不引导用户去运行宿主自带脚本。确认工具链本身跑 `check-personal-setup.ts --json --ensure`（执行入口，会真 reprobe）；失败诊断读同次 `hvigor-*.meta.json` 的 `envProbe`（`DEVECO_SDK_HOME_PATH` 本次实际取值 / `JAVA_HOME`；布尔位只说明变量**是否设置**，不等于框架派生成功）与 `command`、`exitCode`，再读构建日志正文，重新解析出来的只能称「当前值」，安装目录扫描第三顺位；**本阶段（有 Feature 的 coding）编译出口不变**，仍按第 9 条跑到真实 PASS；只有**无 Feature 的非正式纯代码维护**（既没有可用 Feature 契约、目标模块也没有测试载体）才如实报告「框架当前不提供即时编译校验」并停下；确有外部阻塞时准确列出哪些步骤未执行。**单职责终点**：入口只请求本阶段时，只做本职责、在请求终点停止；不冒充 Feature 整体完成，也不自动追加后续阶段（完成判定由冻结范围决定）。
+正式阶段在产出前和收口前读取[当前工作与验收证据](../../reference/agents-entry-detail.md#当前工作与验收证据)，按本次共同处置完成本职任务或合法交接；原总 PASS、旧回执或 closed 不遮住当前必修。独立请求仍到其授权终点结束。
+本次实现直接造成的既有测试编译/兼容问题，可当场修补既有类型、import、测试数据或替身；有无独立 UT 阶段均适用。`coding_existing_test_preserved` 对照真实修补前版本，要求已有用例定义和断言原样保留，不新增用例、断言或 skip/禁用声明。新增/调整测试及断言交 UT；前置原件不可取得、解析不能确认或保留检查失败时，交真实 UT 修正/核验采纳，不能用更旧 run Git 字节替代 UT 已更新的版本。源码修改权不包含签发测试 PASS、修改报告或降低验收的权力。
+
+在既有 coding 报告逐项说明改了哪些测试数据/替身、实际修改和原因，review 继续审真实 diff。UT 可沿有效产出 manifest 核验采纳当前字节，无需为了登记再改一遍；采纳后的新越权写入仍使原事实失效。返修保持原 facts 建立者和基线，仅追加本阶段 delta；原合法源码写入不会因撤销旧 PASS 丢失。
+
+> **输入协议边界（以下 facts 与阶段约束仅适用于 Feature/CU；只编译先按下方分流）**：旧版固定上游阅读口径仅适用于历史 1.0 输入。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。新默认使用 1.1 输入，调用上下文必须由入口解析，不得自行补造。任何需要编译或跑测试的校验一律经框架执行器（纯编译用 `npm run compile`，测试用专项 request CLI 或正式 `harness-runner --phase`）；不裸调 hvigor，也不引导用户去运行宿主自带脚本。确认工具链本身跑 `check-personal-setup.ts --json --ensure`（执行入口，会真 reprobe）；失败诊断读同次 `hvigor-*.meta.json` 的 `envProbe`（`DEVECO_SDK_HOME_PATH` 本次实际取值 / `JAVA_HOME` / 子进程 PATH 解析的 `pathJava` 与 `pathJavaSource`，后两者不是签名子进程的已观测执行；布尔位只说明变量**是否设置**，不等于框架派生成功）与 `command`、`exitCode`，再读构建日志正文，重新解析出来的只能称「当前值」，安装目录扫描第三顺位；**本阶段（有 Feature 的 coding）编译出口不变**，仍按第 9 条跑到真实 PASS；无 Feature 的纯编译直接运行 `npm run compile`，无需测试载体；确有外部阻塞时准确列出哪些步骤未执行。**单职责终点**：入口只请求本阶段时，只做本职责、在请求终点停止；不冒充 Feature 整体完成，也不自动追加后续阶段（完成判定由冻结范围决定）。构建配置引用路径实际存在却仍报错时，可由工具做一次有依据的无 daemon 事务恢复；仍失败不自动归外部或禁止作者调查。沿现有共同处置在本次授权写域内查配置、脚本、产物和实际环境；只有确认缺凭据/权限/外部服务或需扩大写域时才等待/修订范围。Java 优先级不变，分别读 JAVA_HOME 与 PATH 首个 Java，不凭路径或一次成功推断兼容及签名 400 根因。
 
 > **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `coding.scope_stop` / `coding.module_batch` / `coding.deps_abc` / `coding.ok_to_review` / `phase.next_step`。
 
-## 前置
+## 请求分流与前置
 
-本工程须先完成 [`framework-init`](../../project/framework-init/SKILL.md)：`framework.config.json` 与 **paths**/**`architecture` 段**已由初始化写入或与之一致。
-
-**Harness 运行时前置**：满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)。**Personal setup（BLOCKER）**：[personal-setup-gate](../../reference/personal-setup-gate.md)：`check-personal-setup.ts --json --ensure`；仅解析 JSON。**视觉能力自测（UI 相关需求·交互式）**：personal-setup `ok` 后按 [interactive-vision-canary](../../reference/interactive-vision-canary.md) 后台跑自测卷判卷 CLI（防死锁编排逐步照做）。
-
-**Feature 归档定位协议**（本阶段是消费者）：先基于 `paths.features_dir` 精确定位 `<features_dir>/<feature>/`。 `<feature>` 语义见 [路径术语表](../../reference/agents-entry-detail.md)（物理 Feature 路径）；定位一律经框架解析（CLI/SSOT/harness 产物路径），不得手工拼接逻辑 identity（含编码 `cu-…`）。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`；exit 0 → 已闭环，**停等 `phase.next_step`**。只有精确目录是正式 feature；输入缺失（至少 `plan.md`/`contracts.yaml`/`acceptance.yaml`）须报告并回上游补齐。
+- **只编译**：在 `framework/harness` 运行 `npm run compile -- --project-root <宿主根> --json`；工程级编译，无 Feature、diff、测试载体或修正登记前置。执行器自行准备实际工具链，交付真实结果后结束，不追加编码/UT/装机。
+- **普通维护**：恢复明确既有预期时按根入口授权范围直接修复；已完成 Feature 的旧指针不要求新建需求或后继 run。编译用上项，review/UT/testing 用各自专项入口；改变预期/契约时回对应设计责任方。
+- **正式 Feature/CU 施工**：先读 [正式前置](../../reference/coding-workflow-detail.md#正式-featurecu-前置)，再执行以下流程；在途任务保持原范围和修正责任。
 
 ## 条件加载索引
 
+- 有具体证据的上游缺口才写可选 `coding/upstream-issues.md`，无问题不生成；按[上游问题与拒修返回](../../reference/coding-workflow-detail.md#可选上游问题与拒修返回)走原核实/owner链，编译 FAIL 保留，必要资源由 coding 自修。
 - 存在 `framework/profiles/<project_profile.name>/skills/coding/profile-addendum.md` 时先读（宿主语言易错手册/资源规范/导出规则）。
 - **Step 2.5a（视觉真源 Read，pixel_1to1 相关）/ Step 3.5（业务编排命名入口）/ Step 6.5+7.1（编译闭环与修复策略）执行前**：完整读 [coding-workflow-detail.md](../../reference/coding-workflow-detail.md)——8 项 pixel_1to1 BLOCKER 门禁、三形态业务编排约束、编译自闭环修复策略全部细则在那里。
 - **Agent 行为规约（BLOCKER）**：[agent-behavioral-principles.md](../../reference/agent-behavioral-principles.md)（原则 3 Surgical·原则 4 Verify）。**Research Sub-Phase 完成前禁止写入第一个实现层源文件。**
@@ -33,7 +37,7 @@
 
 纯设计请求（"修正 plan"、"对齐 spec 改 plan"）不得入境：未激活本 Skill，不得新增/修改实现层产物。**plan 刚修订须先有 harness 顺位**：本会话若刚写入/更新过 plan.md，须已对该 feature 跑 `harness-runner.ts --phase plan` 零 BLOCKER，才可落笔任何实现层产物——禁止"实现先改、plan.harness 后补"。与人审闸门对齐时须取得用户明示可编码，不得把"设计文档已保存"默认等同批准实现；连续执行须用户在指令中同时表达设计定稿与编码开工。中途修正按 AGENTS §4.0 修正三问分层。
 
-**Scope 守门**：现代调用以 run 绑定的 typed contracts 模块、文件引用闭包及 run baseline 核验写集，不要求先执行 plan 或生成 plan.md；旧 run 保留原 scope 读取。发现新接口或越界模块，向已有修正流程提交具体发现，由 plan/蓝图责任方裁决并经 P2 重签后继范围，不能自行扩大授权。**逐文件 Lint 门禁**：单文件 Lint 不过不得进入下一文件，严禁批量生成后统一 lint。
+**Scope 守门**：普通源码、资源、路由接线按真实需求与阶段职责实现；预测 files/modules 不作许可。真实用户限制、公共契约、架构与其它阶段产物仍保护，原需求内必要设计修订交原 owner。实际 diff 全部进入既有 review/编译/测试；超预测模块须显著披露必要性与影响。
 
 **CU-bound Feature**：`contracts.change_unit` 全程只读。实现必须覆盖每个 canonical predicate/provide/design-ref mapping，并保持 Feature id 与 `change_unit_ref` 一致；运行时事实只实现 `contracts.state_management`，禁止复制 CU/蓝图或新增 `runtime_flow_slices`。若代码事实证明蓝图 owner、主链、contract 或当前决策失效，停止编码并路由 P1 调和，不在 Feature 内改写 CU 定义。
 
@@ -44,11 +48,7 @@
 ## 输入
 
 > **`contracts.yaml` 在本阶段只读（BLOCKER 纪律）。** 它是 plan 的产出、coding 的权威输入；
-> 现代 UI scope 白名单取自 **run 已绑定的施工契约**；旧 run 仍读 plan closure。
-> 改 live 文件不会放宽授权，只会使原输入绑定失效。
-> 撞 `ui_scope_violation` 时只有两条合法出路：**收回越界文件**，或**把控制权交还 driver**
-> 由它回到 plan/蓝图责任方重新裁决 scope，并经既有后继函数签发新范围。
-> **自行扩写 contracts.yaml、或自行重取 pass snapshot，都是自我授权，一律无效且会被拦。**
+> UI 与普通源码遵循同一真实边界；不得原地改验收、蓝图、DSL 或绑定自批。预测之外的实现不是越权，真实公共契约变化由责任方正式修订。
 
 | 输入项 | 必需 |
 |--------|------|
@@ -62,9 +62,11 @@
 
 1. **读取解析施工输入**：消费 P1 resolved requirement、代码、contracts 与 acceptance；蓝图来源须经 P3 校验，CU 使用真实 sidecar/写集。plan.md/spec.md 仅作实际需要的补充，不为补齐名称创建空文档。按 modules/files/data_models/interfaces/components/navigation/resource_keys 输出模块×层实现清单（`coding.module_batch`：`1=下一模块` `2=修改本模块`）。
 2. **确定实现顺序**：双重自底向上——模块间按 `outer_layers`/`intra_layer_deps` 声明（被依赖方先落地）；模块内按 profile 声明的层顺序（常见 shared→data→domain→presentation）。
-3. **Research Sub-Phase**（写第一个源码前完成）：UI 需求先做 Step 2.5a 视觉真源 Read。阅读已解析契约/验收、适用 use-cases、architecture DSL、跨模块出口和实际源码。以运行入口返回的 factsContext 为准：coding 为首个实际阶段且无有效基线时建立 schema 1.1 facts，绑定真实 Feature/run、established_by=coding 与来源；承接有效基线时才追加 `## phase_delta: coding`（无新增写 "none"）。不得先写源码再补造 facts，也不回补 spec/change 产物。量化阈值与 subagent 强制只在实际建立阶段及旧 context-exploration.md 兼容路径生效；delta 不重做数量检查，必要的实际阅读仍须完成。
+3. **Research Sub-Phase**（写第一个源码前完成）：UI 需求先做 Step 2.5a 视觉真源 Read。阅读已解析契约/验收、适用 use-cases、architecture DSL、跨模块出口和实际源码。以运行入口返回的 factsContext 为准：coding 为首个实际阶段且无有效基线时建立 schema 1.1 facts，绑定真实 Feature/run、established_by=coding 与来源；承接有效基线时才追加 `## phase_delta: coding`（无新增写 "none"）。同 phase 下一调用补 verifier 或继续合法修改时，runtime 会核已完成调用的真实写链后提供本次 context；保留基线及精确来源 delta，不自己改 run_id/hash/owner 代替核验。不得先写源码再补造 facts，也不回补 spec/change 产物。量化阈值与 subagent 强制只在实际建立阶段及旧 context-exploration.md 兼容路径生效；delta 不重做数量检查，必要的实际阅读仍须完成。
+
+   同 coding 后继可继承严格核验后的旧基线，保留原建立阶段、run 与原 SHA；不要只改 run_id 假装修复。对本阶段写边界内、归本阶段负责且属于当前解析目标的新增或修改源码，建议在 `## phase_delta: coding` 的「路径 | 事实 | 影响」表逐路径登记实际新事实；散文、`none` 或缺少精确行只降低追溯并披露，不阻断施工。表内建议使用工程相对路径；绝对路径、反斜杠、`./` 及末尾追加的同名小节也会归一合并识别。入场前已存在但未调研的目标仍须补齐实际阅读。中断后可承接未撤销 start 的已核 facts context；局部维护保留本次授权内源码施工语义；完整交付统一进入 run，旧无 run 范围先正式转交。需求、contracts、配置及未授权源码没有此承接豁免；入场前来源已变或旧验证窗口无法证明入场时，沿指明的责任阶段实际读源并重建。
 4. **逐模块逐层生成代码**（强制逐文件 Lint 门禁）：开文件前自检（重读易错手册相关条 + 确认路径在 in_scope 内）→ 按 contracts.yaml 强契约生成 → 只写当前一个文件 → 立即 `ReadLints` 零 error 才能开下一文件 → 对照易错手册自校对 → 检查层间依赖 → 展示给用户确认。
-5. **业务编排**（详见 reference，仅 use-cases.yaml 存在时）：三形态（Page 命名方法/协调类/导出命名函数）按复杂度自选，`named_business_handler` 强制校验命名符号、禁匿名 lambda、禁新造 Port。
+5. **业务编排**（详见 reference，仅 use-cases.yaml 存在时）：三形态（Page 命名方法/协调类/导出命名函数）按复杂度自选，`named_business_handler` 校验具名入口可定位、禁匿名业务 lambda；它不证明 UT 可直接调用。unit/both 业务义务须有无需 UI runtime 的真实可驱动入口，按原设计/可测性链补接缝，禁新造无必要 Port。
 6. **模块配置与资源文件**：模块包描述/构建配置/module.json5/根级模块清单/依赖清单；资源文件按 profile 目录布局；路由配置按 profile 约定注册。
 7. **质量门禁自检**（13 项：模块完整性/分层合规/文件完整性/接口一致性/编译零 error/资源引用/页面注册/无硬编码字符串/DAG 合规/导入完整/命名入口完整性/UI 层副作用翻译/视觉背板映射）：不通过定位问题自动修复重检。
 8. **输出交付摘要**：模块变更表 + 新增文件表 + 质量门禁结果，供 Step 9 Harness 验证消费。
@@ -82,7 +84,7 @@
 | 模块导出 / 模块注册 / 页面注册 | 跨模块出口正确导出 / 构建清单注册 / 路由清单登记 | BLOCKER |
 | 硬编码字符串 | presentation 层 UI 文本走资源机制 | MAJOR |
 | 命名规范 / 禁止 any | 命名约定 / 无 any 类型 | MAJOR |
-| pixel_1to1 门禁组（8 项，详见 reference） | 视觉真源/资产物化/文案白名单/渲染几何/透明占位/结构声明台账 | BLOCKER |
+| pixel_1to1 检查组（详见 reference） | 视觉真源/资产物化/文案白名单/渲染几何/透明占位；结构台账缺项仅披露 | 真实缺陷 BLOCKER |
 
 > ⚠️ **必须通过 `harness-runner.ts` 入口**：直接跑 `check-coding.ts` 不会触发任何检查，静默返回 0 造成假通过。
 
@@ -90,9 +92,9 @@
 cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {module-name} --summary --failures-only
 ```
 
-**AI Harness**：harness 输出 verifier request 时，主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-coding.md`（业务逻辑正确性/异常处理完整性/接口签名一致性 BLOCKER/组件 Props 一致性/数据所有权合规/模拟数据隔离/验收标准覆盖）。 verifier 的 WARN/UNKNOWN 本轮不修（记入 `<phase>/notes.md` 带到下一阶段），只有 **BLOCKER 级 FAIL** 才触发修正与重审；材料未变时 harness 复用既有 verifier 报告，材料变了但历史有 PASS 时闭环标 `completed_with_prior_review`（不重跑 verifier，未重审差异登记在 `summary.verifier_closure`）。
+**AI Harness**：harness 输出 verifier request 时，主动调用专用 verifier 角色（宿主以 Task 承载时显式选 `subagent_type: verifier`，宿主原生登记了 verifier 工具时直接调用它；不用通用研究/开发子 agent 顶替）（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-coding.md`（业务逻辑正确性/异常处理完整性/接口签名一致性 BLOCKER/组件 Props 一致性/数据所有权合规/模拟数据隔离/验收标准覆盖）。 原始 verifier 总判与当前工作分别读取：按[当前工作与验收证据](../../reference/agents-entry-detail.md#当前工作与验收证据)消费统一处置。原总 PASS 不免除本阶段真正必修项，建议不因 MAJOR 标签升级；待核交原 verifier，已核必修交合法责任方。材料未变复用报告；历史 PASS 未覆盖当前相关材料时先补核，不能只凭 `completed_with_prior_review` 结束。
 
-**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
+**调用的 prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 prompt 投给专用 verifier 角色——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
 
 **报告由你写入，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，用 Write 把它的回复**原样全文**写进 `summary.verifier_report` 指向的路径（`<reports>/verifier.report.<subject>.md`），再跑 `check-receipt`。不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入；只有终态块的报告能通过校验，却会把这些全部丢掉。
 
@@ -100,11 +102,19 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 
 ## 阶段闭环判定（全局入口 §5.1）
 
-**closed = 脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供**。要求哪几项由 harness 求解后输出（`HARNESS_EVIDENCE_POLICY` 行与 `check-receipt` 的逐项状态），不是写死的固定四件套——verifier 是否 required 由 harness 的 verifier plan 决定，判 disabled 时这一项不存在也不缺失。本阶段的常规形态：
+收到 native testing 的返修候选时，`files` 是修复目标；可选 `evidence_refs` 是只读 trace/case/step、派生计划与失败边界引用。
+按精确 case/step 读取原 StepResult 的 selector request/resolution、outcome 与 diagnostic，再在已授权范围内调查源码。
+没有机器定位的源码目标会保持空 `files`；不要把截图、trace 或派生证据路径当作待改源码，也不要改断言或 hash 洗绿。
 
-1. `<features_dir>/<feature>/coding/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS（**仅当 harness 为本阶段输出了 verifier request**；只跑一次——材料未变复用既有报告，材料变了但历史有 PASS 沿用并标 `completed_with_prior_review`）；4. `check-receipt.ts` 通过（回执由 harness 只读投影生成，agent 不手填；备注写 `<phase>/notes.md`）。required 证据齐备后编码阶段完成，**具备**进 code-review 的资格；**不授权**自动开 code-review。
+**返修先复看再交回（诊断不是验收）**：coding 收到返修候选（testing 或 review 来源）且本 run 阶段链含需要设备的阶段时，影响设备界面或交互的返修，条件具备时交回前必须用当前构建复现相关状态并检查修复结果；条件不足（设备门不过、无设备、状态到不了）时在 coding/notes.md 既有交回说明里记录尝试、障碍与剩余不确定性；同一页面一次有效复看可覆盖多条相关候选；复看不替代 review → UT → testing 的正式验收，也不因缺少诊断文件单独阻断阶段。
 
-**收尾 / 闭环停等（BLOCKER）**：只呈现 harness 的 `NEXT_STEP` 段落；recommendation 由 `assess@1` 生成，执行授权仍由 driver 按 `phase.next_step` / `transition_policy` 裁决。
+你自己没有视觉判断能力，但可以取得当前设备的观察数据（元素几何、截图）来选修法、验修法，再交 review。修前用 `cd framework/harness && npm run adhoc-device-test -- --bundle <bundle id> --dump-ui-only` 看失败屏现状（或 `--observe-ui --steps "<导航自然语言>"` 先走到再 dump）；修后在同一命令加 `--install-current-build`，用与 testing 同一套 product / build mode 解析器把当前工作树出包并强制装机，再 dump / observe；需要量测时加 `--measure-screen <screen_id> --feature <feature>`（截图 + 布局 + 该屏 ui-spec 元素量测，ui-spec 只读）。产物默认落 `doc/features/_adhoc/testing/reports/`（显式 `--dump-ui-out` 不要指向正式 feature 目录；observe / 执行解析主 Ability 时会更新同 bundle 共享的 `app-meta.json` 能力缓存）：不签任何凭证、不是验收证据、不替代 review → UT → testing，testing 会按自己的规则重新出包装机并判定；不要改正式 testing / device-testing 证据。CLI 自带设备门，门不过就继续从源码与证据推进，不要绕门；诊断耗时计入本次调用的活跃时长与超时，没有单独额度。
+
+**closed = 脚本 harness verdict=PASS ∧ 全部 policy=required 的证据已提供 ∧ 当前共同处置无本职责未完必修/待核**。要求哪几项由 harness 求解后输出（`HARNESS_EVIDENCE_POLICY` 行与 `check-receipt` 的逐项状态），不是写死的固定四件套——verifier 是否 required 由 harness 的 verifier plan 决定，判 disabled 时这一项不存在也不缺失。本阶段的常规形态：
+
+1. `<features_dir>/<feature>/coding/reports/trace.json` 真实存在；2. 脚本 harness 退出码 0、零 BLOCKER；3. verifier verdict=PASS（**仅当 harness 为本阶段输出了 verifier request**；只跑一次——材料未变复用既有报告，历史 PASS 的适用性与补核按共同处置）；4. `check-receipt.ts` 通过（回执由 harness 只读投影生成，agent 不手填；备注写 `<phase>/notes.md`）。required 证据齐备后编码阶段完成，**具备**进 code-review 的资格；**不授权**自动开 code-review。
+
+**收尾与继续**：呈现共同当前处置的NEXT；完整交付依已有授权由原协调器持续推进，不按phase重复确认或派新作者。直接专项请求止于原终点，检查PASS不扩大授权。
 
 ## 编码规范速记
 
@@ -112,7 +122,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 
 ## 约束
 
-1. contracts.yaml 是强契约：文件路径/接口签名/数据模型/组件 Props 须一致；Spec 有问题先向用户指出确认修正方案。
+1. contracts.yaml 是强契约：文件路径/接口签名/数据模型/组件 Props 须一致；Spec 有实质问题交原责任方；已授权无人值守原需求内自动修订，改变目标或真实人类授权才确认。
 2. 逐模块逐层交付，每批 `coding.module_batch` 确认后继续。
 3. 无法接真实后端时在 client 层定义接口，repository 用本地替身实现。
 4. 非显而易见的业务逻辑用中文注释说明意图。
@@ -137,4 +147,4 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {
 
 ## 组件资产施工（若启用）
 
-Context Facts 必读 contracts.components.asset_selection、component_ref 定义与 live 调用点，按 [组件资产 SSOT](../../../docs/concepts/component-assets.md) 实施。复用/配置不得误把使用方 file 当定义文件，evolve 仅在已批准范围修改共享模块。新共享合法导出后重跑 index，私有 custom 不登记。发现选型或依赖决策不成立时回蓝图/plan 重签；新边沿既有人授权 await-confirm，不即兴下沉。
+Context Facts 必读 contracts.components.asset_selection、component_ref 定义与 live 调用点，按 [组件资产 SSOT](../../../docs/concepts/component-assets.md) 实施。复用/配置不得误把使用方 file 当定义文件，evolve 仅在已批准范围修改共享模块。新共享合法导出后重跑 index，私有 custom 不登记。发现选型或依赖决策不成立时回蓝图/plan 重签；新边回设计 owner：无人值守原需求内自动重签，有人在场保留确认；coding 不自改 DSL。

@@ -1,3 +1,4 @@
+import { DEVICE_SETUP_GUIDANCE } from '../../../harness/scripts/utils/device-unlock-helper';
 // ============================================================================
 // hdc-runner.ts
 // ============================================================================
@@ -20,6 +21,7 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import { detectStaleSignedSuspect, detectProduct } from './hvigor-runner';
 import * as os from 'os';
 import * as path from 'path';
 import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from 'child_process';
@@ -90,6 +92,7 @@ export function buildHdcSpawnOptions(
     encoding: 'utf-8',
     cwd: ensureHdcIsolatedCwd(),
     shell: useShell,
+    windowsHide: true,
     // codex 十轮（二期）P0：HDC executable 可由 HARNESS_HDC_EXE/HDC_EXE 指定（宿主可控），
     // 属"可执行宿主/设备工具"——统一 wrapper 剥离信任锚 env（此前默认继承 gate harness
     // 完整环境，违反 3.9f 契约）。仅剥离、保留 process.env 的 PATH 原样（不再 merge——
@@ -499,6 +502,7 @@ export type HdcFailureKind =
   | 'test_failed';
 
 export interface HdcFailureDiagnosis {
+  systemSetup?: import('../../../harness/scripts/utils/device-unlock-helper').DeviceSetupObservation;
   kind: HdcFailureKind;
   summary: string;
   suggestion: string;
@@ -520,6 +524,7 @@ export interface OnDeviceUtRunResult {
   failedAt?: 'metadata' | 'hap_not_found' | 'install' | 'run' | 'no_pass';
   /** ohosTest 产物发现阶段是否命中 unsigned HAP；不据此单独推断签名原因。 */
   unsignedPresent?: boolean;
+  artifactValidation?: ReturnType<typeof detectStaleSignedSuspect>;
   durationMs: number;
   /** 总日志（命令拼接 + 各阶段输出），落盘 + 报告展示 */
   logExcerpt: string;
@@ -554,15 +559,17 @@ function parseJson5(content: string): unknown {
  * 从 AppScope/app.json5 读取 bundleName。
  * 找不到文件或字段缺失抛错（让调用方翻译成 BLOCKER FAIL，不静默兜底）。
  */
-export function loadAppBundleName(projectRoot: string): string {
+export function loadAppBundleName(projectRoot: string, onInvalid: (details: string) => never = details => { throw new Error(details); }): string {
   const appJson = path.join(projectRoot, 'AppScope', 'app.json5');
   if (!fs.existsSync(appJson)) {
-    throw new Error(`未找到 AppScope/app.json5：${appJson}`);
+    return onInvalid(`未找到 AppScope/app.json5：${appJson}`);
   }
-  const obj = parseJson5(fs.readFileSync(appJson, 'utf-8')) as { app?: { bundleName?: string } };
+  let obj: { app?: { bundleName?: string } };
+  try { obj = parseJson5(fs.readFileSync(appJson, 'utf-8')) as typeof obj; }
+  catch (error) { if (error instanceof SyntaxError) return onInvalid(`AppScope/app.json5 不是合法 JSON5：${error.message}`); throw error; }
   const name = obj?.app?.bundleName;
   if (!name || typeof name !== 'string') {
-    throw new Error('AppScope/app.json5 > app.bundleName 缺失或非字符串');
+    return onInvalid('AppScope/app.json5 > app.bundleName 缺失或非字符串');
   }
   return name;
 }
@@ -646,6 +653,8 @@ export function loadOhosTestMetadata(projectRoot: string, srcPath: string): Ohos
 
 export interface OhosTestDiscoveryResult {
   signedPath: string | null;
+  artifactValidation?: ReturnType<typeof detectStaleSignedSuspect>;
+  diagnostic?: string;
   /** 与 signedPath 同目录（或扫描到的首个）未签名产物，用于 sign-skip 分层诊断 */
   unsignedPath: string | null;
   /** 实际扫描过的 outputs/ohosTest 目录（相对 projectRoot，正斜杠） */
@@ -656,8 +665,8 @@ export interface OhosTestDiscoveryResult {
  * 在模块的 build/<product>/outputs/ohosTest/ 下发现已签名 / 未签名 hap。
  * 命名约定（hvigor 5.x）：`<srcModuleName>-ohosTest-signed.hap`，
  *   srcModuleName 取 build-profile.json5 modules[].name（即 contracts.modules[].name）。
- * 扫描优先级与旧 findOhosTestSignedHap 一致（buildProduct → default → build/* 兜底），
- * 仅额外记录 unsignedPath/scannedDirs 供 sign-skip 分层诊断消费（plan d7e4b2a9 t3）。
+ * 只扫描所选 product；省略参数时按现有工程配置解析，不能跨 product 猜包。
+ * unsignedPath/scannedDirs 仅供缺包诊断；配对结论来自实际选中的 signed。
  */
 export function discoverOhosTestArtifacts(
   projectRoot: string,
@@ -665,13 +674,12 @@ export function discoverOhosTestArtifacts(
   srcModuleName: string,
   buildProduct?: string,
 ): OhosTestDiscoveryResult {
-  const segments: string[] = [];
-  if (buildProduct && buildProduct.trim()) {
-    segments.push(buildProduct.trim());
+  let selectedProduct = buildProduct?.trim();
+  if (!selectedProduct) {
+    try { selectedProduct = detectProduct(projectRoot); }
+    catch (error) { return { signedPath: null, unsignedPath: null, scannedDirs: [], diagnostic: (error as Error).message }; }
   }
-  if (!segments.includes('default')) {
-    segments.push('default');
-  }
+  const segments = [selectedProduct];
 
   const scannedDirs: string[] = [];
   let signedPath: string | null = null;
@@ -710,22 +718,8 @@ export function discoverOhosTestArtifacts(
     scanDir(path.join(projectRoot, srcPath, 'build', seg, 'outputs', 'ohosTest'));
   }
 
-  const buildRoot = path.join(projectRoot, srcPath, 'build');
-  if (fs.existsSync(buildRoot)) {
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(buildRoot, { withFileTypes: true });
-    } catch {
-      entries = [];
-    }
-    for (const ent of entries) {
-      if (!ent.isDirectory()) continue;
-      if (segments.includes(ent.name)) continue; // 已在上面扫描过
-      scanDir(path.join(buildRoot, ent.name, 'outputs', 'ohosTest'));
-    }
-  }
-
-  return { signedPath, unsignedPath, scannedDirs };
+  const artifactValidation = signedPath ? detectStaleSignedSuspect(signedPath) : undefined;
+  return { signedPath, unsignedPath, scannedDirs, artifactValidation };
 }
 
 /**
@@ -739,7 +733,8 @@ export function findOhosTestSignedHap(
   srcModuleName: string,
   buildProduct?: string,
 ): string | null {
-  return discoverOhosTestArtifacts(projectRoot, srcPath, srcModuleName, buildProduct).signedPath;
+  const result = discoverOhosTestArtifacts(projectRoot, srcPath, srcModuleName, buildProduct);
+  return result.artifactValidation?.status === 'valid' ? result.signedPath : null;
 }
 
 /** runHvigorTest 内模块级直传的签名诊断（plan d7e4b2a9 t3③；不承担跨阶段传输，仅同函数内传递）。 */
@@ -1113,8 +1108,14 @@ export function installHap(hapPath: string): HdcInstallResult {
  * `hdc shell aa test -b <bundle> -m <module> -s unittest <runner> -w <ms>`。
  * 触发 OpenHarmonyTestRunner 在设备上执行 hypium 测试，stdout 同步回流。
  */
-export function runAaTest(meta: OhosTestMetadata, testClasses?: string[]): AaTestResult {
+export function runAaTest(meta: OhosTestMetadata, testClasses?: string[], execute = runHdc): AaTestResult {
   const t0 = Date.now();
+  const { snapshotFaultlogSet, diagnoseNavigationFailure, applicationHilogWindow } = require('./device-crash-diagnostics') as typeof import('./device-crash-diagnostics');
+  const probe = { runHdc: (args: string[]): string | null => {
+    try { const result = execute(args, 8000); return result.error || result.status !== 0 ? null : result.stdout ?? ''; } catch { return null; }
+  } };
+  const faultBaseline = snapshotFaultlogSet(probe);
+  const hilogBefore = probe.runHdc(['shell', 'hilog', '-x']);
   const cmdParts = [
     'shell', 'aa', 'test',
     '-b', meta.bundleName,
@@ -1128,8 +1129,8 @@ export function runAaTest(meta: OhosTestMetadata, testClasses?: string[]): AaTes
   }
   // aa test 的整体 walltime 上界：每条用例 timeoutMs * 估算（最少 5 分钟）
   const walltimeMs = Math.max(5 * 60_000, meta.testTimeoutMs * 10);
-  const ret = runHdc(cmdParts, walltimeMs);
-  const out = truncate(`$ hdc ${cmdParts.join(' ')}\n${ret.stdout ?? ''}\n${ret.stderr ?? ''}`);
+  const ret = execute(cmdParts, walltimeMs);
+  let out = truncate(`$ hdc ${cmdParts.join(' ')}\n${ret.stdout ?? ''}\n${ret.stderr ?? ''}`);
 
   const report = parseHypiumStdout(out);
   // 判定是否真的跑过：
@@ -1139,9 +1140,27 @@ export function runAaTest(meta: OhosTestMetadata, testClasses?: string[]): AaTes
   const hasResult = !!report;
   const noFailure = report ? report.failed === 0 : false;
   const ok = ret.status === 0 && hasResult && noFailure;
-  const diagnosis = ok
+  let diagnosis = ok
     ? undefined
     : classifyAaTestFailure(out, ret.status ?? -1, report);
+  if (!report) {
+    const crash = diagnoseNavigationFailure(meta.bundleName, faultBaseline, probe);
+    const hilog = applicationHilogWindow(hilogBefore, probe.runHdc(['shell', 'hilog', '-x']), meta.bundleName);
+    const crashNote = crash.kind === 'crash_suspected' ? `本应用新增崩溃：${crash.faultFiles.join(', ')}\n${crash.excerpt}`
+      : crash.kind === 'diagnosis_unavailable' ? `崩溃诊断不可用：${crash.reason}` : '未发现本应用新增 faultlog；不能据此判定设备或代码责任。';
+    out += `\n[aa-test diagnosis]\n${crashNote}\n[application hilog]\n${hilog}\n`;
+    if (crash.kind === 'crash_suspected') diagnosis = { kind: 'test_failed', summary: crashNote,
+      suggestion: '按本次新增崩溃证据诊断 UT/执行载体；涉及业务源码时交 coding，不因无结果盲目重跑。' };
+    else if (diagnosis) {
+      const device = classifyAaTestFailure(hilog, ret.status ?? -1);
+      if (device.kind === 'device_locked') diagnosis = device;
+      const setup = process.env.HARNESS_HDC_TARGET ? (require('../../../harness/scripts/utils/device-readiness-deps') as typeof import('../../../harness/scripts/utils/device-readiness-deps')).readLockScreenSnapshot(process.env.HARNESS_HDC_TARGET, args => {
+        const r = execute(args.slice(2), 8000); return { ok: r.status === 0 && !r.error, out: r.stdout ?? '' };
+      }).systemSetup : undefined;
+      if (setup) diagnosis = { kind: 'aa_test_no_result', systemSetup: setup, summary: DEVICE_SETUP_GUIDANCE, suggestion: DEVICE_SETUP_GUIDANCE };
+      diagnosis = { ...diagnosis, summary: `${diagnosis.summary}\n${crashNote}\n${hilog}` };
+    }
+  }
 
   return {
     ok,
@@ -1163,6 +1182,7 @@ export function parseHypiumStdout(out: string): HypiumTestResult | undefined {
   let matched = false;
   let curSuite = '';
   let lastTest = '';
+  let pendingTest = '';
   for (const line of out.split(/\r?\n/)) {
     // OHOS_REPORT_RESULT: stream=Tests run: X, Failure: Y, Error: Z, Pass: W, Ignore: V
     const mSummary = line.match(/Tests run:\s*(\d+),\s*Failure:\s*(\d+),\s*Error:\s*(\d+),\s*Pass:\s*(\d+)(?:,\s*Ignore:\s*(\d+))?/);
@@ -1177,7 +1197,12 @@ export function parseHypiumStdout(out: string): HypiumTestResult | undefined {
     const mClass = line.match(/OHOS_REPORT_STATUS:\s*class=(.+)/);
     if (mClass) { curSuite = mClass[1].trim(); continue; }
     const mTest = line.match(/OHOS_REPORT_STATUS:\s*test=(.+)/);
-    if (mTest) { lastTest = mTest[1].trim(); continue; }
+    if (mTest) { lastTest = pendingTest = mTest[1].trim(); continue; }
+    const status = line.match(/OHOS_REPORT_STATUS_CODE:\s*(-?\d+)\s*$/);
+    if (status && Number(status[1]) !== 1) {
+      if (Number(status[1]) === 0 && pendingTest) (result.passed_tests ??= []).push({ suite: curSuite, test: pendingTest });
+      pendingTest = '';
+    }
     const mStack = line.match(/OHOS_REPORT_STATUS:\s*stack=(.+)/);
     if (mStack) {
       result.failures.push({ suite: curSuite, test: lastTest || '<unknown>', message: mStack[1].trim() });
@@ -1232,7 +1257,7 @@ export function classifyAaTestFailure(
     summary: `aa test 未输出 OHOS_REPORT_RESULT（exit=${exitCode}），无法确认用例真实执行。`,
     suggestion:
       // plan 5e1c7a93 D2：日志已按模块命名（hdc-test.<module>.log），实际路径见 check 的 logPath。
-      '查看本模块的 hdc-test.<module>.log（实际路径见 check 结果的日志落盘行），重点检查 testRunner 路径、ohosTest module name、测试 Ability 是否启动，以及设备是否弹出权限/锁屏/前台限制。',
+      '查看本模块的 hdc-test.<module>.log（实际路径见 check 结果的日志落盘行），原因尚未确认；依据本次设备观察、faultlog 和应用 hilog 定位，不凭单行错误推断 TestRunner 配置有误。输入或环境未变化时不要重复真跑。',
   };
 }
 
@@ -1254,7 +1279,7 @@ export interface OnDeviceUtOptions {
   srcPath: string;
   /**
    * 与 hvigor `-p product=` / `build/<product>/outputs/ohosTest` 对齐的产物目录段。
-   * 不传时 `findOhosTestSignedHap` 会尝试 default 并扫描 `build/*`。
+   * 不传时按现有工程配置解析，不跨 product 扫描采用。
    */
   buildProduct?: string;
   /** 跳过环境变量（v2.2 风格） */
@@ -1283,7 +1308,7 @@ function ensureHdcLogReportDir(
  * 运行期锁屏恢复（t6）——统一走 device-recovery-bridge，与就绪门同一套授权语义。
  * projectRoot 缺失或未登记凭据 → 零输入，只回一句人读指引。
  */
-function recoverFromRuntimeLock(opts: OnDeviceUtOptions): { recovered: boolean; note: string } {
+function recoverFromRuntimeLock(opts: OnDeviceUtOptions): ReturnType<typeof import('./device-recovery-bridge').recoverAfterLockFailure> {
   const projectRoot = opts.projectRoot;
   if (!projectRoot) return { recovered: false, note: '无 projectRoot，跳过运行期恢复' };
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -1327,16 +1352,17 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
   const discovery = discoverOhosTestArtifacts(opts.projectRoot, opts.srcPath, opts.srcModuleName, opts.buildProduct);
   const unsignedPresent = Boolean(discovery.unsignedPath);
   const hap = discovery.signedPath;
-  if (!hap) {
-    const prodHint = opts.buildProduct?.trim() ? `product=${opts.buildProduct.trim()}` : 'default + build/* 扫描';
+  if (!hap || discovery.artifactValidation?.status !== 'valid') {
+    const prodHint = opts.buildProduct?.trim() ? `product=${opts.buildProduct.trim()}` : '工程选定 product';
     const signSkipMsg = describeOhosTestSignSkipDiagnosis(discovery, opts.signDiagnosis);
     const msg =
-      signSkipMsg ??
-      `未在 ${opts.srcPath}/build/<product>/outputs/ohosTest/ 找到 *-signed.hap（已尝试 ${prodHint}），请先 genOnDeviceTestHap`;
+      discovery.artifactValidation?.note ?? discovery.diagnostic ?? signSkipMsg ??
+      `未在 ${opts.srcPath}/build/<product>/outputs/ohosTest/ 找到 *-signed.hap（已尝试 ${prodHint}），请核对本模块构建日志和产物路径：HAP=assembleHap，HAR/HSP=genOnDeviceTestHap`;
     return finalize({
       executed: false,
       failedAt: 'hap_not_found',
       unsignedPresent,
+      artifactValidation: discovery.artifactValidation,
       metadata,
       logExcerpt: `${logChunks.join('\n')}\n[hap] FAIL: ${msg}`,
       errors: [{ message: msg }],
@@ -1383,7 +1409,7 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
     append(`[device-ready/ut-install] ${preReady.note}`);
     if (preReady.blocked) {
       const msg =
-        `设备锁屏且未能自动解锁——已在 UT 装机前阻断（未执行 hdc install）。${preReady.note}\n` +
+        `设备未就绪——已在 UT 装机前阻断（未执行 hdc install）。${preReady.note}\n` +
         '修复建议：按前述具体原因稍后重试或重新登记，也可人工解锁设备后重跑。';
       return finalize({
         executed: false,
@@ -1396,9 +1422,10 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
           durationMs: 0,
           output: msg,
           diagnosis: {
-            kind: 'device_locked',
-            summary: `设备锁屏且未能自动解锁——已在 UT 装机前阻断。${preReady.note}`,
-            suggestion: '按前述具体原因稍后重试或重新登记，也可人工解锁设备后重跑。',
+            kind: preReady.systemSetup ? 'ability_start_failed' : 'device_locked',
+            ...(preReady.systemSetup ? { systemSetup: preReady.systemSetup } : {}),
+            summary: `设备未就绪——已在 UT 装机前阻断。${preReady.note}`,
+            suggestion: preReady.note,
           },
         },
         logExcerpt: `${logChunks.join('\n')}\n[device] BLOCKED: ${msg}`,
@@ -1415,6 +1442,7 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
     const rec = recoverFromRuntimeLock(opts);
     append(`[device-recovery/install] ${rec.note}`);
     if (rec.recovered) install = installHap(hap);
+    else if (rec.systemSetup) install.diagnosis = { kind: 'ability_start_failed', systemSetup: rec.systemSetup, summary: rec.note, suggestion: rec.note };
   }
   append(install.output);
   if (!install.ok) {
@@ -1447,6 +1475,7 @@ export function runOnDeviceUt(opts: OnDeviceUtOptions): OnDeviceUtRunResult {
   if (!aa.ok && aa.diagnosis?.kind === 'device_locked') {
     const rec = recoverFromRuntimeLock(opts);
     append(`[device-recovery] ${rec.note}`);
+    if (rec.systemSetup) aa.diagnosis = { kind: 'aa_test_no_result', systemSetup: rec.systemSetup, summary: rec.note, suggestion: rec.note };
     if (rec.recovered) aa = runAaTest(metadata, opts.testClasses); // 同 serial 重试原操作**一次**
   }
   append(aa.output);
