@@ -31,7 +31,7 @@ const LEGACY_ADAPTERS = 'skills/story/scripts/adapters';
 const LEGACY_DIRS = ['bridges', 'hooks', 'rules', 'skills'];
 const RETIRED_STORY = new Set([
   'bridges/agents-skill-story.md', 'bridges/cac-command-story.md', 'bridges/claude-command-story.md', 'bridges/codex-skills-story.md', 'bridges/cursor-skill-story.md', 'bridges/opencode-skill-story.md',
-  'hooks/plan/author.mjs', 'hooks/spec/author.mjs', 'hooks/shared/knowledge-use.mjs', 'hooks/shared/knowledge-use/document.mjs', 'hooks/shared/knowledge-use/projection.mjs', 'hooks/shared/knowledge-use/validation.mjs',
+  'hooks/shared/knowledge-use.mjs', 'hooks/shared/knowledge-use/document.mjs', 'hooks/shared/knowledge-use/projection.mjs', 'hooks/shared/knowledge-use/validation.mjs',
   'skills/story/AGENTS.section.md', 'skills/story/phases/spec.md', 'skills/story/rules/ar_design_init.md', 'skills/story/rules/scope_gate.md', 'skills/story/scripts/core/flow/submission.py', 'skills/story/scripts/core/story/review.mjs', 'skills/story/templates/plan-sections.md', 'skills/story/templates/spec-sections.md',
 ]);
 const KNOWLEDGE = 'knowledge';
@@ -89,7 +89,7 @@ function yamlStr(value) {
 
 function storyOwnedSet(tgtDoc) {
   const owned = new Set(RETIRED_STORY);
-  for (const p of walk(BASE_DIR)) if (/^(?:hooks|rules|skills)\//.test(p)) { owned.add(p); owned.add(`base/${p}`); }
+  for (const p of walk(BASE_DIR)) if (/^(?:hooks|rules|skills)\//.test(p)) { owned.add(p); owned.add(`base/${p}`); if (p.startsWith('hooks/') && p.endsWith('/author.md')) owned.add(p.replace(/\.md$/, '.mjs')); }
   for (const b of tgtDoc?.provides?.bridges ?? []) if (b?.source) owned.add(String(b.source).trim());
   return owned;
 }

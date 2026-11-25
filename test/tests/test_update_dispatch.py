@@ -98,6 +98,21 @@ class VerifierEvidenceCase(unittest.TestCase):
         (self.reports / f"verifier.report.{at_subject}.md").write_text(
             report(says_subject, verdict), encoding="utf-8")
 
+    def write_material(self, subject: str, file_sha: str = "1" * 64) -> None:
+        """写入与原生 `verifier-material.ts` 同构的材料视图，用于验证同材料复用与改料不复用。"""
+        view = {
+            "schema": "maison-verifier-material@1",
+            "feature": FEATURE,
+            "phase": PHASE,
+            "phase_rule_sha256": "a" * 64,
+            "template_sha256": "d" * 64,
+            "script_checks": ["check_a"],
+            "files": [{"path": f"doc/features/{FEATURE}/{PHASE}/spec.md", "sha256": file_sha}],
+            "material_sha256": file_sha,
+        }
+        (self.reports / f"verifier.material.{subject}.json").write_text(
+            json.dumps(view, indent=2) + "\n", encoding="utf-8")
+
     def ask(self) -> dict:
         proc = subprocess.run(
             ["node", str(self.driver), str(HARNESS), str(EVIDENCE), str(self.root), FEATURE, PHASE],
@@ -118,13 +133,27 @@ class WhatCountsAsReviewedThisRound(VerifierEvidenceCase):
         self.assertIsNone(got["closureMode"], "当前有有效报告，不该派生成沿用历史")
 
     def test_no_current_report_falls_back_to_history_and_says_so(self) -> None:
-        """这一条是 update 最该认出来的：闭环成立，但**这一轮的材料没人审过**。"""
+        """这一条是 update 最该认出来的：同材料时闭环沿用历史标 `completed_with_prior_review`，改了材料或缺材料则不沿用。"""
         self.summary(CURRENT)
         self.write_report(PRIOR, PRIOR, "PASS")
+        # 缺材料视图时（f894 同材料复用契约），不凭旧 PASS 沿用
+        got_no_mat = self.ask()
+        self.assertFalse(got_no_mat["ok"])
+        self.assertEqual("report_missing", got_no_mat["code"])
+        self.assertIsNone(got_no_mat["closureMode"])
+        # 同材料视图时沿用历史并标 completed_with_prior_review
+        self.write_material(PRIOR, "1" * 64)
+        self.write_material(CURRENT, "1" * 64)
         got = self.ask()
         self.assertFalse(got["ok"])
         self.assertEqual("report_missing", got["code"])
         self.assertEqual("completed_with_prior_review", got["closureMode"])
+        # 材料改变后不再沿用历史
+        self.write_material(CURRENT, "2" * 64)
+        got_changed = self.ask()
+        self.assertFalse(got_changed["ok"])
+        self.assertEqual("report_missing", got_changed["code"])
+        self.assertIsNone(got_changed["closureMode"])
 
     def test_a_report_naming_another_subject_is_not_accepted(self) -> None:
         """报告写在当前路径、内容却是旧 subject：不认，也不退回沿用历史。"""

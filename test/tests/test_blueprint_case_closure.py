@@ -353,12 +353,13 @@ class TheRequestChainFromANewlyAcceptedUnit(unittest.TestCase):
         self.assertEqual([UNIT], got["ready_ids"])
 
     def test_a_single_phase_request_goes_by_its_own_phase(self) -> None:
-        """授权到哪个阶段就请求哪个阶段，执行链由原生派生：蓝图验收齐时只请求 Spec，原生仍要执行 Plan——
-        超出只要 Spec 的授权，按第六节停下照实说明；只请求 Plan 时链与授权一致。"""
+        """授权到哪个阶段就请求哪个阶段，执行链由原生派生：蓝图验收齐时只请求 Spec，f894 起原生复用 Spec 且不追加 Plan（链为空）；
+        只请求 Plan 时链为 ['plan'] 与授权一致。"""
+        expected = {"spec": [], "plan": ["plan"]}
         for phase, proc in self.single.items():
             with self.subTest(phase=phase):
                 self.assertEqual(0, proc.returncode, proc.stdout[-1500:] + proc.stderr[-800:])
-                self.assertEqual(["plan"], last_json(proc.stdout)["phase_chain"])
+                self.assertEqual(expected[phase], last_json(proc.stdout)["phase_chain"])
         method = (DEV_STORY_BUILD.parents[2] / "phases" / "design.md").read_text(encoding="utf-8").split("## 六、", 1)[1]
         for row in ("| 只要 Spec | 第 1—4 步 | `spec` |", "| 只要 Plan | 第 1—4 步 | `plan` |",
                     "| 实现方案（到 Plan） | 第 1—4 步 | `spec,plan` |", "原生要求的阶段超出本次授权时，停下照实说明"):

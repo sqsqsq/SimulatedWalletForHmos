@@ -51,6 +51,7 @@ def registry_value() -> dict:
                     "burst": {
                         "args": [*common, "--event-count", "500"],
                         "resume_args": [*resume, "--event-count", "500"],
+                        "timeout": {"soft_sec": 10, "hard_sec": 15, "stop_grace_sec": 0.2},
                     },
                     "subscription": {
                         "args": [*common, "--failure", "subscription"]
