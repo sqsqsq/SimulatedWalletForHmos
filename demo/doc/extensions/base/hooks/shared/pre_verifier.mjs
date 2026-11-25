@@ -1,0 +1,278 @@
+/**
+ * pre_verifier —— 告诉 verifier **本阶段的知识判断在哪份文件里、按什么判**。
+ *
+ * ## 判据全集逐条一行，知识条目只指路
+ *
+ * 本阶段的判据全集照原文注入（`allChecksFragment`），每条在汇总表里恰好一行。**知识条目不拆成必答清单**：
+ * 把知识全集拆成一张表要求逐行裁、门禁再逐行核对键与引文，
+ * 会有三件事：裁决量随材料条数涨而判断不增加；证据列退化成把清单里的字抄一遍；
+ * 判据从「这条要求是不是本需求的设计」滑向「这行有没有被裁过」——后者是格式，前者才是判断。
+ *
+ * 只给三样：判断的真源在哪、按什么判、结论写成什么。两种核对职责不同：本阶段每条判据在汇总表里恰好一行，
+ * 是逐判据的结构核对，由 post_check 核；知识条目逐条核没核、核得对不对是 verifier 的语义核验，
+ * 机械层不数知识行数、不核引文、不排相似度——那些都是拿字符串近似语义。
+ *
+ * ## 注入不等于执行
+ *
+ * 本阶段审查报告的形态由 post_check 核（`verifier-report.mjs`：终态块、逐判据四格汇总），
+ * 身份与结论由原生 `check-receipt` 核。审查得对不对由人抽查。
+ *
+ * 契约：stdin JSON ctx → stdout JSON { promptFragments: string[] }。
+ */
+import * as path from 'node:path';
+import { phaseArtifacts } from './contracts.mjs';
+import { activeKnowledge, knowledgeGuide } from './knowledge.mjs';
+import { activation, entryOf, featureKnowledge, knowledgeSource, unitContext } from './knowledge-application.mjs';
+import { knowledgeTask } from './knowledge-task.mjs';
+import { obligationsFromContracts } from './obligations.mjs';
+import { extensionRoot, featureRoot, readTextOrNull, relDisplay } from './paths.mjs';
+import { ensureMermaid } from '../../skills/story/scripts/core/story/figure-view.mjs';
+import { designStatPoints, planStatRows, planStatTableIssues, pointKey, statDelivery } from './stat-points.mjs';
+import { COVERED_CHECKS, DETAIL_KEYS, inputRows, reviewInputs } from './review-inputs.mjs';
+import { overlayChecks, summaryStructure } from './verifier-report.mjs';
+
+/** 知识类判据的命名前缀 —— 只用来决定这一段要不要讲「知识判断在哪份文件里」。 */
+const KNOWLEDGE_CHECK_PREFIX = 'knowledge_';
+
+/** 本阶段被审的知识判断在哪：判断由蓝图设计形成，spec 核验收承接，plan 冻结成契约上的 must，之后各阶段按它落实与取证。 */
+const SOURCE_OF_TRUTH = {
+  spec: { file: 'acceptance.yaml', what: '本施工单位承接的适用规约条目（蓝图适用性事实里判定适用的）有没有验收条目承接（`knowledge_refs` 列着它）' },
+  plan: { file: 'contracts.yaml', what: '每条承接的适用规约条目挂在哪个实体上（`must`，`source_ref` 指条目）、选中模式的角色由哪个实体承担（`pattern_roles`）' },
+  coding: { file: 'contracts.yaml', what: '契约实体上的每条 `must`，代码里有没有落实' },
+  review: { file: 'contracts.yaml', what: '契约实体上的每条 `must`，复核表里一处落点一行的结论' },
+  ut: { file: 'contracts.yaml', what: '要单测证据的 `must`（`verify: ut / both`）与 `acceptance.yaml` 里桥到规约的验收条目' },
+  testing: { file: 'contracts.yaml', what: '要实机证据的 `must`（`verify: device / both`）与 `acceptance.yaml` 里桥到规约的验收条目' },
+};
+
+/** 审查先走通的产物与它交给下游的东西：spec 交 plan 设计，plan 交编码实现与验证。 */
+const WALK = {
+  spec: { what: '本施工单位的行为、边界与验收', handoff: 'plan 能据以设计：业务对象与动作、条件与结果、依据与具体的未决；'
+    + '关键结论有源材料、已准入设计或已定决定支持；适用规约要求的行为与验证责任在验收里有条目承接' },
+  plan: { what: '本阶段要交的产物（`contracts.yaml`；有 plan.md、use-cases.yaml 时连同它们）与原生选中的输入',
+    handoff: '编码能据以实现与验证：按每个业务结果走通接口的输入、返回、状态与调用，返回类型在本次契约或可定位的现有类型里存在，'
+      + '选中模式要的角色由真实实体承担，用户动作与业务状态在 use-cases 里实际存在；'
+      + '设计里的专项明细（如统计点、数据策略）落到了承担它的方法与实体上；'
+      + 'use-cases 引的验收与方法在 acceptance 与 contracts（或已核的外部接口）里找得到，找不到是实现断链' },
+};
+
+/** 表格一格：竖线转义、换行压成空格，空值写「—」。 */
+const cell = (value) => String(value ?? '').replace(/\|/g, '\\|').replace(/\s*\r?\n\s*/g, ' ').trim() || '—';
+
+/**
+ * spec：本施工单位相关的知识判断一条一行（规约逐条、整域无关一行、选中或拒绝的模式一行），原条目、判定、理由与落点并列；
+ * 审查对着原文核验收是否承接了适用的那些。
+ */
+function decisionTable(projectRoot, feature, knowledge, inputs) {
+  const judged = featureKnowledge(projectRoot, feature, inputs.contracts);
+  const { mine, common } = unitContext(judged);
+  const gaps = judged.problems.map(p => `- **设计缺口**：${p}`);
+  if (!mine.length && !common.length) return [`${judged.label} 里没有与本施工单位相关的知识判断。`, ...gaps];
+  // 没有承担实体的：适用的评审动作指向需求级对象，不适用与拒绝是需求级公共依据（宿主扩展章引用其理由），
+  // 只指决定或缺口的待定是归属待核的公共缺口；承担实体在别的单位的不列
+  const where = d => (mine.includes(d) ? cell(d.target_refs.join('、'))
+    : d.outcome === 'pending' ? cell(`归属待核的公共知识缺口（${d.target_refs.join('、')}）`)
+      : d.outcome === 'applied' && d.reviewAction ? cell(`需求级评审动作（${d.target_refs.join('、') || '无对象'}）`)
+        : '需求级公共依据（无落点）');
+  const what = d => (d.kind === 'patterns' ? '模式' : d.domain ? '整域' : d.unit);
+  return ['| 来源 | 条目 | 原文 | 判定 | 理由 | 落点 |', '|---|---|---|---|---|---|',
+    ...[...mine, ...common].map(d => `| ${d.source_ref} | ${what(d)} `
+      + `| ${cell(entryOf(knowledge, d)?.constraint ?? (d.kind === 'patterns' ? '（模式，见知识任务原文）' : '（整域，见知识任务原文）'))} `
+      + `| ${d.outcome} | ${cell(d.rationale)} | ${where(d)} |`),
+    ...gaps];
+}
+
+/**
+ * plan 及之后：每条出现过的规约一行，原条目与契约上挂着它的全部 `must` 并列。
+ * 审查判「must 是不是这条规约要求的那件事、是否改变了规约原义」，要对着原文判。
+ */
+function obligationTable(projectRoot, feature, knowledge, inputs) {
+  const contracts = inputs.contracts;
+  if (!contracts) return [`**契约拿不到**：${inputs.why}——原义与 must 无从并列，未验证。`];
+  const musts = obligationsFromContracts(contracts).filter(o => o.sourceRef);
+  if (!musts.length) return ['契约上一条 `must` 都没有。'];
+  // 条目按义务出自的来源找（知识文件 + 编号）：不同文件同编号的规约各成一行
+  const active = activation(projectRoot, knowledge);
+  const groups = new Map();
+  for (const o of musts) groups.set(o.sourceRef, [...(groups.get(o.sourceRef) ?? []), o]);
+  const rows = ['| 条目 | 约束原文 | 命中后要给出 | 附注 | 契约上的 must（实体：要落实成什么 · verify） |',
+    '|---|---|---|---|---|'];
+  for (const [ref, list] of groups) {
+    const e = entryOf(knowledge, knowledgeSource(active, ref));
+    const cells = list.map(o => `${o.entityPath}：${o.text || '（没写 text）'} · ${o.verify || '—'}`);
+    rows.push(`| ${cell(ref)} | ${cell(e?.constraint ?? '（认不回激活规约的条目）')} | ${cell(e?.handling)} | ${cell(e?.note)} `
+      + `| ${cells.map(cell).join('<br>')} |`);
+  }
+  return rows;
+}
+
+/**
+ * plan：蓝图埋点明细的每个统计点与 plan.md 逐点表里同名的全部结果行并列，对不上的两边各自单列。
+ * 设计没给统计设计时如实说缺在哪。
+ */
+function statPointTable(projectRoot, feature, inputs) {
+  const judged = featureKnowledge(projectRoot, feature, inputs.contracts);
+  const design = designStatPoints(judged);
+  if (design.state === 'none' || design.state === 'missing') return [`${design.why}：埋点这一项按本阶段原有要求审，不另立缺口。`];
+  if (design.state === 'empty') return ['蓝图的埋点明细里没有统计点表：统计设计结构待补——按设计缺口判，plan 行无从对齐。'];
+  const planText = inputs.dir && readTextOrNull(path.join(inputs.dir, 'plan', 'plan.md'));
+  if (planText === null || planText === undefined || planText === '') {
+    // 没有 plan.md：逐点表的一致性不适用，埋点义务照样逐点审——对着契约方法说明与验收
+    return [...statDelivery(judged, inputs.contracts, inputs.acceptance), '',
+      '这一次没有 plan.md：逐点核每个统计点在契约方法说明与验收里有没有写出适用结果与验证方式，缺哪个点名哪个。'];
+  }
+  const extra = [], tableIssues = planStatTableIssues(planText, extra);
+  const plan = planStatRows(planText);
+  const byKey = new Map();
+  for (const r of plan) byKey.set(pointKey(r.point), [...(byKey.get(pointKey(r.point)) ?? []), r]);
+  const consumed = new Set();
+  const rows = [
+    ...(tableIssues.length || extra.length ? [...tableIssues.map(i => `- **表头结构歧义**：${i}`), ...extra, ''] : []),
+    '| 埋点明细 | 设计的这一行 | plan 的结果行 |', '|---|---|---|',
+  ];
+  for (const d of design.details) {
+    for (const r of d.rows) {
+      const key = pointKey(r[0]);
+      const got = byKey.get(key) ?? [];
+      consumed.add(key);
+      rows.push(`| ${cell(d.title)} | ${cell(r.join(' ／ '))} | `
+        + `${got.length ? got.map(x => cell(x.cells.join(' ／ '))).join('<br>') : '（plan 没有这个统计点）'} |`);
+    }
+  }
+  for (const [key, got] of byKey) {
+    if (!consumed.has(key)) for (const x of got) rows.push(`| — | （设计没有这个统计点） | ${cell(x.cells.join(' ／ '))} |`);
+  }
+  rows.push('', '并列的每一行按读者含 plan 的那一篇知识核：项目规则算得出的字段是不是具体值，'
+    + '那一篇要求的角色在契约里都有承载它的实体与方法。');
+  return rows;
+}
+
+/**
+ * 本阶段全部判据与报告结构 —— overlay 里的每一条都进请求，逐条出结论。
+ *
+ * framework 的任务清单只列它自己的判据，overlay-only 的项不由它送；这里不送的那一条就不是任务。
+ * 报告结构写在请求里：格式不合的回复不计结论。
+ */
+function allChecksFragment(checks) {
+  const rows = Object.entries(checks).map(([id, c]) => {
+    const first = String(c?.description ?? '').replace(/\s+/g, ' ').trim().split(/(?<=[。；])/)[0];
+    return `- \`${id}\`（${c?.severity ?? '未定级'}）：${first}`;
+  });
+  return ['## 本阶段全部判据（逐条出结论）', '', ...rows, '', ...summaryStructure(Object.keys(checks))].join('\n');
+}
+
+/**
+ * 审查者的知识任务：与作者动笔前取的是同一个加载器，受众换成审查者。
+ * 取不到时写明缺口与责任，审查按未验证处理依赖知识的部分。
+ */
+function reviewerKnowledge(ctx) {
+  try {
+    return knowledgeTask(ctx.projectRoot, { action: ctx.phase, audience: 'reviewer', feature: ctx.feature });
+  } catch (e) {
+    return ['## 知识任务（取不到）', '', String(e?.message ?? e),
+      '', '依赖知识的判断写未验证，并在结论里点名上面的缺口。'].join('\n');
+  }
+}
+
+export default async function preVerifier(ctx) {
+  // 正常阶段已由 pre_phase 的 story-view 处理；单独调用时同样先回到正式形态，审查只读正式正文
+  if (ctx?.feature && ctx?.projectRoot) {
+    const back = ensureMermaid(featureRoot(ctx.projectRoot, ctx.feature));
+    if (back.problems.length) throw new Error(`story 回不到正式形态：${back.problems.join('；')}`);
+  }
+  const phase = ctx?.phase;
+  if (!phase || !ctx?.feature || !ctx?.projectRoot) return {};
+  const source = SOURCE_OF_TRUTH[phase];
+  if (!source) throw new Error(`hooks/shared/pre_verifier.mjs 的 SOURCE_OF_TRUTH 没有阶段「${phase}」——manifest 给哪些阶段登记了 pre_verifier，这张表就按阶段写明被审的知识判断在哪份文件`);
+  const { checks, error } = overlayChecks(ctx.projectRoot, phase);
+  const checkIds = Object.keys(checks);
+  if (error) {
+    return {
+      promptFragments: [[
+        '## 实例扩展知识判据（清单读取失败，须人工确认）',
+        '',
+        `无法确定本阶段该产出哪些判据结论：${error}。`,
+        '',
+        '**这不是「本阶段没有扩展判据」**——请打开本阶段的 overlay 自行确认判据清单，',
+        `再按 \`${source.file}\` 里的判断逐项审查。`,
+      ].join('\n')],
+    };
+  }
+
+  const knowledgeIds = checkIds.filter(id => id.startsWith(KNOWLEDGE_CHECK_PREFIX));
+  const inputs = phaseArtifacts(ctx.projectRoot, ctx.feature, phase);
+  const fragments = [];
+  let knowledge = null;
+  let knowledgeGap = '';
+  try {
+    knowledge = activeKnowledge(ctx.projectRoot);
+  } catch (e) {
+    knowledgeGap = e.message;
+  }
+  const table = !knowledge ? [`**激活知识派生失败**：${knowledgeGap}——原义无从并列，按规约文件逐条读，结论写未验证的部分。`]
+    : !knowledge.entries.length ? ['激活清单里没有规约条目。']
+      : phase === 'spec' ? decisionTable(ctx.projectRoot, ctx.feature, knowledge, inputs)
+        : obligationTable(ctx.projectRoot, ctx.feature, knowledge, inputs);
+
+  fragments.push(allChecksFragment(checks));
+  // 走局部明细合同的判据（Plan 的义务审查）：必审集合只取一次，审查请求里的知识任务正文就是建表用的那一份
+  const covered = checkIds.filter(c => COVERED_CHECKS[c]).map(id => [id, reviewInputs(ctx.projectRoot, ctx.feature, COVERED_CHECKS[id])]);
+  const shared = covered.map(([, basis]) => basis.knowledgeTask).find(Boolean);
+  fragments.push(shared ? shared.text : reviewerKnowledge(ctx));
+  for (const [id, basis] of covered) {
+    fragments.push([`## \`${id}\` 的必审输入（报告的 examined_inputs 按这张表逐项声明）`, '', ...inputRows(basis), '',
+      ...(basis.update ? ['update 开着：改掉的旧约束、旧决定与旧验收，依据是谁给的、有没有权限；'
+        + '与仍有效的旧约束冲突而没经有权人裁定的，这一条 FAIL。', ''] : []),
+      `明细四个键（${DETAIL_KEYS.join('、')}）无论结论都写：没核到或没核完的列进 unreviewed 并写原因，必审没核完不能判 PASS 或 WARN。`].join('\n'));
+  }
+  if (!knowledgeIds.length) return { promptFragments: fragments };
+
+  const fragment = [
+    '## 实例扩展知识判据（BLOCKER）',
+    '',
+    `本阶段被审的知识判断在 **\`${source.file}\`**：${source.what}。`,
+    '**材料、原知识与仓内事实是审查依据，本阶段产物与这份判断是被审的对象**——下表把每条规约的原条目与当前判断并列，',
+    '对着原文判，不拿判断自证。',
+    '',
+    ...(knowledge ? knowledgeGuide(ctx.projectRoot, knowledge)
+      : [`知识没能加载：${knowledgeGap}——依赖知识的检查写未验证，不当作没有知识。`]),
+    '',
+    ...(knowledge?.constraints?.length
+      ? ['下表只有主表一行；规约的落法附注同样是要求，原文在：'
+        + knowledge.constraints.map(c => '`' + relDisplay(ctx.projectRoot,
+          path.join(extensionRoot(ctx.projectRoot), c.file)) + '`').join('、')]
+      : []),
+    '',
+    ...table,
+    '',
+    ...(phase === 'plan' ? [
+      '埋点逐统计点并列（按统计点名对齐）：', '', ...statPointTable(ctx.projectRoot, ctx.feature, inputs), '',
+      knowledge?.facts.length ? '要用到的已有能力、字段与取值规则，按上面列出的项目事实核。'
+        : '激活清单里没有项目事实：取值不对照项目规则核，只核与知识无关的几件事。', ''] : []),
+    '**先走业务，再核交接**（登记齐不齐、编号在不在册，机械层已经核过）：',
+    '',
+    `1. **按业务流程走通${(WALK[phase] ?? { what: '本阶段产物' }).what}**：实际会发生的正常、异常与未执行路径各走到哪，`
+      + '结果由谁、凭什么得到。走不通的地方点名断在哪一步。',
+    `2. **核本阶段交付够不够下游用**：${(WALK[phase] ?? { handoff: '下游能据以继续' }).handoff}。未知要具体而真实。`,
+    '   缺口按对下游的影响定级：下游要重新决定接口结构、核心业务行为或必要取值的，相关条目 FAIL；'
+      + '措辞与局部优化才是 advisory / WARN。概述写得长不等于交付够用。',
+    '3. **核知识判断落到了本阶段产物**，上表是追溯入口：适用的要求在本阶段产物里落地了吗，落点是不是真的做这件事的实体（借挂、夹带点名）；',
+    '   判断本身有问题（不适用的依据回查不到事实、豁免缺理由或补偿）时，指出来交设计负责方，不在本阶段改判；',
+    '   项目事实登记的能力复用了吗；选中模式的角色由真实的分支、步骤与实体承担吗。',
+    '   通用措辞也可以准确，专门措辞也可能错，按内容判。',
+    '',
+    '**审查方式**：本阶段判据逐项核，按上面的报告结构给汇总；知识应用的判断逐条核到，有问题的那几条讲清问题与依据，',
+    '没问题的写一句结论，不必复述原文。',
+    '',
+    '### 输出要求（BLOCKER）',
+    '',
+    `${knowledgeIds.map(id => `\`${id}\``).join(' 与 ')} 与其它判据一样在汇总表各一行；非 PASS 的在 \`checks:\` 明细里`,
+    '`details` 写你判出问题的那几条：是哪一条、问题是什么、依据是产物或材料里的什么事实。',
+    'PASS 的写进报告说明：你按什么看过、看了哪几条。',
+    ...(knowledgeIds.some(id => COVERED_CHECKS[id])
+      ? [`${knowledgeIds.filter(id => COVERED_CHECKS[id]).map(id => `\`${id}\``).join('、')} 走局部明细合同：无论结论都在明细里出一条，四个键按上面它的必审输入表写。`]
+      : []),
+  ].join('\n');
+
+  fragments.push(fragment);
+  return { promptFragments: fragments };
+}

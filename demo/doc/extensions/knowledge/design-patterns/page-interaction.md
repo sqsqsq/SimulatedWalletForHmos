@@ -16,7 +16,7 @@ coordinator_role: 交互封装
 
 ---
 
-# 上篇 · 适用与选型（读者：plan）
+# 上篇 · 适用与选型（读者：蓝图设计）
 
 ## 1. 解决什么问题
 
@@ -44,7 +44,7 @@ coordinator_role: 交互封装
 
 ---
 
-# 下篇 · 结构与落地（读者：coding、review）
+# 下篇 · 结构与落地（读者：plan、coding、review）
 
 ## 4. SDK 行为事实
 

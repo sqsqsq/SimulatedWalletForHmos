@@ -1,0 +1,82 @@
+{
+  "$comment": "设计里知识应用的扩展字段形态，唯一合同。knowledge_context 是工具生成的知识输入身份，CU 记在蓝图 discovery.inputs.knowledge_context，非 CU 的维护 Feature 记在原生契约顶层 knowledge_context（清单键用 entries，不撞原生对 files 字段的文件引用扫描）；规约与模式的适用性写在原生事实 discovery.facts[].value 里（provenance.source_ref 指知识文件）；义务 must 与模式角色 pattern_roles 写在真正承担的实体上（蓝图的稳定地址对象、施工契约的实体）；验收用 knowledge_refs 指规约条目。来源是否激活、单元在不在文件里、条目覆盖、真实地址与角色由 hooks/shared/knowledge-application.mjs 按实际对象核。用原生 lite-json-schema 的关键字子集。",
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "text": {"type": "string", "minLength": 1},
+    "refs": {"type": "array", "items": {"$ref": "#/$defs/text"}},
+    "knowledgeContext": {
+      "type": "object",
+      "required": ["digest", "entries"],
+      "properties": {
+        "digest": {"$ref": "#/$defs/sha256"},
+        "entries": {
+          "type": "array",
+          "items": {"type": "object", "required": ["source_ref", "kind", "form", "sha256"],
+                    "properties": {"source_ref": {"$ref": "#/$defs/text"}, "kind": {"enum": ["facts", "constraints", "patterns"]},
+                                   "form": {"$ref": "#/$defs/text"}, "sha256": {"$ref": "#/$defs/sha256"}}}
+        }
+      }
+    },
+    "constraintItem": {
+      "oneOf": [
+        {
+          "type": "object",
+          "not": {"required": ["units"]},
+          "required": ["unit", "outcome", "rationale", "target_refs"],
+          "properties": {
+            "unit": {"$ref": "#/$defs/text"},
+            "outcome": {"enum": ["applied", "not_applicable", "pending"]},
+            "rationale": {"$ref": "#/$defs/text"},
+            "target_refs": {"$ref": "#/$defs/refs"}
+          },
+          "allOf": [
+            {"if": {"properties": {"outcome": {"enum": ["applied", "pending"]}}},
+             "then": {"properties": {"target_refs": {"minItems": 1}}}}
+          ]
+        },
+        {
+          "type": "object",
+          "not": {"required": ["unit"]},
+          "required": ["units", "outcome", "rationale"],
+          "properties": {
+            "units": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/text"}},
+            "outcome": {"const": "not_applicable"},
+            "rationale": {"$ref": "#/$defs/text"},
+            "target_refs": {"type": "array", "maxItems": 0}
+          }
+        }
+      ]
+    },
+    "constraintsFact": {
+      "oneOf": [
+        {"type": "object", "required": ["knowledge_kind", "outcome", "rationale"],
+         "properties": {"knowledge_kind": {"const": "constraints"}, "outcome": {"const": "not_applicable"},
+                        "rationale": {"$ref": "#/$defs/text"}}},
+        {"type": "object", "required": ["knowledge_kind", "items"],
+         "properties": {"knowledge_kind": {"const": "constraints"},
+                        "items": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/constraintItem"}}}}
+      ]
+    },
+    "patternsFact": {
+      "type": "object",
+      "required": ["knowledge_kind", "outcome", "rationale"],
+      "properties": {
+        "knowledge_kind": {"const": "patterns"},
+        "outcome": {"enum": ["selected", "rejected"]},
+        "rationale": {"$ref": "#/$defs/text"}
+      }
+    },
+    "must": {
+      "type": "array",
+      "items": {"type": "object", "required": ["text", "source_ref", "verify"],
+                "properties": {"text": {"$ref": "#/$defs/text"}, "source_ref": {"$ref": "#/$defs/text"},
+                               "verify": {"$ref": "#/$defs/text"}}}
+    },
+    "patternRoles": {
+      "type": "array",
+      "items": {"type": "object", "required": ["pattern_ref", "role"],
+                "properties": {"pattern_ref": {"$ref": "#/$defs/text"}, "role": {"$ref": "#/$defs/text"}}}
+    },
+    "knowledgeRefs": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/text"}}
+  }
+}

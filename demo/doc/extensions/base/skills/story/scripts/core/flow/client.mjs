@@ -1,0 +1,110 @@
+/**
+ * 问 `story_flow.py status` —— **JS 侧唯一的流程状态查询客户端**。
+ *
+ * 只有这一处会拼脚本路径、轮解释器、解析 JSON，工程根显式传 `--project-root`——漏了它，
+ * 位置读的是脚本所在仓，材料与知识读的是目标工作区。
+ *
+ * 这里只做一件事：**把问题问出去，把答案原样带回来**。要不要阻断、下一步做什么由调用方定。
+ */
+import { spawnSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { featureRoot } from '../../../../../hooks/shared/paths.mjs';
+
+/** 视图持有者：值是需求目录。子调用带着它，就知道这一需求的视图归外层，不自己恢复阅读图。 */
+export const VIEW_OWNER = 'STORY_VIEW_OWNER';
+export const viewOwnerKey = (root) => {
+  let real = path.resolve(root);
+  try { real = fs.realpathSync.native(real); } catch { /* 还不存在就按解析后的路径 */ }
+  return real.toLowerCase();
+};
+
+/**
+ * 正式入口就在上一级。调用方不传脚本位置：传了就等于允许两个消费者问不同的脚本。
+ *
+ * 导出它是为了**渲染可复跑的命令**：作者要自己跑一次时，命令里的脚本得是这里真正调的
+ * 那一个。写相对路径的话，它只在工程与机制同一个仓、且 cwd 恰好是工程根时才跑得起来。
+ */
+const FLOW_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)),
+  '..', 'story_flow.py');
+
+//: 两个候选名是现有行为。**只有解释器起不动才换下一个**：已经跑起来并报了业务失败
+//: 的，换个解释器只会得到同一句话，而原因在中途被换掉了。
+const PYTHONS = ['python', 'python3'];
+
+/**
+ * @param {string} projectRoot 目标工程根——**必须显式传**，cwd 替代不了它：
+ *   Python 侧没有 `--project-root` 时按脚本自身位置解析工程
+ * @param {string} feature 需求名
+ * @param {{timeoutMs?: number, materialsOnly?: boolean}} opts 调用方自己的超时，不在这里定一套配置；
+ *   `materialsOnly` 只问材料就没就位，不算整条下一步
+ * @returns {{data: object|null, error: string|null}} 两者恰有一个非空
+ */
+export function queryFlowStatus(projectRoot, feature, { timeoutMs, materialsOnly = false } = {}) {
+  // 这是正式读取里的内部查询：视图归调用方持有，status 不在结束时恢复增强 SVG
+  const r = runPython(FLOW_SCRIPT, ['status', '--feature', feature, '--project-root', projectRoot,
+    ...(materialsOnly ? ['--materials'] : [])],
+  { timeoutMs, env: { ...process.env, [VIEW_OWNER]: viewOwnerKey(featureRoot(projectRoot, feature)) } });
+  if (r.error) return { data: null, error: r.error };
+  if (r.status !== 0) return { data: null, error: `${r.exe} status 退出码 ${r.status}：${r.output}` };
+  return parseStatus(r.stdout);
+}
+
+/**
+ * 用本机的 python 跑一个扩展脚本 —— 流程查询与图的结构检查共用这一处解释器选择。
+ *
+ * @returns {{exe?: string, status?: number, stdout?: string, output?: string, error?: string}}
+ *   `error` 非空 = 没跑起来或没跑完；否则 `output` 是两路输出原样拼起来的全文
+ */
+export function runPython(script, args, { timeoutMs, env, input } = {}) {
+  const missing = [];
+  for (const exe of PYTHONS) {
+    const r = spawnSync(exe, [script, ...args], { encoding: 'utf-8', timeout: timeoutMs, windowsHide: true, ...(env ? { env } : {}), ...(input === undefined ? {} : { input }) });
+    if (r.error) {
+      // **只有「这个解释器不在」才换候选**：超时、被杀、参数太长都说明它已经跑起来了，
+      // 换一个只会得到同一句话，而原因在中途被换掉。
+      if (r.error.code !== 'ENOENT') return { error: `${exe} ${path.basename(script)} 没跑完（${r.error.message}）` };
+      missing.push(`${exe}：${r.error.message}`);
+      continue;
+    }
+    return { exe, status: r.status, stdout: r.stdout,
+      output: [r.stdout, r.stderr].map(x => String(x ?? '').trim()).filter(Boolean).join('\n') };
+  }
+  return { error: `起不动 python（${missing.join('；')}）` };
+}
+
+/** 输出是 JSON 加可能的日志行：从第一个 `{` 起解析，形状不对要说清缺什么。 */
+function parseStatus(stdout) {
+  const text = String(stdout ?? '');
+  const at = text.indexOf('{');
+  if (at < 0) return { data: null, error: 'status 没有输出 JSON' };
+  let data = null;
+  try {
+    data = JSON.parse(text.slice(at));
+  } catch (err) {
+    return { data: null, error: `status 的输出解析不了（${err.message}）` };
+  }
+  const problem = shapeProblem(data);
+  return problem ? { data: null, error: problem } : { data, error: null };
+}
+
+/**
+ * 回来的是不是本合同说的形状 —— **「没走过 /story」不是坏形状**。
+ *
+ * 两者混成一件的代价是消费者分不清「这个需求还没开始」与「查询链坏了」：
+ * 前者照常往下走，后者必须停下。
+ */
+function shapeProblem(data) {
+  if (!data || typeof data !== 'object') return 'status 的输出不是一个对象';
+  if (data.exists === false) return null;
+  if (data.exists !== true) return 'status 的输出缺 exists';
+  const state = data.material_state;
+  if (state === undefined) return 'status 的输出缺 material_state（材料事实）';
+  if (state === null) return null;             // 没有轮次：没有基准可比，合法为空
+
+  if (!Array.isArray(state.pending) || typeof state.changed !== 'boolean') {
+    return 'status 的 material_state 形状不对：要 {pending: [...], changed: true/false}';
+  }
+  return null;
+}

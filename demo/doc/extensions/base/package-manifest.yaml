@@ -1,0 +1,94 @@
+schema_version: "1.1"
+version: "2.0.6"
+provides:
+  # 宿主入口由本包 entries.mjs（含 framework-init docs.post_check 钩子）按这份清单调用原生桥生成器物化，
+  # 指向 <ext>/base/skills/<id>/SKILL.md；业务根 manifest.yaml 不声明 provides.skills。
+  skills:
+    - story
+    - story-adaptation
+    - story-knowledge
+    - story-stats
+
+  # component-design 动笔前的设计知识方法入口：Framework 按这一项把它送进蓝图作者的上下文（plan、review 阶段同读）。
+  skill_assets:
+    component-design:
+      knowledge: base/hooks/blueprint/author.md
+
+  # 机制自有的阶段前置知识绑定入口：合进业务根 manifest.yaml 的 provides.knowledge，供 phase_bindings 引用；
+  # 业务三类知识清单仍归目标仓所有，knowledge.mjs 解析业务知识时跳过这一项机制入口。
+  knowledge_entry:
+    path: base/skills/story-knowledge/SKILL.md
+    summary: 进入 Feature 阶段动笔前，先按 story-knowledge 取当前动作的知识任务（激活知识、已成立判断、义务与完成条件）
+    audience:
+      - spec
+      - plan
+      - coding
+      - review
+      - ut
+      - testing
+
+  hooks:
+    docs:
+      post_check:
+        - base/skills/story-adaptation/scripts/entries.mjs
+    spec:
+      pre_phase:
+        - base/hooks/shared/story-view.mjs
+      post_check:
+        - base/hooks/spec/post_check.mjs
+      pre_verifier:
+        - base/hooks/shared/pre_verifier.mjs
+    plan:
+      pre_phase:
+        - base/hooks/shared/story-view.mjs
+      post_check:
+        - base/hooks/plan/post_check.mjs
+      pre_verifier:
+        - base/hooks/shared/pre_verifier.mjs
+    coding:
+      pre_phase:
+        - base/hooks/shared/story-view.mjs
+      post_check:
+        - base/hooks/coding/post_check.mjs
+      pre_verifier:
+        - base/hooks/shared/pre_verifier.mjs
+    review:
+      pre_phase:
+        - base/hooks/shared/story-view.mjs
+      post_check:
+        - base/hooks/review/post_check.mjs
+      pre_verifier:
+        - base/hooks/shared/pre_verifier.mjs
+    ut:
+      pre_phase:
+        - base/hooks/shared/story-view.mjs
+      post_check:
+        - base/hooks/ut/post_check.mjs
+      pre_verifier:
+        - base/hooks/shared/pre_verifier.mjs
+    testing:
+      pre_phase:
+        - base/hooks/shared/story-view.mjs
+      post_check:
+        - base/hooks/testing/post_check.mjs
+      pre_verifier:
+        - base/hooks/shared/pre_verifier.mjs
+
+  phase_rules_overlays:
+    spec: base/rules/spec-rules.overlay.yaml
+    plan: base/rules/plan-rules.overlay.yaml
+    coding: base/rules/coding-rules.overlay.yaml
+    review: base/rules/review-rules.overlay.yaml
+    ut: base/rules/ut-rules.overlay.yaml
+    testing: base/rules/testing-rules.overlay.yaml
+
+# 每个 Feature 阶段作业开始之前，Framework 提示先按 story-knowledge 取当前动作的知识任务
+phase_bindings:
+  spec: &author_knowledge
+    before_phase_work:
+      - {kind: knowledge, ref: base/skills/story-knowledge/SKILL.md}
+  plan: *author_knowledge
+  coding: *author_knowledge
+  review: *author_knowledge
+  ut: *author_knowledge
+  testing: *author_knowledge
