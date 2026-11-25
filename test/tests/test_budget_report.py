@@ -320,5 +320,87 @@ class BaseLayoutMigration(unittest.TestCase):
         self.assertIn("重复并存", br.markdown(r))
 
 
+class DuplicateExitAttribution(unittest.TestCase):
+    """2.0.6 S14 R2：包起点原路径与新增副本同时并存时，删新增副本须计 X_version_added、
+    不重复认领原路径基线来源；删原路径则核其真实基线来源 X_retained；仅唯一搬迁才继承基线来源。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        root = cls.root = Path(cls.tmp.name)
+        run(root, "init", "-q", "-b", "main")
+        # release 基线：仅旧路径 2 行
+        write(root, "hooks/a.mjs", "line1\nline2\n")
+        run(root, "add", "-A"); run(root, "commit", "-qm", "release_base")
+        cls.rel_base = run(root, "rev-parse", "HEAD")
+
+        # pkg_start（分支 A：并存）：新旧两路径同时存活
+        write(root, "base/hooks/a.mjs", "line1\nline2\n")
+        run(root, "add", "-A"); run(root, "commit", "-qm", "coexist_start")
+        cls.coexist_start = run(root, "rev-parse", "HEAD")
+
+        # 场景 1：并存后删新增的 base 副本，原路径完整保留 → X 全属本版新增（X_retained=0, X_version_added=2）
+        (root / "extensions" / "base" / "hooks" / "a.mjs").unlink()
+        run(root, "add", "-A"); run(root, "commit", "-qm", "delete_added_copy")
+        cls.del_added = run(root, "rev-parse", "HEAD")
+
+        # 场景 2：从 coexist_start 切新分支，删原路径保留 base 副本 → X 属退出原基线（X_retained=2, X_version_added=0）
+        run(root, "checkout", "-qb", "drop-old", cls.coexist_start)
+        (root / "extensions" / "hooks" / "a.mjs").unlink()
+        run(root, "add", "-A"); run(root, "commit", "-qm", "delete_original_path")
+        cls.del_old = run(root, "rev-parse", "HEAD")
+
+        # 场景 3：从 rel_base 切新分支，先做唯一搬迁到 base/hooks/a.mjs，再删除 1 行基线 + 1 行新增 → X_retained=1, X_version_added=1
+        run(root, "checkout", "-qb", "unique-move", cls.rel_base)
+        (root / "extensions" / "hooks" / "a.mjs").unlink()
+        write(root, "base/hooks/a.mjs", "line1\nline2\nadded3\n")
+        run(root, "add", "-A"); run(root, "commit", "-qm", "unique_move_start")
+        cls.unique_start = run(root, "rev-parse", "HEAD")
+        write(root, "base/hooks/a.mjs", "line1\n")
+        run(root, "add", "-A"); run(root, "commit", "-qm", "unique_move_trim")
+        cls.unique_trim = run(root, "rev-parse", "HEAD")
+
+        run(root, "checkout", "-q", "main")
+        cls.ledger = root / "ledger.yaml"
+        cls.ledger.write_text(yaml.safe_dump({
+            "release": {"id": "2.0.6", "baseline_ref": cls.rel_base, "control_g": 20},
+            "requirement": {"status": "in_progress"},
+            "packages": [
+                {"id": "coexist-pkg", "start_ref": cls.coexist_start, "approved_g": 10},
+                {"id": "unique-pkg", "start_ref": cls.unique_start, "approved_g": 10},
+            ],
+        }, allow_unicode=True), encoding="utf-8")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_deleting_added_duplicate_while_original_remains_is_all_version_added(self):
+        r = br.build(self.root, self.ledger, self.rel_base, self.del_added, "coexist-pkg", None)
+        p = r["package"]["endpoint"]
+        self.assertEqual((0, 2), (p["total"]["G"], p["total"]["X"]))
+        self.assertEqual((0, 2), (p["total"]["X_retained"], p["total"]["X_version_added"]))
+        self.assertEqual(0, p["files"]["base/hooks/a.mjs"]["X_retained"])
+        self.assertEqual(2, p["files"]["base/hooks/a.mjs"]["X_version_added"])
+        self.assertIn("退出保留行 0、退出本版新增行 2", br.markdown(r))
+
+    def test_deleting_original_while_duplicate_remains_is_retained_exit(self):
+        r = br.build(self.root, self.ledger, self.rel_base, self.del_old, "coexist-pkg", None)
+        p = r["package"]["endpoint"]
+        self.assertEqual((0, 2), (p["total"]["G"], p["total"]["X"]))
+        self.assertEqual((2, 0), (p["total"]["X_retained"], p["total"]["X_version_added"]))
+        self.assertEqual(2, p["files"]["hooks/a.mjs"]["X_retained"])
+        self.assertEqual(0, p["files"]["hooks/a.mjs"]["X_version_added"])
+        self.assertIn("退出保留行 2、退出本版新增行 0", br.markdown(r))
+
+    def test_unique_relocation_still_inherits_release_baseline_attribution(self):
+        r = br.build(self.root, self.ledger, self.rel_base, self.unique_trim, "unique-pkg", None)
+        p = r["package"]["endpoint"]
+        self.assertEqual((0, 2), (p["total"]["G"], p["total"]["X"]))
+        self.assertEqual((1, 1), (p["total"]["X_retained"], p["total"]["X_version_added"]))
+        self.assertEqual((1, 1), (p["files"]["base/hooks/a.mjs"]["X_retained"],
+                                  p["files"]["base/hooks/a.mjs"]["X_version_added"]))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1862,5 +1862,251 @@ class S02IsolationAndReviewDispatchCounting(unittest.TestCase):
         self.assertEqual({"first_read": 1, "recheck": 1}, d["story_review_modes"])
 
 
+class S15AccessAndReportAttribution(unittest.TestCase):
+    """2.0.6 S15（R3/R4 返修）：按实际 cwd 与独立操作归属访问/返回、仅放行本 Case 专属系统副本，
+    以及严格区分真实派审、预期报告路径、可绑定实际报告原件、进度询问与下游观察记录输出。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.run_dir = Path(self._tmp.name)
+
+    def _run_measure(self, records: list[dict], *, workspace: str | None = None,
+                     extra_state: dict | None = None, raw_events: list[dict] | None = None) -> dict:
+        if workspace is not None or extra_state:
+            st = {"workspace": workspace} if workspace is not None else {}
+            if extra_state:
+                st.update(extra_state)
+            (self.run_dir / "state.json").write_text(json.dumps(st), encoding="utf-8")
+        path = self.run_dir / "events.jsonl"
+        evs = raw_events if raw_events is not None else _events(*records)
+        path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in evs) + "\n", encoding="utf-8")
+        return measure_run.measure(path, run_dir=self.run_dir)
+
+    def test_print_external_path_and_read_local_file_in_same_command_is_not_contaminated(self) -> None:
+        ws = r"C:\Temp\sw-story\suite\sample"
+        got = self._run_measure([{
+            "tool_name": "pwsh",
+            "tool_input": {"command": "Write-Output '../sibling/notes.md'; Get-Content local.md"},
+            "tool_output": "../sibling/notes.md\nlocal content",
+        }], workspace=ws)
+        iso = got["isolation_boundary"]
+        self.assertFalse(iso["contaminated"])
+        self.assertEqual([], iso["findings"])
+        self.assertEqual(1, len(iso["mentions_only"]))
+        self.assertEqual("text_mention_only", iso["mentions_only"][0]["access"])
+        self.assertEqual("c:/Temp/sw-story/suite/sibling/notes.md", iso["mentions_only"][0]["resolved_path"])
+
+    def test_reading_parent_file_from_workspace_subdirectory_cwd_is_allowed(self) -> None:
+        ws = r"C:\Temp\sw-story\suite\sample"
+        got = self._run_measure([{
+            "tool_name": "pwsh",
+            "tool_input": {"command": "Get-Content ../notes.md", "cwd": r"C:\Temp\sw-story\suite\sample\subdir"},
+            "tool_output": "inside workspace note",
+        }], workspace=ws)
+        iso = got["isolation_boundary"]
+        self.assertFalse(iso["contaminated"])
+        self.assertEqual([], iso["findings"])
+        self.assertEqual([], iso["mentions_only"])
+
+    def test_own_system_copy_allowed_while_sibling_system_copy_and_parent_are_contaminated(self) -> None:
+        ws = r"C:\Temp\sw-story\suite\sample"
+        got_own = self._run_measure([{
+            "tool_name": "pwsh",
+            "tool_input": {"command": r"Get-Content C:\Temp\sw-sys\suite\sample\AR1\prd.md"},
+            "tool_output": "own prd",
+        }], workspace=ws)
+        self.assertFalse(got_own["isolation_boundary"]["contaminated"])
+
+        got_other = self._run_measure([{
+            "tool_name": "pwsh",
+            "tool_input": {"command": r"Get-Content C:\Temp\sw-sys\suite\other\AR2\prd.md"},
+            "tool_output": "other prd",
+        }], workspace=ws)
+        iso_other = got_other["isolation_boundary"]
+        self.assertTrue(iso_other["contaminated"])
+        self.assertEqual("absolute_escape", iso_other["findings"][0]["kind"])
+        self.assertEqual("confirmed_access", iso_other["findings"][0]["access"])
+
+        got_parent = self._run_measure([{
+            "tool_name": "pwsh",
+            "tool_input": {"command": r"Get-ChildItem C:\Temp\sw-sys"},
+            "tool_output": "suite",
+        }], workspace=ws)
+        self.assertTrue(got_parent["isolation_boundary"]["contaminated"])
+
+    def test_failed_unknown_truncated_and_mixed_outputs_are_distinguished(self) -> None:
+        ws = r"C:\Temp\sw-story\suite\sample"
+        raw = [
+            # 1. failed_access
+            {"type": "tool", "tool_name": "pwsh", "tool_call_id": "c1", "run_id": "r", "tool_status": "error",
+             "timestamp": "2026-11-24T10:00:00+00:00",
+             "tool_input": {"command": "Get-Content ../sibling/missing.md"}, "tool_output": "Cannot find path"},
+            # 2. unknown_outcome (only started, no end)
+            {"type": "tool", "tool_name": "pwsh", "tool_call_id": "c2", "run_id": "r", "tool_status": "started",
+             "timestamp": "2026-11-24T10:00:05+00:00",
+             "tool_input": {"command": "Get-Content ../sibling/no-end.md"}},
+            # 3. truncated_unverified
+            {"type": "tool", "tool_name": "pwsh", "tool_call_id": "c3", "run_id": "r", "tool_status": "completed",
+             "timestamp": "2026-11-24T10:00:10+00:00", "source_truncated": True,
+             "tool_input": {"command": "Get-Content ../sibling/big.md"}, "tool_output": "truncated..."},
+            # 4. mixed multi-statement output -> needs_review (NOT confirmed_access)
+            {"type": "tool", "tool_name": "pwsh", "tool_call_id": "c4", "run_id": "r", "tool_status": "completed",
+             "timestamp": "2026-11-24T10:00:15+00:00",
+             "tool_input": {"command": "Get-Content ../sibling/mixed.md; Get-Content local.md"},
+             "tool_output": "some text"},
+        ]
+        got = self._run_measure([], workspace=ws, raw_events=raw)
+        access_by_path = {f["resolved_path"].split("/")[-1]: f["access"]
+                          for f in got["isolation_boundary"]["findings"]}
+        self.assertEqual({
+            "missing.md": "failed_access",
+            "no-end.md": "unknown_outcome",
+            "big.md": "truncated_unverified",
+            "mixed.md": "needs_review",
+        }, access_by_path)
+
+    def test_progress_query_and_unwritten_expected_report_and_observation_record(self) -> None:
+        if shutil.which("node") is None:
+            self.skipTest("环境里没有 node")
+        k1 = "c" * 64
+        r1 = "doc/reports/story/AR1/cccccccccccccccc/review-original.1.md"
+        p1 = f"# Story 独立人读审查 · 派审\n\n- 材料键：`{k1}`\n- 本次报告文件：`{r1}`\n\n## 先首读\n"
+        child_uuid = "11111111-2222-3333-4444-555555555555"
+        parent_rows = [
+            {"type": "subagent/catalog", "time": 1000, "data": {"childId": child_uuid, "label": "Story 独立人读审查", "childCreatedAt": 1000}},
+            {"type": "tool/call", "time": 1000, "data": {"callId": "c1", "name": "subagent",
+             "arguments": json.dumps({"name": "story-reviewer", "description": "Story 独立人读审查", "prompt": p1})}},
+            {"type": "tool/result", "time": 1010, "data": {"message": {"toolCallId": "c1", "content": [{"type": "text", "text": "started subagent story-reviewer"}]}}},
+            {"type": "tool/call", "time": 2000, "data": {"callId": "c2", "name": "send_message",
+             "arguments": json.dumps({"agent": "story-reviewer", "message": "还要多久完成？"})}},
+        ]
+        _session(self.run_dir / "native-sessions" / "session-p" / "session.v4.jsonl.zstd", "session-p", parent_rows)
+        _session(self.run_dir / "native-sessions" / "session-p" / "children" / child_uuid / "session.v4.jsonl.zstd", child_uuid, [])
+        got = self._run_measure([{"tool_name": "read", "tool_input": {"filePath": "doc/features/AR1/AR/story.md"}}])
+        d = got["delegations"]
+        self.assertEqual(1, d["story_review_dispatches"])
+        self.assertEqual(1, d["story_review_objects"])
+        self.assertEqual(1, d["story_review_expected_reports"])
+        self.assertEqual(0, d["story_review_actual_reports"])
+        self.assertEqual(0, d["story_review_unique_reports"])
+        self.assertEqual(0, d["story_review_settled"])
+        self.assertEqual(0, d["story_review_full_replies"])
+        self.assertEqual(1, len(d["non_dispatch_messages"]))
+        self.assertIsNone(d["items"][0]["report_file"])
+        self.assertEqual(r1, d["items"][0]["expected_report_file"])
+        self.assertFalse(d["items"][0]["actual_report"]["verified"])
+
+        # 验证下游 write_case_observation_record 不误报已有报告
+        import run_multi_case as rmc  # noqa: PLC0415
+        bundle = self.run_dir / "bundle"
+        case_run = bundle / "cases" / "demo-case" / "run-1"
+        case_run.mkdir(parents=True)
+        shutil.copy2(self.run_dir / "events.jsonl", case_run / "events.jsonl")
+        shutil.copytree(self.run_dir / "native-sessions", case_run / "native-sessions")
+        suite = {"bundle_root": str(bundle)}
+        record = {"case": "demo-case", "feature": "AR1", "end_at": "story:submitted",
+                  "status": "completed", "run_id": "run-1", "workspace": r"C:\Temp\sw-story\suite\demo-case"}
+        rmc.write_case_observation_record(suite, record)
+        obs = (bundle / "cases" / "demo-case" / "observation-record.md").read_text(encoding="utf-8")
+        self.assertIn("Story 独审派发 1 次", obs)
+        self.assertIn("预期报告 1 份、实际已核报告 0 份", obs)
+        self.assertIn("忽略非派发通信 1 条", obs)
+
+    def test_progress_query_does_not_steal_settled_and_truncated_reply_still_counts_verified_original(self) -> None:
+        if shutil.which("node") is None:
+            self.skipTest("环境里没有 node")
+        k1 = "d" * 64
+        r1 = "doc/reports/story/AR1/dddddddddddddddd/review-original.1.md"
+        p1 = f"# Story 独立人读审查 · 派审\n\n- 材料键：`{k1}`\n- 本次报告文件：`{r1}`\n\n## 先首读\n"
+        full_body = f"material_key: {k1}\nconclusion: warn\n\n## 发现\n- 正常正文"
+        truncated_reply = f"material_key: {k1}\nconclusion: warn"
+        child_uuid = "22222222-2222-3333-4444-555555555555"
+        parent_rows = [
+            {"type": "subagent/catalog", "time": 1000, "data": {"childId": child_uuid, "label": "Story 独立人读审查", "childCreatedAt": 1000}},
+            {"type": "tool/call", "time": 1000, "data": {"callId": "c1", "name": "subagent",
+             "arguments": json.dumps({"name": "story-reviewer", "description": "Story 独立人读审查", "prompt": p1})}},
+            {"type": "tool/result", "time": 1010, "data": {"message": {"toolCallId": "c1", "content": [{"type": "text", "text": "started subagent story-reviewer"}]}}},
+            {"type": "tool/call", "time": 1500, "data": {"callId": "c2", "name": "send_message",
+             "arguments": json.dumps({"agent": "story-reviewer", "message": "进度怎么样？"})}},
+            {"type": "agent/inbox/spliced", "time": 3000, "data": {"inserted": [{"source": {"kind": "subagent-settled", "senderSessionId": child_uuid,
+             "summary": "Background subagent story-reviewer finished"}, "content": [{"type": "text", "text": f"Background subagent story-reviewer finished\nIts closing message:\n{truncated_reply}"}]}]}},
+        ]
+        child_rows = [
+            {"type": "tool/call", "time": 2500, "data": {"callId": "w1", "name": "write",
+             "arguments": json.dumps({"file_path": r1, "content": full_body})}},
+            {"type": "tool/result", "time": 2510, "data": {"message": {"toolCallId": "w1", "isError": False, "content": [{"type": "text", "text": "ok"}]}}},
+        ]
+        _session(self.run_dir / "native-sessions" / "session-p" / "session.v4.jsonl.zstd", "session-p", parent_rows)
+        _session(self.run_dir / "native-sessions" / "session-p" / "children" / child_uuid / "session.v4.jsonl.zstd", child_uuid, child_rows)
+        got = self._run_measure([{"tool_name": "read", "tool_input": {"filePath": "doc/features/AR1/AR/story.md"}}])
+        d = got["delegations"]
+        self.assertEqual((1, 1, 1, 1), (d["story_review_dispatches"], d["story_review_settled"],
+                                        d["story_review_expected_reports"], d["story_review_actual_reports"]))
+        self.assertEqual((0, 1), (d["story_review_full_replies"], d["story_review_reports_unknown"]))
+        self.assertEqual("child_write_original", d["items"][0]["actual_report"]["basis"])
+
+    def test_same_object_redispatch_and_ambiguous_settled_stay_honest(self) -> None:
+        if shutil.which("node") is None:
+            self.skipTest("环境里没有 node")
+        k1 = "e" * 64
+        r1 = "doc/reports/story/AR1/eeeeeeeeeeeeeeee/review-original.1.md"
+        r2 = "doc/reports/story/AR1/eeeeeeeeeeeeeeee/review-original.2.md"
+        p1 = f"# Story 独立人读审查 · 派审\n\n- 材料键：`{k1}`\n- 本次报告文件：`{r1}`\n\n## 先首读\n"
+        p2 = f"# Story 独立人读审查 · 派审（复核）\n\n- 材料键：`{k1}`\n- 本次报告文件：`{r2}`\n\n## 复核\n"
+        body2 = f"material_key: {k1}\nconclusion: pass\n\n## 复核\n- 通过"
+        child_uuid = "33333333-2222-3333-4444-555555555555"
+        parent_rows = [
+            {"type": "subagent/catalog", "time": 1000, "data": {"childId": child_uuid, "label": "Story 独立人读审查", "childCreatedAt": 1000}},
+            # 第一次派审：没有写出报告，也没有收尾
+            {"type": "tool/call", "time": 1000, "data": {"callId": "c1", "name": "subagent",
+             "arguments": json.dumps({"name": "story-reviewer", "description": "Story 独立人读审查", "prompt": p1})}},
+            {"type": "tool/result", "time": 1010, "data": {"message": {"toolCallId": "c1", "content": [{"type": "text", "text": "started subagent story-reviewer"}]}}},
+            # 同对象重派到 r2：写出 r2 并正常收尾
+            {"type": "tool/call", "time": 3000, "data": {"callId": "c2", "name": "send_message",
+             "arguments": json.dumps({"agent": "story-reviewer", "message": p2})}},
+            {"type": "agent/inbox/spliced", "time": 4000, "data": {"inserted": [{"source": {"kind": "subagent-settled", "senderSessionId": child_uuid,
+             "summary": "Background subagent story-reviewer finished"}, "content": [{"type": "text", "text": f"Background subagent story-reviewer finished\nIts closing message:\n{body2}"}]}]}},
+        ]
+        child_rows = [
+            {"type": "tool/call", "time": 3500, "data": {"callId": "w2", "name": "write",
+             "arguments": json.dumps({"file_path": r2, "content": body2})}},
+            {"type": "tool/result", "time": 3510, "data": {"message": {"toolCallId": "w2", "isError": False, "content": [{"type": "text", "text": "ok"}]}}},
+        ]
+        _session(self.run_dir / "native-sessions" / "session-p" / "session.v4.jsonl.zstd", "session-p", parent_rows)
+        _session(self.run_dir / "native-sessions" / "session-p" / "children" / child_uuid / "session.v4.jsonl.zstd", child_uuid, child_rows)
+        got = self._run_measure([{"tool_name": "read", "tool_input": {"filePath": "doc/features/AR1/AR/story.md"}}])
+        d = got["delegations"]
+        self.assertEqual((2, 1, 2, 1, 1, 1), (
+            d["story_review_dispatches"], d["story_review_objects"],
+            d["story_review_expected_reports"], d["story_review_actual_reports"],
+            d["story_review_settled"], d["story_review_full_replies"],
+        ))
+        bucket = d["story_review_by_object"][k1]
+        self.assertEqual([r1, r2], bucket["expected_reports"])
+        self.assertEqual([r2], bucket["actual_reports"])
+
+        # 同一派发窗口内出现两条无法唯一绑定的 settled -> 留 unknown 并说明原因
+        amb_dir = self.run_dir / "ambiguous"
+        amb_dir.mkdir()
+        amb_parent = [
+            {"type": "subagent/catalog", "time": 1000, "data": {"childId": child_uuid, "label": "Story 独立人读审查", "childCreatedAt": 1000}},
+            {"type": "tool/call", "time": 1000, "data": {"callId": "c1", "name": "subagent",
+             "arguments": json.dumps({"name": "story-reviewer", "description": "Story 独立人读审查", "prompt": p1})}},
+            {"type": "tool/result", "time": 1010, "data": {"message": {"toolCallId": "c1", "content": [{"type": "text", "text": "started subagent story-reviewer"}]}}},
+            {"type": "agent/inbox/spliced", "time": 2000, "data": {"inserted": [{"source": {"kind": "subagent-settled", "senderSessionId": child_uuid,
+             "summary": "Background subagent story-reviewer finished"}, "content": [{"type": "text", "text": "Background subagent story-reviewer finished\nIts closing message:\nreply A"}]}]}},
+            {"type": "agent/inbox/spliced", "time": 2500, "data": {"inserted": [{"source": {"kind": "subagent-settled", "senderSessionId": child_uuid,
+             "summary": "Background subagent story-reviewer finished"}, "content": [{"type": "text", "text": "Background subagent story-reviewer finished\nIts closing message:\nreply B"}]}]}},
+        ]
+        _session(amb_dir / "native-sessions" / "session-p" / "session.v4.jsonl.zstd", "session-p", amb_parent)
+        ev_path = amb_dir / "events.jsonl"
+        ev_path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in _events({"tool_name": "read", "tool_input": {"filePath": "x"}})) + "\n", encoding="utf-8")
+        got_amb = measure_run.measure(ev_path, run_dir=amb_dir)
+        item = got_amb["delegations"]["items"][0]
+        self.assertEqual("unknown", item["settled"])
+        self.assertIn("无法唯一绑定", item.get("settled_note", ""))
+
+
 if __name__ == "__main__":
     unittest.main()

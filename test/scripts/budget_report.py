@@ -141,11 +141,24 @@ def file_diff(a: list[str], b: list[str]) -> dict:
 
 
 def retained_rows(base: Snapshot, start: Snapshot, start_rel: str) -> set[int]:
-    """start 里与版本基线逐行对齐（equal）的行号：退出它们算「退出上一正式版保留行」。"""
-    base_rel = start_rel
-    if base_rel not in base.files:
-        cands = group_by_canonical(base).get(meter.canonical_rel(start_rel), [])
-        base_rel = cands[0] if len(cands) == 1 else start_rel
+    """start 里与版本基线逐行对齐（equal）的行号：退出它们算「退出上一正式版保留行」。
+
+    身份对齐规则：
+    1. start_rel 与 release 基线同物理路径在场：直接按本物理路径对齐基线行（即使 start 中另存有同逻辑名的副本）；
+    2. start_rel 不在 release 基线中：仅当该逻辑文件在 release 基线和 start 中各自恰好只有一份（即确为唯一 1-to-1 搬迁、
+       原物理路径未在 start 同时存活）时，才继承原路径的基线行；若原路径与新增副本在 start 同时并存，新增副本的删除全属
+       本版新增（X_version_added），不得重复认领原路径的基线来源。
+    """
+    if start_rel in base.files:
+        base_rel = start_rel
+    else:
+        canon = meter.canonical_rel(start_rel)
+        base_cands = group_by_canonical(base).get(canon, [])
+        start_cands = group_by_canonical(start).get(canon, [])
+        if len(base_cands) == 1 and len(start_cands) == 1 and start_cands[0] == start_rel:
+            base_rel = base_cands[0]
+        else:
+            return set()
     keep = set()
     for op, i1, i2, j1, j2 in difflib.SequenceMatcher(
             a=base.rows(base_rel), b=start.rows(start_rel), autojunk=False).get_opcodes():
