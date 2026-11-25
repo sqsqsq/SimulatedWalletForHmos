@@ -66,9 +66,8 @@ def demo_extension() -> Path:
     return DEMO_ROOT / (config.get("paths", {}).get("extension_dir") or "doc/extensions")
 
 
-EXT_SCRIPTS = demo_extension() / "skills" / "story" / "scripts"
-STORY_JS = EXT_SCRIPTS / "adapters" / "story.js"
-STORY_FLOW = EXT_SCRIPTS / "core" / "story_flow.py"
+STORY_JS = demo_extension() / "adapters" / "story.js"
+STORY_FLOW = demo_extension() / "base" / "skills" / "story" / "scripts" / "core" / "story_flow.py"
 
 #: 默认目标目录：维护域里不入库的那一份（相对维护仓根）
 DEFAULT_SYSTEM_DIR = Path("test") / "requirement-system"

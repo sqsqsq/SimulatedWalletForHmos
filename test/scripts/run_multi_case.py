@@ -239,12 +239,71 @@ def demo_check() -> str:
 
 
 def install_dev_source(template: Path) -> dict[str, Any]:
-    """在 template 里装开发源（extensions/base + demo overlay + 合成根 manifest），再核 base 与开发源逐字节相同。"""
+    """核验 template 消费的是已提交且与开发源同源的 demo 候选（保护已适配游标与清理后的样例，禁止静默用未提交字节或不同 overlay 覆盖）。
+
+    仅对不含 `base/package-manifest.yaml` 的旧版合成测试夹具（如单测 fake_demo）保留原安装回退。
+    """
+    installed = template / "doc" / "extensions"
+    demo_ext = DEMO_ROOT / "doc" / "extensions"
+    pkg_file = installed / "base" / "package-manifest.yaml"
+    adapt_file = installed / "adaptation.yaml"
+    if pkg_file.is_file() and adapt_file.is_file() and demo_ext.is_dir():
+        dev_base = publish_to_demo.package_base_dir(DEV_SOURCE)
+        if dev_base is None:
+            raise SystemExit(f"[multi] 开发源缺少 base/package-manifest.yaml：{DEV_SOURCE}")
+        pkg_version = str((yaml.safe_load(pkg_file.read_text(encoding="utf-8")) or {}).get("version") or "")
+        adapt_doc = yaml.safe_load(adapt_file.read_text(encoding="utf-8")) or {}
+        adapted_for = str(adapt_doc.get("adapted_for") or "")
+        if adapted_for != pkg_version:
+            raise SystemExit(f"[multi] template 适配游标不符：adapted_for={adapted_for!r} != package={pkg_version!r}")
+        if (installed / "base" / "examples").exists():
+            raise SystemExit("[multi] template 残留 base/examples/：已适配的 demo 候选应已清理包样例")
+        if not (installed / "base" / ".gitignore").is_file():
+            raise SystemExit("[multi] template 缺失 base/.gitignore")
+        # 1) 核 template/doc/extensions 与已提交 demo/doc/extensions 逐字节一致（防不同 overlay 替换）
+        demo_files = set(publish_to_demo.enumerate_source(demo_ext))
+        tpl_files = set(publish_to_demo.enumerate_source(installed))
+        if demo_files != tpl_files:
+            raise SystemExit(f"[multi] template 与 demo/doc/extensions 文件集不同：多出 {sorted(tpl_files - demo_files)[:5]}、"
+                             f"缺少 {sorted(demo_files - tpl_files)[:5]}")
+        demo_diff = [rel for rel in sorted(demo_files) if (demo_ext / rel).read_bytes() != (installed / rel).read_bytes()]
+        if demo_diff:
+            raise SystemExit(f"[multi] template 与 demo/doc/extensions 字节不同：{demo_diff[:5]}")
+        # 2) 核 template/doc/extensions/base（剔除已清理 examples/）与 DEV_SOURCE/base 逐字节同源（防未同步开发字节）
+        dev_rel = {rel for rel in publish_to_demo.enumerate_source(dev_base)
+                   if not (rel == "examples" or rel.startswith("examples/"))}
+        tpl_base = installed / "base"
+        tpl_base_rel = set(publish_to_demo.enumerate_source(tpl_base))
+        if dev_rel != tpl_base_rel:
+            raise SystemExit(f"[multi] demo/template 的 base 与开发源不同源（禁止静默替换，先按 S30 同步 demo）："
+                             f"多出 {sorted(tpl_base_rel - dev_rel)[:5]}、缺少 {sorted(dev_rel - tpl_base_rel)[:5]}")
+        base_diff = [rel for rel in sorted(dev_rel)
+                     if (dev_base / rel).read_bytes().replace(b"\r\n", b"\n") != (tpl_base / rel).read_bytes().replace(b"\r\n", b"\n")]
+        if base_diff:
+            raise SystemExit(f"[multi] demo/template 的 base 与开发源字节不同（禁止静默替换，先同步 demo）：{base_diff[:5]}")
+        # 3) 在 demo 上执行完整 adapt-scan.mjs --check（含 gitignore/usage/知识/对接），在 template 上执行 entries.mjs --action check 核全部宿主桥
+        demo_scan = demo_ext / "base" / "skills" / "story-adaptation" / "scripts" / "adapt-scan.mjs"
+        chk_demo = subprocess.run(["node", str(demo_scan), "--check"], cwd=str(DEMO_ROOT),
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if chk_demo.returncode != 0:
+            raise SystemExit(f"[multi] demo 扩展核对失败（adapt-scan --check 退出 {chk_demo.returncode}）："
+                             f"{(chk_demo.stdout + chk_demo.stderr).strip()[:600]}")
+        tpl_entries = tpl_base / "skills" / "story-adaptation" / "scripts" / "entries.mjs"
+        chk_tpl = subprocess.run(["node", str(tpl_entries), "--project-root", str(template), "--action", "check"],
+                                 cwd=str(template), capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if chk_tpl.returncode != 0:
+            raise SystemExit(f"[multi] template 宿主入口核对失败（entries --action check 退出 {chk_tpl.returncode}）："
+                             f"{(chk_tpl.stdout + chk_tpl.stderr).strip()[:600]}")
+        return {
+            "status": "verified_demo_candidate", "source_version": pkg_version,
+            "adapted_for": adapted_for, "base_examples_cleaned": True,
+            "demo_template_equal": True, "base_matches_dev_source": True, "changed": 0,
+        }
+
     result = publish_to_demo.install_extension(DEV_SOURCE, template)
     if result.status != "installed":
         raise SystemExit(f"[multi] template 装开发源失败（{result.status}）：{result.problems}"
                          "——template 作废，不建 Case，从 demo 重新装配")
-    installed = template / "doc" / "extensions"
     expected, _, _, _ = publish_to_demo.compose_extension_files(DEV_SOURCE)
     mismatch = [rel for rel, data in expected.items()
                 if not (installed / rel).is_file() or (installed / rel).read_bytes() != data]
@@ -386,6 +445,68 @@ def install_framework_under_test(template: Path) -> dict[str, Any]:
         raise SystemExit("[multi] 被测 Framework 的 harness 依赖声明与 demo 已装的不同：先按维护环境准备装好它的依赖，不装配")
     if not (framework / "harness" / "node_modules").is_dir():
         raise SystemExit("[multi] template 没带 framework/harness/node_modules：先按维护环境准备装 harness 依赖")
+    patched = sorted(line[len("+++ b/"):] for line in cfg["patch_path"].read_text(encoding="utf-8").splitlines()
+                     if line.startswith("+++ b/"))
+    config_path = template / "framework.config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    adapters = list(dict.fromkeys([*config.get("materialized_adapters", []), *cfg["materialized_adapters"]]))
+    # 若 template（从已提交 demo 复制而来）的 Framework、本地补丁与受影响子代理均已逐字节一致，直接核验通过，不重复覆盖或重跑 init
+    manifest_file = framework / "RELEASE-MANIFEST.json"
+    rel_manifest_blob = _git_out("cat-file", "blob", f"{cfg['release_commit']}:{cfg['framework_path']}/RELEASE-MANIFEST.json")
+    if (manifest_file.is_file() and manifest_file.read_bytes() == rel_manifest_blob.stdout
+            and adapters == config.get("materialized_adapters")):
+        manifest = json.loads(rel_manifest_blob.stdout.decode("utf-8"))
+        # 独立核对补丁文件与未补丁发布文件均逐字节同源
+        with tempfile.TemporaryDirectory(prefix="fw-patch-check-") as ptmp:
+            proot = Path(ptmp)
+            for rel in patched:
+                blob = _git_out("cat-file", "blob", f"{cfg['release_commit']}:{cfg['framework_path']}/{rel}")
+                if blob.returncode == 0:
+                    (proot / "framework" / rel).parent.mkdir(parents=True, exist_ok=True)
+                    (proot / "framework" / rel).write_bytes(blob.stdout)
+            proot.mkdir(parents=True, exist_ok=True)
+            chk_p = _git_out("apply", "--directory=framework", str(cfg["patch_path"]), cwd=proot,
+                             env={**os.environ, "GIT_CEILING_DIRECTORIES": str(proot.parent)})
+            patch_ok = chk_p.returncode == 0 and all(
+                (framework / rel).is_file() and (framework / rel).read_bytes() == (proot / "framework" / rel).read_bytes()
+                for rel in patched
+            )
+        patched_set = set(patched)
+        unpatched_ok = patch_ok and all(
+            (framework / f["path"]).is_file()
+            and hashlib.sha256((framework / f["path"]).read_bytes()).hexdigest() == f["sha256"]
+            for f in manifest["files"] if f["path"] not in patched_set
+        )
+        if unpatched_ok:
+            adapter_root = framework / "agents"
+            patched_adapters = sorted({rel.split("/")[1] for rel in patched
+                                       if rel.startswith("agents/") and (adapter_root / rel.split("/")[1] / "adapter.yaml").is_file()})
+            materialized: dict[str, str] = {}
+            subs_ok = True
+            for name in patched_adapters:
+                spec = yaml.safe_load((adapter_root / name / "adapter.yaml").read_text(encoding="utf-8"))
+                sub = spec.get("subagents") or (spec.get("commands") or {}).get("subagents")
+                if not sub:
+                    continue
+                source_dir = adapter_root / name / sub["template_dir"]
+                for source in sorted(p for p in source_dir.rglob("*") if p.is_file()):
+                    target = template / sub["target_dir"] / source.relative_to(source_dir)
+                    if not target.is_file() or target.read_bytes() != source.read_bytes():
+                        subs_ok = False
+                        break
+                    materialized[target.relative_to(template).as_posix()] = hashlib.sha256(target.read_bytes()).hexdigest()
+                if not subs_ok:
+                    break
+            if subs_ok:
+                return {
+                    "mode": "verified_demo_framework",
+                    "release_commit": cfg["release_commit"], "tree_oid": cfg["tree_oid"],
+                    "version": manifest.get("version"), "source_commit": manifest.get("source_commit"),
+                    "built_at": manifest.get("built_at"),
+                    "local_patch": cfg["local_patch"], "local_patch_sha256": cfg["patch_sha256"], "patched_files": patched,
+                    "materialized_adapters": adapters, "subagents": materialized,
+                    "removed_outside_release": [], "init_run_log": None,
+                }
     removed_outside_release = _write_framework_release(framework, cfg)
     env = {**os.environ, "GIT_CEILING_DIRECTORIES": str(template.parent)}
     for action in (["--check"], []):
@@ -393,11 +514,6 @@ def install_framework_under_test(template: Path) -> dict[str, Any]:
         if applied.returncode != 0:
             raise SystemExit(f"[multi] 本地宿主补丁不适用于被测 Framework（git apply {' '.join(action)}）："
                              f"{applied.stderr.decode('utf-8', 'replace').strip()[:800]}——修补丁或固定输入后从新 template 重建")
-    patched = sorted(line[len("+++ b/"):] for line in cfg["patch_path"].read_text(encoding="utf-8").splitlines()
-                     if line.startswith("+++ b/"))
-    config_path = template / "framework.config.json"
-    config = json.loads(config_path.read_text(encoding="utf-8"))
-    adapters = list(dict.fromkeys([*config.get("materialized_adapters", []), *cfg["materialized_adapters"]]))
     if adapters != config.get("materialized_adapters"):
         config["materialized_adapters"] = adapters
         config_path.write_bytes((json.dumps(config, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
@@ -481,6 +597,14 @@ def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Pa
     (template / "doc/features").mkdir(parents=True, exist_ok=True)
     (template / "framework/harness/state").mkdir(parents=True, exist_ok=True)
     stripped_identity = strip_local_runtime_identity(template)
+    # Codex PreToolUse hooks.json（f894 起按上游 adapter.yaml 物化绝对 PROJECT_ROOT）：把 demo 根改写为 template 根，不回指仓内 demo
+    codex_hooks = template / ".codex" / "hooks.json"
+    if codex_hooks.is_file():
+        old_root = DEMO_ROOT.resolve().as_posix()
+        new_root = template.resolve().as_posix()
+        raw_hooks = codex_hooks.read_text(encoding="utf-8")
+        if old_root in raw_hooks:
+            codex_hooks.write_bytes(raw_hooks.replace(old_root, new_root).encode("utf-8"))
     framework = install_framework_under_test(template)
     installed = install_dev_source(template)
     if demo_check() != demo_head:
@@ -496,9 +620,14 @@ def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Pa
             + ["other Case inputs", "historical suite data"]),
         "installed": installed,
         "neutralized_runtime_identity": stripped_identity,
-        # 被测对象的身份：开发源、装进 template 的、发布的 Framework；结束时与它比较
-        "identity": {"dev_source": tree_identity(DEV_SOURCE), "template_extension": tree_identity(template / "doc" / "extensions"),
-                     "framework": framework_identity(template)},
+        # 被测对象的身份：发行包（含样例）、已提交 demo 安装态、装进 template 的已安装态、发布的 Framework；结束时与它比较
+        "identity": {
+            "dev_source": tree_identity(DEV_SOURCE),
+            "distribution_package": tree_identity(DEV_SOURCE),
+            "demo_installed": tree_identity(DEMO_ROOT / "doc" / "extensions"),
+            "template_extension": tree_identity(template / "doc" / "extensions"),
+            "framework": framework_identity(template),
+        },
         "case_seeded": {},
         "created_at": now(),
     })
@@ -653,6 +782,13 @@ def create_case_workspace(suite: dict[str, Any], case: dict[str, Any]) -> Path:
         raise SystemExit(f"[multi] Case workspace 已存在，拒绝覆盖: {workspace}")
     workspace_root.mkdir(parents=True, exist_ok=True)
     shutil.copytree(template, workspace)
+    ws_codex_hooks = workspace / ".codex" / "hooks.json"
+    if ws_codex_hooks.is_file():
+        old_tpl = template.resolve().as_posix()
+        new_ws = workspace.resolve().as_posix()
+        raw_ws = ws_codex_hooks.read_text(encoding="utf-8")
+        if old_tpl in raw_ws:
+            ws_codex_hooks.write_bytes(raw_ws.replace(old_tpl, new_ws).encode("utf-8"))
     boundary_check = _verify_workspace_boundary(workspace, str(case["feature"]))
     case["workspace"] = str(workspace)
     case["workspace_status"] = "created"

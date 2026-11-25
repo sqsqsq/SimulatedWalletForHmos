@@ -12,9 +12,12 @@
 """
 from __future__ import annotations
 
+import atexit
+import io
 import json
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,8 +30,38 @@ PKG_EXT = PKG_ROOT / "doc" / "extensions"
 ENTRIES_REF = DEV_BASE / "skills" / "story-adaptation" / "scripts" / "entries.mjs"
 ADAPTERS = "doc/extensions/adapters"
 DEMO = REPO_ROOT / "demo"
+#: 1.9.8 真实 demo 原件所在提交（S30 迁移 demo 到 2.0.6 之前；用它保持 1.x 旧混装升级测试覆盖真实 1.9.8 布局）
+LEGACY_DEMO_COMMIT = "6735fc79"
+
+
+def _extract_legacy_demo_198() -> Path:
+    root = Path(tempfile.mkdtemp(prefix="story-legacy-demo-198-"))
+    atexit.register(shutil.rmtree, root, True)
+    arc = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "archive", LEGACY_DEMO_COMMIT, "--",
+         "demo/doc/extensions", "demo/.gitignore", "demo/AGENTS.md", "demo/CLAUDE.md",
+         "demo/.agents", "demo/.cac", "demo/.claude", "demo/.codex", "demo/.cursor", "demo/.opencode"],
+        check=True, capture_output=True,
+    )
+    with tarfile.open(fileobj=io.BytesIO(arc.stdout), mode="r:*") as tf:
+        for m in tf.getmembers():
+            if not m.name.startswith("demo/"):
+                continue
+            rel = m.name[len("demo/"):]
+            if not rel:
+                continue
+            dst = root / rel
+            if m.isdir():
+                dst.mkdir(parents=True, exist_ok=True)
+            elif m.isfile():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_bytes(tf.extractfile(m).read())
+    return root
+
+
+LEGACY_DEMO = _extract_legacy_demo_198()
 LEGACY_ENTRIES = tuple(b["target"] for b in yaml.safe_load(
-    (DEMO / "doc/extensions/manifest.yaml").read_text(encoding="utf-8"))["provides"].get("bridges", []))
+    (LEGACY_DEMO / "doc/extensions/manifest.yaml").read_text(encoding="utf-8"))["provides"].get("bridges", []))
 LEGACY_STUB = ".agents/skills/story-adaptation/SKILL.md"
 LEGACY_STUB_TEXT = ("---\nname: story-adaptation\ndescription: Framework Skill\n---\n\n# 跳板文件\n\n"
                     "完整 Skill 定义请阅读：doc/extensions/skills/story-adaptation/SKILL.md\n")
@@ -66,11 +99,11 @@ class InPlaceAdaptCase(unittest.TestCase):
         at = self.root / project
         at.mkdir(parents=True)
         link_framework(at)
-        shutil.copytree(DEMO / "doc" / "extensions", at / "doc" / "extensions",
+        shutil.copytree(LEGACY_DEMO / "doc" / "extensions", at / "doc" / "extensions",
                         ignore=shutil.ignore_patterns("__pycache__"))
         for rel in (*LEGACY_ENTRIES, ".gitignore"):
             (at / rel).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(DEMO / rel, at / rel)
+            shutil.copy2(LEGACY_DEMO / rel, at / rel)
         scratch = self.root / f"{project}-render"
         shutil.copytree(at, scratch, ignore=lambda d, names: ["framework"] if Path(d) == at else [])
         link_framework(scratch)
@@ -78,7 +111,7 @@ class InPlaceAdaptCase(unittest.TestCase):
             (scratch / rel).unlink()
         self.entries(scratch, "materialize")
         for name in ("AGENTS.md", "CLAUDE.md"):
-            legacy = (DEMO / name).read_text(encoding="utf-8").replace("\r\n", "\n").split("\n")
+            legacy = (LEGACY_DEMO / name).read_text(encoding="utf-8").replace("\r\n", "\n").split("\n")
             begin = next(i for i, l in enumerate(legacy) if "<!-- story-ext:begin" in l)
             end = next(i for i, l in enumerate(legacy) if "<!-- story-ext:end" in l)
             rendered = (scratch / name).read_text(encoding="utf-8").replace("\r\n", "\n").rstrip("\n")
@@ -421,7 +454,7 @@ class IdentityAndUpgrade(InPlaceAdaptCase):
         self.assertEqual(0, proc.returncode, self.out(proc))
         ext = target / "doc" / "extensions"
         adaptation = yaml.safe_load((ext / "adaptation.yaml").read_text(encoding="utf-8"))
-        old = yaml.safe_load((DEMO / "doc/extensions/manifest.yaml").read_text(encoding="utf-8"))
+        old = yaml.safe_load((LEGACY_DEMO / "doc/extensions/manifest.yaml").read_text(encoding="utf-8"))
         self.assertEqual({k: old[k] for k in ("adapters", "adapted_for")}, adaptation)
         manifest = yaml.safe_load((ext / "manifest.yaml").read_text(encoding="utf-8"))
         self.assertEqual("1.1", manifest["schema_version"])

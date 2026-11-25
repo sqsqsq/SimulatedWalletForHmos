@@ -38,8 +38,8 @@ CHAIN = (
     Path(".dsh/framework-verifier.patch.yml"),
     Path(".agents/skills/story/SKILL.md"),
 )
-#: demo 发布版随仓交付的那几件；dsh 审查员层由被测 Framework 的本地补丁在工作区模板里生成，不在 demo
-DEMO_CHAIN = tuple(rel for rel in CHAIN if rel.parts[0] != ".dsh")
+#: demo 发布版与工作区模板均随仓交付全部 4 件（S30 起 demo 已对齐被测 Framework 与 dsh 补丁）
+DEMO_CHAIN = CHAIN
 
 VERIFIER_DEF = Path(".opencode/agent/verifier.md")
 #: dsh 的只读审查员是配置层里的一个工具实例，模板随被测 Framework 的本地补丁进来
@@ -173,12 +173,35 @@ class AssembledFromTheFixedInputs:
                 self.assertEqual((self.template / source).read_bytes(), (self.template / materialised).read_bytes())
 
     def test_the_dev_source_is_installed_byte_for_byte(self) -> None:
+        """template 消费已提交的 demo 候选：与 demo/doc/extensions 逐字节一致，base（剔除已清理 examples/）与开发源同源，
+        保留已适配游标 adapted_for 与清理后的 examples 状态，boundary 分开记录发行包与已安装态身份。"""
+        import yaml
         publish = self.runner.publish_to_demo
-        expected, _, _, _ = publish.compose_extension_files(self.runner.DEV_SOURCE)
-        self.assertEqual(sorted(expected), sorted(publish.enumerate_source(self.template / "doc/extensions")))
-        for rel, body in expected.items():
-            with self.subTest(rel):
-                self.assertEqual(body, (self.template / "doc/extensions" / rel).read_bytes())
+        demo_ext = DEMO / "doc/extensions"
+        tpl_ext = self.template / "doc/extensions"
+        demo_files = sorted(publish.enumerate_source(demo_ext))
+        self.assertEqual(demo_files, sorted(publish.enumerate_source(tpl_ext)))
+        for rel in demo_files:
+            with self.subTest(demo_vs_template=rel):
+                self.assertEqual((demo_ext / rel).read_bytes(), (tpl_ext / rel).read_bytes())
+        dev_base = publish.package_base_dir(self.runner.DEV_SOURCE)
+        dev_non_examples = sorted(r for r in publish.enumerate_source(dev_base)
+                                  if not (r == "examples" or r.startswith("examples/")))
+        self.assertEqual(dev_non_examples, sorted(publish.enumerate_source(tpl_ext / "base")))
+        for rel in dev_non_examples:
+            with self.subTest(dev_base=rel):
+                self.assertEqual((dev_base / rel).read_bytes().replace(b"\r\n", b"\n"),
+                                 (tpl_ext / "base" / rel).read_bytes().replace(b"\r\n", b"\n"))
+        self.assertFalse((tpl_ext / "base/examples").exists(), "template 复活了已清理的 base/examples/")
+        self.assertTrue((tpl_ext / "base/.gitignore").is_file(), "template 缺失 base/.gitignore")
+        pkg_ver = str(yaml.safe_load((tpl_ext / "base/package-manifest.yaml").read_text(encoding="utf-8"))["version"])
+        ad = yaml.safe_load((tpl_ext / "adaptation.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(pkg_ver, ad.get("adapted_for"), "template 丢失了已适配游标 adapted_for")
+        boundary = json.loads((self.suite_root / "workspace-boundary.json").read_text(encoding="utf-8"))
+        ident = boundary["identity"]
+        self.assertEqual(ident["demo_installed"]["digest"], ident["template_extension"]["digest"])
+        self.assertNotEqual(ident["distribution_package"]["digest"], ident["template_extension"]["digest"],
+                            "发行包身份（含 examples/）与已安装态身份（已清 examples/）应分开记录")
 
     def test_the_assembly_leaves_demo_untouched_and_records_its_inputs(self) -> None:
         self.assertEqual(self.demo_before, self.demo_after, "装配前后 demo 的提交或工作区变了")
@@ -375,19 +398,15 @@ class TheWorkspaceCarriesTheVerifierChain(AssembledFromTheFixedInputs, unittest.
 
 
     def test_the_two_agents_entries_follow_their_owners(self) -> None:
-        """demo 装着 1.9.8：story 入口等于它已装包登记的来源。template 装着开发版：两个 Skill 入口都由
-        Framework 按 manifest 物化，带归属标记、指向各自的 SKILL。"""
-        import yaml
-        installed = yaml.safe_load((DEMO / "doc/extensions/manifest.yaml").read_text(encoding="utf-8"))
-        for item in installed["provides"].get("bridges", []):
-            with self.subTest(demo=item["target"]):
-                self.assertEqual((DEMO / "doc/extensions" / item["source"]).read_bytes(),
-                                 (DEMO / item["target"]).read_bytes(), "demo 的入口不是它已装包登记的那份")
-        for skill in ("story", "story-adaptation"):
-            with self.subTest(template=skill):
-                text = (self.template / f".agents/skills/{skill}/SKILL.md").read_text(encoding="utf-8")
-                self.assertIn("agent-maison:instance-extension-bridge", text)
-                self.assertIn(f"doc/extensions/base/skills/{skill}/SKILL.md", text)
+        """demo 与 template 均装着 2.0.6：四个 Skill 入口都由 Framework 按 manifest 物化，带归属标记、
+        指向 doc/extensions/base/skills/<id>/SKILL.md，且 demo 与 template 逐字节一致。"""
+        for skill in ("story", "story-adaptation", "story-knowledge", "story-stats"):
+            with self.subTest(skill=skill):
+                demo_text = (DEMO / f".agents/skills/{skill}/SKILL.md").read_text(encoding="utf-8")
+                tpl_text = (self.template / f".agents/skills/{skill}/SKILL.md").read_text(encoding="utf-8")
+                self.assertEqual(demo_text, tpl_text)
+                self.assertIn("agent-maison:instance-extension-bridge", tpl_text)
+                self.assertIn(f"doc/extensions/base/skills/{skill}/SKILL.md", tpl_text)
 
     def test_hook_configs_live_in_the_consumer_and_resolve_from_its_root(self) -> None:
         """四份钩子配置只在消费工程里；其中每条命令都从消费根（含带空格的 workspace）找得到脚本。
@@ -408,15 +427,27 @@ class TheWorkspaceCarriesTheVerifierChain(AssembledFromTheFixedInputs, unittest.
                     yield from commands(item)
 
         scripts = []
+        demo_prefix = DEMO.resolve().as_posix() + "/"
+        tpl_prefix = self.template.resolve().as_posix() + "/"
         for rel in HOOK_CONFIGS:
             with self.subTest(rel):
                 self.assertTrue((DEMO / rel).is_file())
                 self.assertTrue((self.template / rel).is_file())
                 self.assertFalse((REPO_ROOT / rel).exists(), f"维护仓根还挂着消费钩子 {rel}")
                 for command in commands(json.loads((DEMO / rel).read_text(encoding="utf-8"))):
-                    self.assertNotIn(":\\", command, f"{rel} 还是写死的机器路径：{command}")
-                    # `node "<脚本>"` 或 `node <脚本>`；脚本以消费根为基准（${…_PROJECT_DIR}/ 前缀即消费根）
-                    script = re.sub(r"^\$\{[A-Z0-9_]+\}/", "", command.split(None, 1)[1].strip().strip('"'))
+                    self.assertNotIn(":\\", command, f"{rel} 还是写死的反斜杠机器路径：{command}")
+                    arg = command.split(None, 1)[1].strip().strip('"')
+                    if rel == ".codex/hooks.json":
+                        # f894 起上游 codex adapter.yaml 显式按 {{PROJECT_ROOT}} 物化前斜杠绝对路径；demo 与 template 须各指自身根
+                        self.assertTrue(arg.startswith(demo_prefix), f"{rel} 未指向 demo 根：{command}")
+                        script = arg[len(demo_prefix):]
+                        tpl_cmds = list(commands(json.loads((self.template / rel).read_text(encoding="utf-8"))))
+                        self.assertTrue(any(tpl_prefix + script in c for c in tpl_cmds),
+                                        f"template/{rel} 未改写为 template 根（仍回指 demo）：{tpl_cmds}")
+                    else:
+                        self.assertNotIn(":/", command, f"{rel} 含写死的绝对路径：{command}")
+                        # `node "<脚本>"` 或 `node <脚本>`；脚本以消费根为基准（${…_PROJECT_DIR}/ 前缀即消费根）
+                        script = re.sub(r"^\$\{[A-Z0-9_]+\}/", "", arg)
                     scripts.append(script)
         self.assertTrue(scripts, "四份钩子配置里一条命令都没有")
         spaced = Path(tempfile.mkdtemp(prefix="ws with space-"))
