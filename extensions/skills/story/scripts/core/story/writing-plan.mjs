@@ -39,7 +39,7 @@ const APPENDIX_NOTE = '附录的接口、数据、规约与材料取舍由你写
 const LISTED = /^[-*+]\s+/;
 const LINE = {
   form: /^形式[:：]\s*(.*)$/,
-  recheck: /^待核[:：]\s*(.+)$/, notApplicable: /^不涉及[:：]\s*(.+)$/, display: /^展示标题[:：]\s*(.+)$/,
+  recheck: /^待核[:：]\s*(.+)$/, notApplicable: /^不涉及[:：]\s*(.+)$/, retiredDisplay: /^展示标题[:：]\s*(.*)$/,
   carry: /^承接上游图[:：]\s*(.*)$/,
 };
 
@@ -55,16 +55,12 @@ const formWords = (named = {}) => `${[...Object.keys(FORMS), ...Object.keys(name
   */
 export function writingPlanShell(contract) {
   const rows = ['# 写作设计', '',
-    `<!-- 骨架每章一段：正文要有的每个小节写一行 \`#### 标题\`，下面用 \`- 答：\` 写这一节解决读者的`
-    + '什么理解问题、`- 依据：` 写依据在哪、`- 待核：` 写还没形成结论的疑点（没有就不写）；'
-    + `要用某种形式承载就写一行 \`形式：<${formWords(contract.named_tables)}>\`，再用 \`- 描述：\` 说明它表达的对象、`
-    + '关系与边界（列、节点与项目在写章时按原文定，这里不预写）；'
-    + '形式按 图＞表格＞列表＞章节＞文字 先后考虑：关系先试图，图讲不全的精确条件用表或列表补，文字解释理由；'
-    + '一处要几种形式就写几行，描述里说清各自承担什么；'
-    + '选了图的，描述写两半：图前要点明的阅读目的，图后要补的图外条件、责任与结果；'
-    + '这一章在 Story 里换个标题就写 `- 展示标题：<准确主题>`（不写用合同章名；章的出现顺序就是 Story 的章序）；'
-    + '本章不涉及就只写 `- 不涉及：<理由>`（附录与审查状态那两章不能省）；想标明上游某张图讲的关系由哪一节承接，就在那一节写 `- 承接上游图：<skeleton 列出的图身份>`，'
-    + '一行一张，正文、表或图都可以承接；不是每张图都要写。方法见 story-write.md 第四节 -->', '',
+    `<!-- 骨架按章节合同固定十章顺序（一级章沿合同，不换名、不重排、不删章）：正文小节写 \`#### 标题\`（写成读者找得到的业务对象、状态、条件、责任或关系），`
+    + '下面用 `- 答：` 写理解问题、`- 依据：` 写依据、`- 待核：` 写未决疑点（没有就不写）；'
+    + `承载形式写 \`形式：<${formWords(contract.named_tables)}>\`，配 \`- 描述：\` 说明对象、关系与边界（列/节点写章时按原文定）；`
+    + '关系交给图，条件组合交给表，单一理由用短段；选图时写清图前目的（场景、参与方与看图目的）与图后要补的图外条件、责任和例外；'
+    + '本章不涉及写 `- 不涉及：<理由>`（正文保留该章并简述本需求依据，不强造表图）；'
+    + '承接上游图按需写 `- 承接上游图：<skeleton 列出的图身份>`。方法见 story-write.md 第四节 -->', '',
     `## ${PARTS.story}`, '',
     '{{读者是谁、读完要做什么决定；按责任边界 → 整体协作与关键取舍 → 状态与分支 → 验收与待决，'
     + '哪几件事最容易误解、读者先理解哪一件才能理解后文；依据在哪、哪些未决限制后文}}', '', `## ${PARTS.skeleton}`, ''];
@@ -138,38 +134,25 @@ function carryProblems(ctx, plan, say) {
 }
 
 /**
- * 本需求的有效章表：默认职责（章节合同的章 ID 与读者问题）按写作设计骨架里章 ID 出现的顺序排，标题取 `展示标题`，
- * 写了 `不涉及` 的章标为可省略（`omittable`：作者可以用 chapter --omit 把它从 Story 删掉；附录章与带审查状态的章承担机器投影与披露，不可省略）。骨架里没出现的章按合同顺序接在后面。
- * 展示标题撞名报出来。章 ID 是稳定身份，标题只作展示。
+ * 本需求的章表：固定按章节合同的十章顺序与章名，不改名、不换序、不省章；
+ * 骨架写了 `不涉及` 的章保留在原位并记录理由，供作者简写依据、供审查核对理由。
  *
- * @returns {{id: string, title: string, defaultTitle: string, omittable: boolean, reason: string|null}[]}
+ * @returns {{id: string, title: string, reason: string|null}[]}
  */
-function effectiveChapters(plan, say) {
-  const defaults = plan.chapters.map(c => ({ ...c, defaultTitle: c.defaultTitle ?? c.title }));
-  const seen = [...plan.skeletons.keys()];
-  const order = [...seen, ...defaults.map(c => c.id).filter(id => !seen.includes(id))];
-  const out = order.map((id) => {
-    const c = defaults.find(x => x.id === id);
-    const sk = plan.skeletons.get(id);
-    const keep = Boolean(c.appendix || c.review_status);
-    const reason = sk?.notApplicable ?? null;
-    return { ...c, title: sk?.display ?? c.defaultTitle, omittable: reason !== null && !keep, reason };
+function effectiveChapters(plan) {
+  return plan.chapters.map((c) => {
+    const sk = plan.skeletons.get(c.id);
+    return { ...c, reason: sk?.notApplicable ?? null };
   });
-  const names = out.map(c => normalizeHeading(c.title));
-  names.forEach((n, i) => {
-    if (names.indexOf(n) !== i) say(`的「### ${out[i].id}」展示标题「${out[i].title}」与「${out[names.indexOf(n)].id}」重名——章标题在 Story 里要唯一`);
-  });
-  return out;
 }
 
 /**
- * 成文命令按本需求的有效章表工作：写作设计读得了，就把这一次上下文里的章表换成有效章表（章序、展示标题、省略标记），
- * 读不了保持默认职责。只在命令入口调一次；不在上下文构造时读写作设计。
+ * 成文命令按章节合同的固定十章工作，并附带写作设计里各章的不涉及理由；
+ * 写作设计读不了时保持合同默认章表。只在命令入口调一次；不在上下文构造时读写作设计。
  */
 export function useEffectiveChapters(ctx) {
   const plan = readWritingPlan(ctx);
   if (plan.effective && !plan.problems.length) {
-    ctx.defaultChapters ??= ctx.contract.chapters;
     ctx.contract = { ...ctx.contract, chapters: plan.effective };
   }
   return plan;
@@ -200,9 +183,10 @@ function parseForm(value, named = {}) {
 /** `## 骨架` 这一部分：逐行归到章与小节，缺口一次报全，再把形式交给 `addPick`。 */
 function readSkeleton(plan, lines, range, fenced, say) {
   const known = new Map(plan.chapters.map(c => [c.id, c]));
+  const orderIndex = new Map(plan.chapters.map((c, i) => [c.id, i]));
   const blank = () => ({ notes: [], forms: [], sections: [] });
   const same = (list, title) => list.some(s => normalizeHeading(s.title) === normalizeHeading(title));
-  let ch = null, parent = null, node = null;
+  let ch = null, parent = null, node = null, lastOrder = -1, lastId = '';
   const where = () => `「### ${ch.id}${node ? `·${node.title}` : ''}」`;
   for (let at = range.from; at < range.to; at++) {
     const line = fenced.has(at) ? '' : lines[at].trim();
@@ -213,7 +197,16 @@ function readSkeleton(plan, lines, range, fenced, say) {
       ch = null; parent = null; node = null;
       if (!known.has(id)) say(`的「### ${id}」不是章节合同里的章 ID（${[...known.keys()].join('、')}）——骨架按合同章 ID 分章`);
       else if (plan.skeletons.has(id)) say(`的「### ${id}」出现了两次——一章一段骨架`);
-      else plan.skeletons.set(id, (ch = { id, ...blank(), notApplicable: null }));
+      else {
+        const idx = orderIndex.get(id);
+        if (idx < lastOrder) {
+          say(`的「### ${id}」排在「### ${lastId}」之后，违反固定十章顺序——骨架须按章节合同顺序排列（${plan.chapters.map(c => c.id).join(' → ')}），不得换序`);
+        } else {
+          lastOrder = idx;
+          lastId = id;
+        }
+        plan.skeletons.set(id, (ch = { id, ...blank(), notApplicable: null }));
+      }
       continue;
     }
     if (!ch) continue;              // 第一个章 ID 之前的说明，或认不出的章 ID 下面的行（那条已报）
@@ -256,8 +249,8 @@ function readSkeleton(plan, lines, range, fenced, say) {
       if (open) plan.rechecks.push({ chapter: ch.id, at: node?.title ?? '', text: open[1].trim() });
       const skip = !node && LINE.notApplicable.exec(note);
       if (skip) ch.notApplicable = skip[1].trim();
-      const shown = !node && LINE.display.exec(note);
-      if (shown) ch.display = shown[1].trim();
+      const shown = !node && LINE.retiredDisplay.exec(note);
+      if (shown) say(`的「### ${ch.id}」写了已退出的「展示标题：${shown[1].trim()}」——Story 固定十章名与章序由章节合同定，不得改名、换序或省章`);
     }
   }
   for (const [id, c] of known) {

@@ -46,10 +46,10 @@ def _material_record(feature_root: Path, contract: dict, args: argparse.Namespac
     if settled and settled["outcome"] == "accepted":
         raise FlowError(f"本轮材料已经确认过了（{settled['chosen']}）——材料再变会开新一轮，"
                         "那时才轮到重新表态；现在按 `status` 的 next 往下走")
-    ask = asks.current_material(feature_root, args.ask)
+    current = contract["rounds"][-1]
+    ask = asks.current_material(feature_root, args.ask, expected_round=current.get("round"))
     options = ask["options"]
     picked = asks.pick_explicit(options, reply, ask["ask_id"])
-    current = contract["rounds"][-1]
 
     outcome, reason, code = "accepted", None, 0
     if picked["key"] in MATERIAL_REQUEST_KEYS:

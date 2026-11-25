@@ -26,11 +26,11 @@ export function draftPath(ctx, index, title) {
     `${String(index + 1).padStart(2, '0')}-${title}.md`);
 }
 
-/** 一章的草稿：按它的职责定位（默认章序与合同章名），展示标题改了、章序调了都还是这一份。 */
+/** 一章的草稿：按章节合同顺序与章名定位。 */
 export function draftFor(ctx, ch) {
-  const defaults = ctx.defaultChapters ?? ctx.contract.chapters;
+  const defaults = ctx.contract.chapters;
   const at = defaults.findIndex(c => c.id === ch.id);
-  return draftPath(ctx, at < 0 ? 0 : at, ch.defaultTitle ?? ch.title);
+  return draftPath(ctx, at < 0 ? 0 : at, ch.title);
 }
 
 /**
@@ -156,7 +156,7 @@ export function writeDrafts(ctx, facts, chapterState, plan) {
   ctx.contract.chapters.forEach((ch) => {
     const file = draftFor(ctx, ch);
     const key = normalizeHeading(ch.title);
-    const waiting = pending.has(key) || pending.has(normalizeHeading(ch.defaultTitle ?? ch.title));
+    const waiting = pending.has(key);
     const done = chapterState?.hasStory && !waiting;
     const planned = usable ? { ...ch, structure: selectedStructure(plan, ch.id) } : ch;
     const picked = usable && plan.skeletons.has(ch.id);

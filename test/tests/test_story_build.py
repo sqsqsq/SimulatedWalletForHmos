@@ -3017,13 +3017,14 @@ class TheCommandLineIsCheckedFirst(SkeletonPreflightCase):
         code, out = self.run_build("chapter", "--help")
         self.assertIn("--chapter <章 ID 或章名>  必需", out)
         self.assertIn("--from <文件>", out)
-        self.assertIn("--omit", out)
+        self.assertNotIn("--omit", out)
         self.assert_wrote_nothing(before)
 
     def test_bad_usage_stops_before_anything_runs(self) -> None:
         before = self.files_now()
         cases = {
             "不认识的选项 --form": ["skeleton", *self.common(), "--form", "x.md"],
+            "不认识的选项 --omit": ["chapter", *self.common(), "--chapter", "02-terms", "--omit"],
             "不认识的选项 --delvier": ["check", *self.common(), "--delvier"],
             "--from 后面缺值": ["chapter", *self.common(), "--chapter", "背景", "--from"],
             "--from 后面缺值（": ["chapter", *self.common(), "--from", "--chapter", "背景"],

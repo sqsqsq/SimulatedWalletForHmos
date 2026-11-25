@@ -254,8 +254,8 @@ def current_design(feature_root: Path) -> dict | None:
     return payload
 
 
-def current_material(feature_root: Path, ask_id: str) -> dict:
-    """`decide --gate material_scope` 取本次问法：侧车在、ask_id 对得上、问的就是材料。"""
+def current_material(feature_root: Path, ask_id: str, expected_round: int | None = None) -> dict:
+    """`decide --gate material_scope` 取本次问法：侧车在、ask_id 对得上、属于当前轮且问的就是材料。"""
     ask = _read(feature_root)
     if not isinstance(ask, dict):
         raise FlowError("没有待回答的问法：先跑 `story_flow.py status`，把它给出的问法原样摆给人，"
@@ -265,6 +265,9 @@ def current_material(feature_root: Path, ask_id: str) -> dict:
                         "按 `status` 给出的当前问法重新问人")
     if ask.get("kind") != MATERIAL_KIND or ask.get("gate") != MATERIAL_KIND:
         raise FlowError(f"当前问法是 {ask.get('kind') or ask.get('gate')}，这一笔记的是材料确认")
+    if expected_round is not None and ask.get("round") != expected_round:
+        raise FlowError(f"问法 {ask.get('ask_id')} 属于第 {ask.get('round')} 轮，当前已是第 {expected_round} 轮："
+                        "新轮材料须重新跑 `status` 生成本轮问法并确认，不沿用前轮问法或通过态")
     if _identity(ask) != str(ask.get("ask_id") or ""):
         raise FlowError("当前问法的内容与 ask_id 对不上（文件被改过）：重跑 `status` 重新生成")
     return ask

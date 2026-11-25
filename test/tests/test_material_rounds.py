@@ -588,7 +588,7 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
         self.assertNotIn("mapped_by", gate, "记录里不该再有模型映射来源")
 
     def test_a_sign_without_the_current_ask_is_refused(self) -> None:
-        """AC11：没问过、或问法换过了，人签写不进契约。"""
+        """AC11 + 2.0.6 S03：没问过、问法换过，或跨轮残留的旧轮次问法，人签均写不进契约。"""
         self.round_now()
         self.gaps()
         proc = self.run_flow("decide", "--gate", "material_scope", "--ask", "deadbeef",
@@ -596,10 +596,17 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
         self.assertEqual(1, proc.returncode)
         self.assertIn("没有待回答的问法", self.out_of(proc))
         self.status()
+        old_ask_id = self.ask()["ask_id"]
         proc = self.run_flow("decide", "--gate", "material_scope", "--ask", "deadbeef",
                              "--reply", "2")
         self.assertEqual(1, proc.returncode)
         self.assertIn("不是当前问法", self.out_of(proc))
+        # 新补料开启第 2 轮后，仍拿第 1 轮留存的 .ask.json 编号来签，必须按轮次拒绝
+        self.add_ux("round2-only.png")
+        self.round_now()
+        stale = self.run_flow("decide", "--gate", "material_scope", "--ask", old_ask_id, "--reply", "2")
+        self.assertEqual(1, stale.returncode, self.out_of(stale))
+        self.assertIn("属于第 1 轮，当前已是第 2 轮", self.out_of(stale))
 
     def test_a_fragment_of_a_label_is_not_an_explicit_choice(self) -> None:
         """片段命中不算人的选择：只认编号或整句照抄标签，不替人把半句话映射成整项批准。"""

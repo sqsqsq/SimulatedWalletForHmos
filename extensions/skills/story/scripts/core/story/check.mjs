@@ -18,7 +18,8 @@ import {
 } from './context.mjs';
 import { deliveryNextSteps, deliveryProblems } from './delivery.mjs';
 import {
-  EMPTY_SECTION_TEXT, normalizeHeading, parseChapter, placeholderProblems, storySections, tableCells, zonesByLine,
+  EMPTY_SECTION_TEXT, headingNumberProblems, normalizeHeading, parseChapter, placeholderProblems, storySections,
+  tableCells, zonesByLine,
 } from './document.mjs';
 import { strayReadingLinks } from './figure-view.mjs';
 import { imageProblems } from './images.mjs';
@@ -49,7 +50,7 @@ function groupedProblems(problems, marks) {
  *
  * @returns {{problems: string[], marks: {from: number, label: string}[], notes: string[], chapters: number}}
  */
-export function storyCheck(ctx, { registration = true } = {}) {
+export function storyCheck(ctx, { registration = true, numbered = false } = {}) {
   // 起步先判台账在不在：删掉一件再跑，后面每一条判据都只是「依据不全」的余波。
   requireLedgers(ctx);
   const problems = [];
@@ -73,8 +74,8 @@ export function storyCheck(ctx, { registration = true } = {}) {
     return parsed.get(title);
   };
   const titles = sections.map(s2 => s2.title);
-  // 本需求的有效章表：章序与展示标题按写作设计；写了不涉及的章可以不出现（出现也按它的位置认）
-  const want = ctx.contract.chapters.filter(c => !c.omittable || titles.includes(normalizeHeading(c.title))).map(c => c.title);
+  // 固定十章名与章序按章节合同，不得改名、换序或省章
+  const want = (ctx.contract.chapters ?? []).map(c => c.title);
 
   mark('⓪a 声明的来源都在');
   {
@@ -92,14 +93,14 @@ export function storyCheck(ctx, { registration = true } = {}) {
   if (plan) problems.push(...plan.problems);
 
   mark('① 章标题与顺序');
-  // ① 章标题与顺序 = 合同（章数由合同定，这里不写死）；空节恰为「本需求不涉及。」
+  // ① 章标题与顺序 = 合同固定十章（章数由合同定，这里不写死）；空节恰为「本需求不涉及。」
   if (titles.join(String.fromCharCode(10)) !== want.join(String.fromCharCode(10))) {
     const missing = want.filter(t => !titles.includes(t));
     const extra = titles.filter(t => !want.includes(t));
     problems.push(`story.md：章节标题与合同不一致：${missing.length ? `缺 ${missing.join('、')}` : ''}`
       + `${extra.length ? ` 多 ${extra.join('、')}` : ''}`
       + `${!missing.length && !extra.length ? '（顺序不对）' : ''}`
-      + '——章按章节合同登记的标题与顺序认，逐章落盘也按这些章锚定位');
+      + '——章按章节合同登记的固定十章标题与顺序认，逐章落盘也按这些章锚定位');
   }
 
   mark('①b 大标题带需求编号');
@@ -118,6 +119,11 @@ export function storyCheck(ctx, { registration = true } = {}) {
       + `直接改 AR/story.md 第 1 行，写成 \`# ${ctx.args.feature} <需求名>\`；大标题不在任何章里，不经 chapter 提交`);
   }
 
+  mark('①c 定稿标题字面编号');
+  if (numbered) {
+    problems.push(...headingNumberProblems(storyText, ctx.contract.chapters ?? [], ctx.contract.heading_counters ?? []));
+  }
+
   mark('③ 验收编号落在验收章');
   // ③ 验收编号的**全集**：哪个编号出现过、它在不在验收章。这一条要读全篇，
   //    留在这里；**仓内工作编号那一条不在这里判**——它是章内的事，由 chapterProblems
@@ -126,7 +132,7 @@ export function storyCheck(ctx, { registration = true } = {}) {
   //
   // 合同里的形态正则编译一次，坏的当场报出来：写错一条就静默不判的话，门禁全绿。
   problems.push(...(ctx.idShapes?.problems ?? []));
-  // 验收章按职责认（合同 `acceptance`），标题是本需求的展示标题，不按字面「验收」找
+  // 验收章按职责认（合同 `acceptance`），标题取合同章名，不按字面「验收」找
   const acceptanceChapter = ctx.contract.chapters.find(c => c.acceptance);
   const acceptanceSec = acceptanceChapter
     ? sections.find(s => normalizeHeading(s.title) === normalizeHeading(acceptanceChapter.title)) : null;
@@ -272,8 +278,11 @@ export function storyCheck(ctx, { registration = true } = {}) {
 }
 
 export async function cmdCheck(ctx, { registering = Boolean(ctx.args.registering) } = {}) {
-  // 登记自己跑的那一次不核「登记之后改过没有」：它要换掉的正是旧登记
-  const { problems, marks, notes, chapters } = storyCheck(ctx, { registration: !registering });
+  // 登记自己跑的那一次不核「登记之后改过没有」：它要换掉的正是旧登记；登记前核与交付门核定稿标题字面编号
+  const { problems, marks, notes, chapters } = storyCheck(ctx, {
+    registration: !registering,
+    numbered: Boolean(registering || ctx.args.deliver),
+  });
   // ⑭ 交付门：只有 `check --deliver` 判。按**动作**分而不按文件在不在推断阶段：
   // 登记前与返修中跑的是普通 check，那时审查还没发生；交付跑 `--deliver`，那时登记与审查该已成立。
   if (ctx.args.deliver) {

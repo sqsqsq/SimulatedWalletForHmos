@@ -576,15 +576,16 @@ class TheDispatchCarriesTheReviewIdentity(TheStoryIsReviewedRegisteredAndDeliver
         self.assertEqual("fail", self.result()["result"], "新位置还空着，原有效 fail 被撤销")
 
 
-class AWrittenStoryFollowsItsPlanThroughRegistration(TheStoryIsReviewedRegisteredAndDeliveredCase):
-    """已经成文登记的 Story，写作设计后来改了验收章的展示标题、又把两章换了位置：重交那一章、编号按有效章序移动章块，
-    全篇检查按职责认验收章，重新审查并登记都成立；章内正文与评审记录的人工区不动。"""
+class AWrittenStoryKeepsFixedChaptersAndNumberingThroughRegistration(TheStoryIsReviewedRegisteredAndDeliveredCase):
+    """登记后再改单章（第 6 章、第 8 章及小节）会失号：交付门与登记前核按定稿字面编号拦住；
+    重新 prepare（补号并定稿）→ 独立审查 → 再登记全部恢复，且审查任务书带入阅读质量判法。"""
 
-    ACCEPTANCE = ("## 完成条件与验证\n\n| 编号 | 验收点 | 可观察的通过条件 |\n|---|---|---|\n"
+    FEATURES = ("## 功能说明\n\n### 入口与操作\n\n提交动作带原请求身份，界面按云侧回执显示受理状态。\n")
+    ACCEPTANCE = ("## 验收\n\n### 核心验收\n\n| 编号 | 验收点 | 可观察的通过条件 |\n|---|---|---|\n"
                   "| AC-01 | 提交后看到回执 | 云侧回执到达后界面显示受理单编号 |\n")
 
     def tag_chapters(self) -> None:
-        """夹具成稿早于章锚：按现行 skeleton 的写法，在每章标题前补上它的章锚（章 ID 按合同默认章序）。"""
+        """夹具成稿早于章锚：按现行 skeleton 的写法，在每章标题前补上它的章锚（章 ID 按合同固定十章）。"""
         ids = [c["id"] for c in json.loads((DEV_EXT / "skills/story/contracts/story-chapters.json").read_text(encoding="utf-8"))["chapters"]]
         lines, out, k = self.story.read_text(encoding="utf-8").split("\n"), [], 0
         for line in lines:
@@ -594,40 +595,60 @@ class AWrittenStoryFollowsItsPlanThroughRegistration(TheStoryIsReviewedRegistere
             out.append(line)
         self.story.write_text("\n".join(out), encoding="utf-8")
 
-    def test_a_retitled_acceptance_and_swapped_chapters_are_moved_checked_and_registered(self) -> None:
+    def test_post_registration_chapter_edits_require_renumbering_and_rereview(self) -> None:
         self.tag_chapters()
         self.reviewed("pass")
         first = self.register()
         self.assertEqual(0, first.returncode, first.stdout + first.stderr)
-        plan = self.flow_path.parent / "story-template.md"
-        text = plan.read_text(encoding="utf-8").replace(
-            "### 08-acceptance\n", "### 08-acceptance\n- 展示标题：完成条件与验证\n", 1)
-        six, seven = text.index("### 06-features\n"), text.index("### 07-exceptions\n")
-        block6, block7 = text[six:seven], text[seven:text.index("### 08-acceptance\n")]
-        plan.write_text(text[:six] + block7 + block6 + text[seven + len(block7):], encoding="utf-8")
-        before = self.story.read_text(encoding="utf-8")
-        features = before.split("<!-- story-build:chapter 06-features -->", 1)[1].split("<!-- story-build:chapter 07-exceptions -->", 1)[0]
-        draft = self.flow_path.parent / "drafts" / "08-验收.md"
-        draft.parent.mkdir(parents=True, exist_ok=True)
-        draft.write_text(self.ACCEPTANCE, encoding="utf-8")
-        put = self.run_node("chapter", "--chapter", "08-acceptance", "--from", str(draft))
-        self.assertEqual(0, put.returncode, put.stdout + put.stderr)
-        numbered = self.run_node("number")
-        self.assertEqual(0, numbered.returncode, numbered.stdout + numbered.stderr)
-        self.assertIn("移动了章块", numbered.stdout)
+
+        # 登记后用 chapter 改第 6 章和第 8 章（不带编号的草稿），两章标题与小节立即失号
+        drafts = self.flow_path.parent / "drafts"
+        drafts.mkdir(parents=True, exist_ok=True)
+        d6 = drafts / "06-功能说明.md"
+        d8 = drafts / "08-验收.md"
+        d6.write_text(self.FEATURES, encoding="utf-8")
+        d8.write_text(self.ACCEPTANCE, encoding="utf-8")
+        for cid, df in (("06-features", d6), ("08-acceptance", d8)):
+            put = self.run_node("chapter", "--chapter", cid, "--from", str(df))
+            self.assertEqual(0, put.returncode, put.stdout + put.stderr)
+
+        # 登记前核（registration-check）与交付门（check --deliver）都应拦住未编号的 6/8 章及小节
+        reg_check = self.run_node("registration-check")
+        self.assertEqual(1, reg_check.returncode, reg_check.stdout + reg_check.stderr)
+        reg_payload = json.loads(reg_check.stdout)
+        self.assertFalse(reg_payload["ok"])
+        check_detail = reg_payload["steps"][0]["detail"]
+        self.assertIn("定稿标题字面编号", check_detail)
+        self.assertIn("6. 功能说明", check_detail)
+        self.assertIn("6.1 入口与操作", check_detail)
+        self.assertIn("8. 验收", check_detail)
+        self.assertIn("8.1 核心验收", check_detail)
+
+        deliver = self.run_node("check", "--deliver")
+        self.assertEqual(1, deliver.returncode, deliver.stdout + deliver.stderr)
+        self.assertIn("定稿标题字面编号", deliver.stdout + deliver.stderr)
+
+        # 走 prepare 重新定稿补号，生成的审查任务书带入阅读质量判法关键句
+        prep = self.prepare()
+        task_text = (self.root / prep["task"]).read_text(encoding="utf-8")
+        self.assertIn(
+            "先看目录，定位当前业务条件或责任；沿主载体读出发生了什么、何时失败、怎样恢复。"
+            "指出哪段图前已讲完流程、哪条图后说明只复述箭头，或哪一个图外例外被删掉会让人选错。"
+            "给出具体位置、读者受到的影响及负责修改的位置。",
+            task_text,
+        )
         story = self.story.read_text(encoding="utf-8")
-        heads = [line for line in story.splitlines() if line.startswith("## ")]
-        self.assertEqual(["异常与恢复", "功能说明"], [h.split(". ", 1)[1] for h in heads[5:7]], heads)
-        self.assertEqual("## 8. 完成条件与验证", heads[7])
-        prose = [line for line in features.splitlines() if line.strip() and not line.startswith("#")]
-        self.assertTrue(prose and all(line in story for line in prose), "移动章块改了章内正文（编号随章号重编之外）")
-        checked = self.check()
-        out = checked.stdout + checked.stderr
-        self.assertNotIn("承担验收的那一章", out, out)
-        self.assertNotIn("章标题与顺序", out, out)
+        self.assertIn("## 6. 功能说明", story)
+        self.assertIn("### 6.1 入口与操作", story)
+        self.assertIn("## 8. 验收", story)
+        self.assertIn("### 8.1 核心验收", story)
+
+        # 完成独立审查后再登记与交付门均通过
         self.reviewed("pass")
         again = self.register()
         self.assertEqual(0, again.returncode, again.stdout + again.stderr)
+        deliver_ok = self.run_node("check", "--deliver")
+        self.assertEqual(0, deliver_ok.returncode, deliver_ok.stdout + deliver_ok.stderr)
 
 
 class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
@@ -712,9 +733,10 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
         task = self.task_text()
         for rel in (self.SR, self.IMAGE, self.CORRECTIONS):
             self.assertIn(f"`{rel}`", task)
-        self.assertIn(f"`{self.SR}` —— 设计未见引用的阅读稿 {self.sr_rel}（核是有据不用，还是漏了依据）", task)
+        self.assertIn(f"`{self.SR}` —— 未采用库存阅读稿 {self.sr_rel}（保留版本绑定，有疑点时回查）　（按问题回查）", task)
         self.assertIn("人答原件（必读：当时的问法与原话）", task, "必读人答没进独立审查的核源集合")
         self.assertIn("作者登记不用：旧版签约页，本需求不改签约页", task)
+        self.assertNotIn("核设计为何引用或不用", task, "S05 退出要求逐份证明设计为何不用未采用库存")
 
     def test_a_missing_meeting_correction_is_named_not_dropped(self) -> None:
         """会议版本在、纠偏留痕或阅读件缺了：准备审查报缺件、点名那份文件，不缩成更小的必审集合。"""
@@ -775,7 +797,7 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
         self.assertEqual("input_invalid", self.result()["result"])
 
     def test_the_adopted_version_stays_beside_a_newer_version(self) -> None:
-        """产品需求取得了新版本：设计采用的那一版仍是设计权威；新版本单独列作设计未见引用的阅读稿，核是有据不用还是漏了依据。"""
+        """产品需求取得了新版本：设计采用的那一版仍是必读权威；新版本保留在固定对象中作未采用库存按疑点回查，字节变化仍换材料键。"""
         prd = ".backups/local/RR/prd-直接-v1.md"
         self.assertIn(f"`{self.FEATURE}/{prd}` —— 设计采用的阅读稿 {prd}", self.task_text())
         current = self.root / self.FEATURE / "RR" / "prd.md"
@@ -783,7 +805,7 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
         self.put({})
         task = self.task_text()
         new = "RR/prd.md"     # 当前版本的阅读稿就是原处的直接原文
-        self.assertIn(f"`{self.FEATURE}/{new}` —— 设计未见引用的阅读稿 {new}（核是有据不用，还是漏了依据）", task)
+        self.assertIn(f"`{self.FEATURE}/{new}` —— 未采用库存阅读稿 {new}（保留版本绑定，有疑点时回查）　（按问题回查）", task)
         self.assertIn(f"`{self.FEATURE}/{prd}` —— 设计采用的阅读稿 {prd}", task)
         self.assertIn("设计引证 v1，取得的 v2 未见引用", task, "材料表让最新取得的一版冒充了设计采用")
 
@@ -1625,15 +1647,58 @@ class ReviewTaskReachesTheVerifierPart3(ReviewTaskReachesTheVerifierCase):
             self.assertIn(needle, method, f"判据里没有「{needle}」")
         self.assertNotIn("acceptance.yaml", method, "Story 判据还指着 Spec 的验收文件")
 
-    def test_consistency_is_judged_on_two_layers(self) -> None:
-        """原始决定对设计、设计对人读件各核一层：人读件忠实复述了与原始决定相反的蓝图主张，仍是阻断。"""
+    def test_consistency_is_narrowed_to_story_fidelity_and_real_upstream_conflicts(self) -> None:
+        """2.0.6 S05：退出旧「一致性分两层核」普遍重开蓝图取舍；收窄为 Story 写作逻辑/可读性与有效事实、授权及目标的忠实度，
+        偶遇设计自身明确实质冲突时仍指出出处、影响与蓝图负责方。"""
         method = self.overlay_method()
-        for needle in ("一致性分两层核", "原始决定（材料原文、会议原话、人的原话与评审回流）与蓝图的设计是否一致",
-                       "蓝图的设计与 Story", "仍是阻断发现，修正责任写回蓝图负责方",
+        for retired in ("一致性分两层核", "两层各自成立才算一致", "核设计为何引用或不用"):
+            self.assertNotIn(retired, method, f"旧机制「{retired}」仍未退出 story-reader-rules.yaml")
+        for needle in ("不例行重开已审设计取舍", "设计自身与有效事实/授权的明确实质冲突", "设计负责方",
                        "结果未知", "脱敏值", "云侧的业务状态", "实际接入者"):
             self.assertIn(needle, method)
         task = self.inject()
-        self.assertEqual(1, task.count("一致性分两层核"), "判据原文在任务里装配了不止一次")
+        self.assertNotIn("一致性分两层核", task)
+        self.assertNotIn("核设计为何引用或不用", task)
+        self.assertIn("按问题回查", task)
+
+    def test_unadopted_reading_draft_stays_byte_bound_without_mandatory_read_and_dispatch_carries_s05_sentence(self) -> None:
+        """2.0.6 S05 Q2：未采用库存阅读稿在审查对象中保留字节绑定（改字节仍令 materialKey 变化）但 required_read=false；
+        同一文件若同时被必读角色引用，以更强义务覆盖为 required_read=true；派审载体带齐 S05 关键句。"""
+        # 1. reviewObject：未采用阅读稿 required_read=False，改字节后 materialKey 变化
+        unadopted = self.root / "doc/features" / FEATURE / "SR/design.md"
+        unadopted.parent.mkdir(parents=True, exist_ok=True)
+        unadopted.write_text("# 未采用系统设计\n\n第一版。\n", encoding="utf-8")
+        src = self.root / "doc/features" / FEATURE / "AR/story-src"
+        (src / "materials.json").write_text(json.dumps({
+            "schema": 5, "sources": [], "inbox": [],
+            "materials": [{"kind": "doc", "paths": ["SR/design.md"]}],
+            "origins": [{"class": "SR", "readable_paths": ["SR/design.md"]}],
+            "files": [],
+        }, ensure_ascii=False), encoding="utf-8")
+        probe = (
+            "const m = await import(process.argv[1]);"
+            "const obj = m.reviewObject(process.argv[2], process.argv[3]);"
+            "const key = m.materialKey(process.argv[2], obj.rows);"
+            "process.stdout.write(JSON.stringify({ rows: obj.rows, key }));"
+        )
+        module = (DEV_EXT / "skills/story/scripts/core/story/review-object.mjs").resolve().as_uri()
+        r1 = subprocess.run(["node", "--input-type=module", "-e", probe, module, str(self.root), FEATURE],
+                            capture_output=True, text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(0, r1.returncode, r1.stderr)
+        d1 = json.loads(r1.stdout)
+        sr_row = next((r for r in d1["rows"] if r["path"].endswith("SR/design.md")), None)
+        self.assertIsNotNone(sr_row, d1["rows"])
+        self.assertFalse(sr_row["required_read"], "未采用阅读稿不应标为必读")
+        self.assertIn("保留版本绑定，有疑点时回查", sr_row["label"])
+        unadopted.write_text("# 未采用系统设计\n\n第二版。\n", encoding="utf-8")
+        r2 = subprocess.run(["node", "--input-type=module", "-e", probe, module, str(self.root), FEATURE],
+                            capture_output=True, text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(0, r2.returncode, r2.stderr)
+        d2 = json.loads(r2.stdout)
+        self.assertNotEqual(d1["key"], d2["key"], "未采用库存阅读稿字节变化必须令 materialKey 失效")
+        # 2. dispatch_text 带 S05 关键句（含拼接行归一化校验）
+        ind = re.sub(r"'\s*\n\s*\+\s*'", "", (DEV_EXT / "skills/story/scripts/core/story/independent-review.mjs").read_text(encoding="utf-8"))
+        self.assertIn("先说明单凭稿件能读懂的行为，再核它与有效事实、授权和目标的一致性。指出具体错句、影响和修正责任。设计自身的实质冲突给出出处；已审取舍不例行重开。", ind)
 
     def test_the_task_does_not_mention_a_publisher(self) -> None:
         """报告由调用方原样写出，没有钩子代它发布——任务书里不该还有那一环。"""

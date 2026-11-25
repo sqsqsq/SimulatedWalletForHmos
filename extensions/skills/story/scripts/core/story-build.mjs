@@ -39,7 +39,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { flowProblems } from './flow/check.mjs';
 import {
-  chapterTag, normalizeHeading, pendingChapters, pendingMark, renumberStory, reorderChapters, storySections,
+  chapterTag, normalizeHeading, pendingChapters, pendingMark, renumberStory, storySections,
 } from './story/document.mjs';
 import { writeDrafts } from './story/drafts.mjs';
 import {
@@ -67,10 +67,10 @@ const REVIEW_ACTIONS = ['prepare', 'check'];
 /** 命令与它做什么、要哪些命令参数（必需的写在 need）；解析与帮助读同一张表。无原型：只认表里自己的键。 */
 const COMMANDS = Object.assign(Object.create(null), {
   skeleton: { what: '预检流程、材料与设计来源，全过才建写作设计空壳、十章骨架与章草稿，并给出当前输入与下一步' },
-  chapter: { what: '把草稿里的一章原子替换进 AR/story.md，其余章一个字节不动；--omit 删掉写作设计定为不涉及的那一章',
-    need: ['--chapter'], opts: ['--from', '--omit'] },
+  chapter: { what: '把草稿里的一章原子替换进 AR/story.md，其余章一个字节不动',
+    need: ['--chapter'], opts: ['--from'] },
   project: { what: '附录机器区按当前真源（蓝图与它采用的来源）重投' },
-  number: { what: '给 AR/story.md 重编号：章序按本需求的有效章表（写作设计骨架的章序），小节与图题按出现顺序' },
+  number: { what: '给 AR/story.md 重编号：固定按章节合同十章顺排 1..10，小节与图题按出现顺序' },
   check: { what: '只读核对确定性不变量；加 --deliver 判能不能交付，加 --registering 按登记前口径核', opts: ['--deliver', '--registering', '--json'] },
   basis: { what: '输出这一刻的成文依据（一行 JSON），登记与路由用它' },
   'registration-check': { what: '登记前的组合只读核对：全篇检查（登记口径）→ 独立审查结果 → 成文依据，一个进程按序跑，输出一行 JSON' },
@@ -85,7 +85,6 @@ const OPTIONS = Object.assign(Object.create(null), {
   '--feature': ['<需求名>', '需求目录名（doc/features/<需求名>）'],
   '--project-root': ['<路径>', '工程根，不给时按入口所在工程'],
   '--chapter': ['<章 ID 或章名>', '要替换的章：章 ID（如 05-flow，章锚按它定位）或章名'],
-  '--omit': [null, '写作设计把这一章定为不涉及时，把它从 AR/story.md 删掉（已不在就不动）'],
   '--from': ['<文件>', '这一章的正文文件（草稿）'],
   '--deliver': [null, '交付门：在 check 之上再核登记、依据与独立审查结果'],
   '--registering': [null, '登记前核：story_flow.py story 登记时用'],
@@ -167,13 +166,8 @@ function parseArgs(argv) {
 function cmdNumber(ctx) {
   const before = readText(ctx.storyPath);
   if (before === null) fail(`AR/story.md：不在（${ctx.storyPath}）——编号作用在 skeleton 建出的 story 上`);
-  // 写作设计改了章序时，先按有效章序整块移动已成文的章（章锚定位，章内不动），再编号；
-  // 章号按本需求的有效章序、只数 Story 里实际有的章（省略的章不占号）
-  const moved = reorderChapters(before, (ctx.contract.chapters ?? []).map(c => c.id));
-  if (moved.problem) fail(`AR/story.md：${moved.problem}——章序没有调整，编号没有改`);
-  const present = new Set(storySections(moved.text).map(s2 => s2.title));
-  const after = renumberStory(moved.text, (ctx.contract.chapters ?? []).filter(c => present.has(normalizeHeading(c.title))),
-                              ctx.contract.heading_counters ?? []);
+  // 固定十章名与章序按章节合同顺排 1..10，不做章块重排、不跳号
+  const after = renumberStory(before, ctx.contract.chapters ?? [], ctx.contract.heading_counters ?? []);
   if (after === before) {
     process.stdout.write('[story-build number] 编号已经是对的，未改动\n');
     return;
@@ -181,8 +175,7 @@ function cmdNumber(ctx) {
   fs.writeFileSync(ctx.storyPath, after, 'utf-8');
   const was = before.split(/\r?\n/);
   const changed = after.split(/\r?\n/).filter((l, i) => l !== was[i]).length;
-  process.stdout.write(`[story-build number] ${moved.text !== before ? '按有效章序移动了章块，' : ''}`
-    + `重编号 ${changed} 行（章序按本需求的有效章表，节序按出现顺序，图序按全篇顺序）\n`);
+  process.stdout.write(`[story-build number] 重编号 ${changed} 行（章序按章节合同固定十章 1..10，节序按出现顺序，图序按全篇顺序）\n`);
 }
 
 // --------------------------------------------------------------------------
@@ -291,7 +284,7 @@ function cmdReview(ctx) {
     cmdProject(ctx);
     cmdNumber(ctx);
     discloseInStory(ctx);
-    const { problems } = storyCheck(ctx, { registration: false });
+    const { problems } = storyCheck(ctx, { registration: false, numbered: true });
     if (problems.length) fail(`结构检查没过，审查对象还没成形——先按 \`story-build check\` 的报错改：\n  · ${problems.join('\n  · ')}`);
   };
   finalize();
@@ -608,7 +601,7 @@ async function main() {
   }
   const ctx = createContext(args);
   if (args.command === 'view') return cmdView(ctx);
-  // 成文命令按写作设计的有效章表工作（章序、展示标题、省略）；设计还读不了就按默认职责
+  // 成文命令按章节合同的固定十章工作，并附带写作设计的不涉及理由；设计还读不了就按合同默认章表
   useEffectiveChapters(ctx);
   return withView(ctx, async () => {
     if (args.command === 'skeleton') cmdSkeleton(ctx);

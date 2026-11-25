@@ -178,7 +178,8 @@ export function chapterProblems(ctx, chapter, candidateBody, getView = null, whe
   if (pendingChapters(body).length) {
     out.push(`「${chapter.title}」：还带着待写 marker——它是骨架给这一章留的记号，带着它的章按「还没写」计`);
   }
-  out.push(...chapterStructureProblems(chapter, view));
+  // 骨架写明 `- 不涉及：<理由>` 的非附录章保留在原位、正文写简短依据，不强造合同默认表/图（红线与占位照核）
+  if (!chapter.reason || chapter.appendix) out.push(...chapterStructureProblems(chapter, view));
   out.push(...sectionShapeProblems(chapter.title, view));
   // 上游原件自己的编号不是仓内工作编号：原文里出现过的照常可以引用，不强制改号
   const upstream = ctx.idShapes?.drop?.length ? adoptedUpstreamTexts(ctx) : [];
@@ -264,19 +265,18 @@ export function nextSteps(ctx, storyText, result, { warnings = [], plan = null, 
   const basis = [];
   const carried = [];
   if (plan?.problems.length) {
-    rows.push(`NEXT: 先写整篇写作设计 ${planRel}——对照原材料、需求分析里的来源初筛、当前蓝图与记下的原话，`
-      + '写阅读主线与每章骨架；写完重跑'
+    rows.push(`NEXT: 先写整篇写作设计 ${planRel}——一级章沿合同，小节标题写成读者找得到的业务对象、状态、条件、责任或关系；`
+      + '先确定读者要判断什么，再看现有图表是否已经讲清，写阅读主线与每章骨架；写完重跑'
       + ` node ${shellArg(ctx.scriptPath)} skeleton --feature ${shellArg(ctx.args.feature)}`
       + ` --project-root ${shellArg(ctx.projectRoot)}`);
     rows.push(`INPUT: ${planRel}；${design}；材料 ${originals}；需求分析 `
       + `${relFromFeature(ctx, path.join(ctx.srcDir, 'init-analysis.md'))}；方法见 ${guide} 的「四、动笔前：先设计表达」`);
   } else if (left.length) {
     const title = left[0];
-    const at = (ctx.contract.chapters ?? []).findIndex(c => [c.title, c.defaultTitle]
-      .some(t => t && normalizeHeading(t) === normalizeHeading(title)));
+    const at = (ctx.contract.chapters ?? []).findIndex(c => normalizeHeading(c.title) === normalizeHeading(title));
     const draft = at < 0 ? draftPath(ctx, 0, title) : draftFor(ctx, ctx.contract.chapters[at]);
     rows.push(`NEXT: 写「${title}」（还剩 ${left.length} 章待写）`
-      + '——照草稿里的骨架写：先答每一节骨架里的问题，再补骨架没列的；'
+      + '——一级章沿合同，照草稿骨架写：关系交给图，条件组合交给表，单一理由用短段；图前一段交代场景、参与方与看图目的，图中讲清主关系，图后用简洁列表补图外条件、责任和例外，无额外信息时自然结束；'
       + `改完草稿跑 node ${shellArg(ctx.scriptPath)} chapter`
       + ` --feature ${shellArg(ctx.args.feature)} --chapter ${shellArg(ctx.contract.chapters[at]?.id ?? title)}`
       + ` --from ${shellArg(draft)} --project-root ${shellArg(ctx.projectRoot)}`);
@@ -287,8 +287,8 @@ export function nextSteps(ctx, storyText, result, { warnings = [], plan = null, 
     carried.push(...carryRows(ctx, plan, ctx.contract.chapters[at]?.id));
   } else {
     const work = readingWork(ctx.featureRoot);
-    rows.push('NEXT: 有效章节都写完了——回看：逐条处置下面的回看清单，问题回它的真源改（登记 open 或 settled、'
-      + '蓝图、写作设计骨架，正文改草稿再跑 chapter 提交），没问题不改；想再看一次就再跑 skeleton；'
+    rows.push('NEXT: 有效章节都写完了——回看：核一级章沿合同、小节标题清晰可定位、图前后不复述且不丢图外例外，沿「条件→行为→中间态→恢复→验收」核齐同一已定条件在受影响的正文、图和验收中的落点，'
+      + '并逐条处置下面的回看清单（已有设计明确而稿件漏写的直接改草稿提交，依据确实互斥或设计缺口回蓝图负责方，骨架错了改骨架；没问题不改；想再看一次再跑 skeleton）；'
       + '图源写定后按 doc/extensions/skills/story/reference/svg.md「值不值得做」判断每张图，值得的先做完同图增强并过源码审查'
       + (work.complete ? '' : `（已开始的还没做完：${work.next}）`)
       + '；处置完 story-build check 通过、准备独立审查（story-build review --action prepare --reader task|unavailable），再跑 python doc/extensions/skills/story/scripts/core/story_flow.py story'
@@ -353,11 +353,11 @@ function carryRows(ctx, plan, chapterId) {
  * 附录候选在内存投影 → 写前核对 → 替换目标区 → 接续。**核对在写盘之前**：
  * 判不过时 Story 与候选文件都不变，作者改草稿重跑就是。
  */
-/** `--chapter` 认哪一章：章 ID 优先，其次展示标题或合同章名；认不出报出全部可写的章。 */
+/** `--chapter` 认哪一章：章 ID 优先，其次固定合同章名；认不出报出全部可写的章。 */
 function chapterOf(ctx, asked) {
   const chapters = ctx.contract.chapters ?? [];
   const hit = chapters.find(c => c.id === asked)
-    ?? chapters.find(c => [c.title, c.defaultTitle].some(t => t && normalizeHeading(t) === normalizeHeading(asked)));
+    ?? chapters.find(c => normalizeHeading(c.title) === normalizeHeading(asked));
   if (!hit) {
     fail(`--chapter「${asked}」：合同里没有这一章——按章 ID 或章名认：`
       + `${chapters.map(c => `${c.id}（${c.title}）`).join('、')}`);
@@ -365,7 +365,7 @@ function chapterOf(ctx, asked) {
   return hit;
 }
 
-/** 这一章在 Story 里的区间：有章锚按章锚（职责 ID），没有按标题（展示标题或合同章名）；定不到返回 null。 */
+/** 这一章在 Story 里的区间：有章锚按章锚（职责 ID），没有按合同章名；定不到返回 null。 */
 function locate(story, chapter) {
   const byId = chapterSpanById(story, chapter.id);
   if (byId?.problem) fail(`AR/story.md：${byId.problem}——AR/story.md 没动`);
@@ -377,42 +377,16 @@ function locate(story, chapter) {
     }
     return byId;
   }
-  for (const t of [chapter.title, chapter.defaultTitle]) {
-    if (!t) continue;
-    const n = chapterAnchors(story, t);
-    if (n > 1) {
-      fail(`AR/story.md：有 ${n} 处「${t}」章标题（章锚）——替换按章定位，只会替掉第一处，另一处仍是旧的，读者会读到两遍`);
-    }
-    if (n === 1) return chapterSpan(story, t);
+  const n = chapterAnchors(story, chapter.title);
+  if (n > 1) {
+    fail(`AR/story.md：有 ${n} 处「${chapter.title}」章标题（章锚）——替换按章定位，只会替掉第一处，另一处仍是旧的，读者会读到两遍`);
   }
-  return null;
-}
-
-/**
- * 省略一章：写作设计把这一章定为不涉及（附录章与带审查状态的章不能省）时，把它连同章锚原子删掉；已不在就不动。
- * 删之前由作者判断过它在本需求确实不涉及，脚本只核写作设计里有那句理由。
- */
-function omitChapter(ctx, asked) {
-  const chapter = chapterOf(ctx, asked);
-  if (!chapter.omittable) {
-    fail(`「${chapter.id}」在写作设计里没有写不涉及${chapter.appendix || chapter.review_status ? '，而且它承担机器投影或审查披露，不能省' : ''}`
-      + '——省略一章先在写作设计那一章写 `- 不涉及：<理由>`，再跑 --omit');
-  }
-  const story = readRaw(ctx.storyPath);
-  if (story === null) fail('AR/story.md：不在——省略作用在 skeleton 建出的 story 上');
-  const span = locate(story, chapter);
-  if (!span) {
-    process.stdout.write(`[story-build chapter] 「${chapter.id}」已不在 AR/story.md 里，没有改动\n`);
-    return;
-  }
-  fs.writeFileSync(ctx.storyPath, story.slice(0, span.tagStart ?? span.start) + story.slice(span.end), 'utf-8');
-  process.stdout.write(`[story-build chapter] 已从 AR/story.md 删掉「${chapter.id}」（${chapter.reason}），其余章一个字节未动\n`);
+  return n === 1 ? chapterSpan(story, chapter.title) : null;
 }
 
 export function cmdChapter(ctx) {
   const asked = String(ctx.args.chapter ?? '').trim();
   if (!asked) fail('缺 --chapter <章 ID 或章名>：要替换哪一章');
-  if (ctx.args.omit) return omitChapter(ctx, asked);
   const from = ctx.args.from;
   if (!from) fail('缺 --from <文件>：这一章的内容写在文件里，不走命令行参数——'
     + '正文里有换行、引号与 markdown，任何 shell 都会再解析一遍；用法见 `story-build chapter --help`');

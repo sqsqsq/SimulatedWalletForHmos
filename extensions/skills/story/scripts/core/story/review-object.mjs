@@ -2,13 +2,12 @@
  * 独立审查的对象 —— 这一次交给审查者的全部材料，只在这里定义一份。
  *
  * 审查任务列它、原生请求把它作为目标逐字节绑定、材料键由它算、覆盖声明与发现定位对着它核：几处用同一份，审的就是要交付的那一份。
- * 待审的是 Story；其余是只读对照：写作设计、最近一次有效变更轮的评审输入原件、before/ 与 update-notes、
- * 会议记录（每版原文、纠偏留痕与阅读件）、
- * 设计采用的材料版本（蓝图需求条目与设计依据引用的本需求版本：原件、阅读正文、图、会议纠偏与阅读件）、冲突依据、
- * 当前人答原件（独立必读，不取决于设计有没有引用）、材料清单登记的全部原件与阅读稿（含设计未见引用的）和每个图片对象、
- * 当前蓝图与它的原生评审投影（设计参考）、蓝图契约引用的接口转写与映射、激活清单与知识原文、章节合同与判据。
- * 完整核源让审查能核作者为何采用或排除一份材料：作者的采用选择不缩小这个集合。
- * 流程契约、登记时刻、审查目录与历史报告不在其中：它们变了不改变被审内容。
+ * 待审的是当前 Story；其余是只读对照，区分**必读**与**绑定按疑点回查**：
+ * - 必读（`required_read: true`）：当前 Story、有效人答原话、当轮评审输入与动手前现场、会议原件/纠偏/阅读件、设计采用的必要承诺依据、冲突依据、写作设计与判据；
+ * - 绑定按疑点回查（`kind: 'text', read: false`）：未采用库存阅读稿、当前蓝图与评审投影、接口转写与映射、激活知识原文、工程引用文件；
+ * - 核在场与摘要（`kind: 'metadata', read: false`）：二进制原件、只取图原件、材料清单与人答记录。
+ * 同一路径若兼具更强的必读身份（如有效人答、当轮评审输入或采用依据），取最强阅读义务，不被「未采用库存」降级。
+ * 全部已登记原件与库存均保留路径与字节绑定，换版即换材料键、旧 PASS 不可移签；流程契约、登记时刻、审查目录与历史报告不在其中。
  *
  * 比较依据只产生一次（`comparisonContext`）：审查对象的行、读法任务与阶段审查的必审输入都取这一份，不再各自看 `flow.update.open`，
  * 也不各自按目录现状拼一遍。开着的这一轮与已收口的最近有效变更轮是同一份依据——收口只让这一轮从 open 变成 closed，
@@ -158,8 +157,12 @@ export function reviewObject(projectRoot, feature, { withTask = true, source = n
     if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {
       const p = rel(abs);
       const seen = rows.find(r => r.path === p);
-      if (seen) seen.required_read ||= read;
-      else rows.push({ path: p, role, label, kind, required_read: read });
+      if (seen) {
+        if (read && !seen.required_read) {
+          seen.required_read = true;
+          seen.label = label;
+        }
+      } else rows.push({ path: p, role, label, kind, required_read: read });
       if (canonical && canonical !== p) alias.set(p, canonical);
     } else if (required) problems.push(`${rel(abs)} 读不到（${label}）`);
   };
@@ -271,9 +274,10 @@ export function reviewObject(projectRoot, feature, { withTask = true, source = n
     for (const r of readable) {
       checkAdopted(r);
       const fixed = set.current?.get(r);
+      const isAdopted = adopted.has(r) || Boolean(fixed && adopted.has(fixed));
       add(at(r), 'source', adopted.has(r) ? `设计采用的阅读稿 ${r}`
         : fixed && adopted.has(fixed) ? `设计采用的阅读稿 ${r}（设计引用的是它此刻对应的稳定副本 ${fixed}）`
-          : `设计未见引用的阅读稿 ${r}（核是有据不用，还是漏了依据）`, true, { kind: 'text' });
+          : `未采用库存阅读稿 ${r}（保留版本绑定，有疑点时回查）`, true, { kind: 'text', read: isAdopted });
     }
   }
   // 设计采用的较早版本与会议纠偏/阅读件：材料清单只列各来源最新的一版原件与阅读稿，采用的那些在这里补齐

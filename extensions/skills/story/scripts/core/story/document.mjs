@@ -555,6 +555,22 @@ export function renumberStory(text, chapters = [], counters = []) {
   }).join('\n');
 }
 
+/**
+ * 最终文件标题字面编号核对：复用 `renumberStory` 与围栏识别，逐行比对围栏外 `##` 及以下标题。
+ * 缺号、错号或跳级号报出行号、实际标题与期望标题，交定稿（`story-build review --action prepare` / `number`）归位。
+ */
+export function headingNumberProblems(storyText, chapters = [], counters = []) {
+  const before = String(storyText ?? '').split(/\r?\n/);
+  const after = renumberStory(storyText, chapters, counters).split(/\r?\n/);
+  const fenced = maskOf(before, fenceRanges(before));
+  const out = [];
+  for (let i = 0; i < before.length; i += 1) {
+    if (fenced.has(i) || !/^#{2,}\s+/.test(before[i]) || before[i] === after[i]) continue;
+    out.push(`story.md 第 ${i + 1} 行标题缺号或号序不符：实际「${before[i]}」，应为「${after[i]}」——定稿编号由 \`story-build review --action prepare\`（或 \`story-build number\`）统一铺设`);
+  }
+  return out;
+}
+
 
 // --------------------------------------------------------------------------
 // 章与小节在全文里的位置
@@ -575,7 +591,7 @@ export function storySections(storyText) {
 }
 
 //: 章锚：skeleton 写在每章 `## ` 前一行的隐藏注释，记这一章承担的职责 ID（章节合同的章 ID）。
-//: 展示标题可以改，章锚不变；章提交、省略与编号按它定位，读者看不到它
+//: 固定十章名与章序由章节合同定；章提交与编号按它定位，读者看不到它
 const CHAPTER_TAG = /^<!-- story-build:chapter ([0-9A-Za-z][\w-]*) -->\s*$/;
 export const chapterTag = id => `<!-- story-build:chapter ${id} -->`;
 
@@ -668,35 +684,6 @@ export function chapterSpanById(storyText, id) {
   const k = h2s.findIndex(h => h.at === tags[0].heading);
   return { start: offsets[h2s[k].at], end: h2s[k + 1] ? offsets[spanEnd(doc, h2s[k + 1].at)] : text.length, title: h2s[k].name,
     tagStart: offsets[tags[0].line] };
-}
-
-/**
- * 按有效章序重排已成文的章：每章连同它的章锚整块移动，章内正文、图与小节一个字节不改。
- * 先核每个出现的章锚都唯一、紧挨章标题，且这些章块首尾相接（中间没有不带章锚的内容）；不成立返回 `{problem}`，不改。
- * 没有章锚的稿（还没走过 skeleton）原样返回。
- *
- * @returns {{text: string}|{problem: string}}
- */
-export function reorderChapters(storyText, ids) {
-  const text = String(storyText ?? '');
-  const blocks = [];
-  for (const id of ids) {
-    const span = chapterSpanById(text, id);
-    if (span?.problem) return { problem: span.problem };
-    if (span) blocks.push({ id, start: span.tagStart, end: span.end });
-  }
-  if (blocks.length < 2) return { text };
-  const placed = [...blocks].sort((a, b) => a.start - b.start);
-  for (let i = 1; i < placed.length; i += 1) {
-    if (placed[i].start !== placed[i - 1].end) {
-      return { problem: `章锚 ${placed[i - 1].id} 与 ${placed[i].id} 两章之间有不带章锚的内容——不知道它属于哪一章，不移动` };
-    }
-  }
-  if (placed.every((b, i) => b === blocks[i])) return { text };
-  const head = text.slice(0, placed[0].start);
-  const tail = text.slice(placed.at(-1).end);
-  const body = blocks.map(b => text.slice(b.start, b.end).replace(/\s+$/, '')).join('\n\n');
-  return { text: `${head}${body}${tail || '\n'}` };
 }
 
 /**
