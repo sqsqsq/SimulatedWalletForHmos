@@ -87,3 +87,5 @@ framework/harness/trace/*
 !framework/harness/trace/trace.schema.json
 !framework/harness/trace/gap-notes.template.md
 !framework/harness/state/
+/doc/usage.json.lock
+/doc/.usage.json.*.tmp
