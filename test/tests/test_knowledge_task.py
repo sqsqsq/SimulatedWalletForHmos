@@ -920,7 +920,8 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
 
 
     def test_object_registrations_keep_their_audience(self) -> None:
-        """manifest 1.1 的对象登记：摘要与受众照登记给出；索引不按受众筛，Feature 阶段的正文只送受众里有它的那几份。"""
+        """manifest 1.1 的对象登记：蓝图全量索引按登记给出受众与摘要；施工单位原生入口只列本单位相关项与 manifest.yaml 总入口，
+        且 Feature 阶段的正文只送受众里有它的那几份（受众挡住本单位相关项时在缺口里报冲突）。"""
         manifest = self.ext / "manifest.yaml"
         original = manifest.read_bytes()
         self.addCleanup(manifest.write_bytes, original)
@@ -934,17 +935,19 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
         manifest.write_bytes((text[:start] + objects + text[end:]).encode("utf-8"))
         plan = self.task("--feature", CU, "--action", "plan", "--audience", "author")
         self.assertEqual(0, plan.returncode, plan.stderr)
-        self.assertIn(f"`doc/extensions/{first}`", plan.stdout)
-        self.assertIn('登记：受众 "global"，摘要「部件是谁」', plan.stdout)
         index = plan.stdout.split("## 4. 激活知识：索引与本动作的原文", 1)[1].split("\n### ", 1)[0]
-        self.assertIn(f"`doc/extensions/{second}`", index, "受众只有 spec 的知识从 plan 的索引里消失了")
-        self.assertIn('登记：受众 ["spec"]，摘要「已有能力」', index)
-        self.assertEqual(len(self.registered()), sum(1 for l in index.splitlines() if l.startswith("- `doc/extensions/")))
+        self.assertIn("doc/extensions/manifest.yaml", index, "施工单位精简索引缺少按需回查总入口")
+        self.assertLess(sum(1 for l in index.splitlines() if l.startswith("- `doc/extensions/")),
+                        len(self.registered()), "施工单位 plan 阶段不应重复铺陈全量无关知识索引")
         self.assertNotIn(f"- 位置：`doc/extensions/{second}`", plan.stdout, "受众只有 spec 的知识正文送进了 plan")
-        spec = self.task("--feature", CU, "--action", "spec", "--audience", "author").stdout
-        self.assertIn(f"`doc/extensions/{second}`", spec)
         design = self.task("--blueprint", BLUEPRINT, "--action", "design", "--audience", "author").stdout
-        self.assertIn(f"`doc/extensions/{second}`", design, "蓝图设计要看全部登记的知识")
+        design_index = design.split("## 4. 激活知识：索引与本动作的原文", 1)[1].split("\n### ", 1)[0]
+        self.assertIn(f"`doc/extensions/{first}`", design_index)
+        self.assertIn('登记：受众 "global"，摘要「部件是谁」', design_index)
+        self.assertIn(f"`doc/extensions/{second}`", design_index, "蓝图设计要看全部登记的知识")
+        self.assertIn('登记：受众 ["spec"]，摘要「已有能力」', design_index)
+        self.assertEqual(len(self.registered()),
+                         sum(1 for l in design_index.splitlines() if l.startswith("- `doc/extensions/")))
 
 
 class TheBlueprintAuthorGetsTheCommonAcceptanceGap(unittest.TestCase):

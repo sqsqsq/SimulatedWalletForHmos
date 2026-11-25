@@ -253,8 +253,8 @@ function readSkeleton(plan, lines, range, fenced, say) {
       if (shown) say(`的「### ${ch.id}」写了已退出的「展示标题：${shown[1].trim()}」——Story 固定十章名与章序由章节合同定，不得改名、换序或省章`);
     }
   }
-  for (const [id, c] of known) {
-    if (!plan.skeletons.has(id) && !c.appendix) say(`的「## ${PARTS.skeleton}」缺「### ${id}」——骨架按合同逐章核，附录之外每章一段`);
+  for (const id of known.keys()) {
+    if (!plan.skeletons.has(id)) say(`的「## ${PARTS.skeleton}」缺「### ${id}」——骨架按合同固定十章逐章核，每章一段`);
   }
   for (const sk of plan.skeletons.values()) {
     const listed = sk.sections.length + sk.forms.length;

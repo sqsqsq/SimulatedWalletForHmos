@@ -807,7 +807,17 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
         new = "RR/prd.md"     # 当前版本的阅读稿就是原处的直接原文
         self.assertIn(f"`{self.FEATURE}/{new}` —— 未采用库存阅读稿 {new}（保留版本绑定，有疑点时回查）　（按问题回查）", task)
         self.assertIn(f"`{self.FEATURE}/{prd}` —— 设计采用的阅读稿 {prd}", task)
-        self.assertIn("设计引证 v1，取得的 v2 未见引用", task, "材料表让最新取得的一版冒充了设计采用")
+        self.assertIn("设计采用 v1，取得的 v2 未采用（按本稿疑点或冲突回查）", task, "材料表让最新取得的一版冒充了设计采用")
+        # S18：读者视图不再要求逐份证明未采用新版与未用图为何不采用；同时保留采用版本与材料键绑定
+        self.assertNotIn("为什么不用新版", task)
+        self.assertNotIn("没采纳的新值或冲突版本写了对比作用", task)
+        self.assertNotIn("图用没用、取舍成不成立", task)
+        # 校验未采用新版字节变化仍使先前审查结论失效（subject_stale），且正文中擅自采用未采用新版主张可回查固定原件
+        self.reviewed("pass")
+        self.assertEqual("pass", self.result()["result"])
+        current.write_bytes(current.read_bytes() + "\n新版再改了一句。\n".encode("utf-8"))
+        self.put({})
+        self.assertEqual("subject_stale", self.result()["result"])
 
     def test_a_changed_left_out_source_retires_the_report(self) -> None:
         self.reviewed("pass")
@@ -1543,7 +1553,7 @@ class ReviewTaskReachesTheVerifierPart2(ReviewTaskReachesTheVerifierCase):
         两处各写一遍时改一处另一处静默过期——而过期的那一份仍会被送到审查者手上。
         """
         method = self.overlay_method()
-        for needle in ("总览与局部加起来", "端到端过程", "分支去向", "理由成不成立",
+        for needle in ("总览与局部加起来", "端到端过程", "分支去向", "按本稿疑点回查",
                        "跨章对着读", "阻断发现", "**建议**", "空着与没审同形"):
             self.assertIn(needle, method, f"判据里没有「{needle}」")
         source = (self.root / "doc/extensions/hooks/shared/reader-review-task.mjs").read_text(encoding="utf-8")

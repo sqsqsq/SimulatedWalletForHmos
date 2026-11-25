@@ -24,7 +24,7 @@ Feature id 与阶段取当前阶段上下文里 Framework 给出的原生值，�
 标题带「预览，执行范围未冻结」的任务只是预览：本阶段的原生输入还没确定，不拿它动笔。只是查看知识不等于获准开始阶段；已获准开始本阶段时按顺序做：
 
 1. Feature 还没有范围候选：按 Framework 的 `framework/skills/reference/goal-mode-operations.md` 走原生 `goal-mode-entry --prepare-scope`，用真实需求与影响依据生成候选。
-2. 施工单位独立进入 spec 或 plan，本阶段的投影（spec 的 `acceptance.yaml`、plan 的 `contracts.yaml`）还不在本单位目录：冻结之前在 `framework/harness` 下跑
+2. 施工单位独立进入 spec 或 plan，本阶段的投影（spec 的 `acceptance.yaml`、plan 的 `contracts.yaml` 及有原生用例权威时的 `use-cases.yaml`）还不在本单位目录：冻结之前在 `framework/harness` 下跑
    `npx ts-node scripts/prepare-blueprint-design.ts --feature <Feature id> --phase <spec|plan> --project-root <工程根>`，只物化本阶段这一份（任务第 6 块会写明）。
    冻结记下的是当时的输入身份：冻结之后、或在 runtime 的 run 里，直接用原生解析的输入，不再准备。
 3. 候选可用：在 `framework/harness` 下用原生函数完成首阶段范围准备（机器写冻结记录，不手写）：

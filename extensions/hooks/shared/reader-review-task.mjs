@@ -281,10 +281,10 @@ export function readerReviewTask(projectRoot, feature, object = null) {
   rows.push('', '### 回看清单：作者逐条处置的对象，去向由你核', '',
     ...recheckRows(recheckItems(planCtx, plan, story)));
 
-  // 来源集合与作者任务包同一份渲染：附录材料表对着它核，不拿作者表自证完整。
+  // 来源集合按读者视角渲染：采用版本核对正文贡献，普通未采用新版/库存保留固定位置、按本稿疑点或冲突回查。
   rows.push('', '### 材料与来源（附录材料表对着它核）', '',
-    '逐行对着原件核「贡献」：写的是这份材料实际给了什么；没采纳的新值或冲突版本写了对比作用与裁决依据。', '',
-    ...originRows(planCtx));
+    '核采用版本的「贡献」与正文一致；普通未采用新版或库存不例行重开设计取舍，仅在正文存在具体疑点或实质冲突时回查固定版本。', '',
+    ...originRows(planCtx, { audience: 'reader' }));
 
   // 会议逐话题把会议判断、原话、人的裁决与当前结果并排：审查要对着原话判，不只读模型写的结果。
   // 位置逐版列实际存在的那些，纠偏留痕仍回原件看。
@@ -324,10 +324,10 @@ export function readerReviewTask(projectRoot, feature, object = null) {
 
   // 图**是什么、用没用、不用的理由**是这一次的数据；「怎么判」在上面的判据原文里。
   const images = imageRows(projectRoot, feature);
-  rows.push('', '### 材料里的图（这一次有哪几张）', '');
+  rows.push('', '### 材料里的图（这一次有哪几张）', '',
+    '核正文已采用的图与图文配合是否成立；未用图保留位置，仅在本稿存在具体疑点、缺图或实质冲突时回查。', '');
   if (images.gap) {
-    rows.push(`**输入有缺口**：${images.gap}。`
-      + '「图用没用、取舍成不成立」这一项未核：在回复里写明这处缺口与未核的范围。');
+    rows.push(`**输入有缺口**：${images.gap}。已用图核对未核：在回复里写明这处缺口与未核的范围。`);
   } else {
     rows.push(...(images.rows.length ? images.rows : ['材料清单里没有图片。']));
   }

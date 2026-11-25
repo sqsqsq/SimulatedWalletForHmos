@@ -747,13 +747,50 @@ class TheExpressionScaffolding(PlanCase):
         self.assertIn("- 附录的接口、数据、规约与材料取舍由你写", shell)
         self.assertIn("没有就不写", shell, "待核只在有时写")
 
-    def test_an_appendix_without_skeleton_is_not_reported(self) -> None:
+    def test_missing_appendix_in_filled_skeleton_is_reported(self) -> None:
         text = BASE
         start = text.index("### 10-appendix\n")
         nxt = text.find("\n### ", start + 1)
         self.write_plan(text[:start] + (text[nxt + 1:] if nxt >= 0 else ""))
         code, out = self.cmd("skeleton")
-        self.assertNotIn("10-appendix", out, out[-800:])
+        self.assertIn("缺「### 10-appendix」", out, out[-800:])
+        self.assertNotIn("NEXT: 写第一章", out, "缺 10-appendix 的已填骨架不得放行到写章")
+
+    def test_orphan_h4_heading_jump_is_blocked_in_check_and_prepare_while_valid_hierarchy_passes(self) -> None:
+        self.write_plan(BASE)
+        self.cmd("skeleton")
+        contract = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
+        for ch in contract["chapters"]:
+            body = (
+                "#### 独立业务小节\n\n未经过三级标题直接跳到四级标题。\n"
+                if ch["id"] == "01-background"
+                else minimal_body(ch["title"], f"「{ch['title']}」的正文。")
+            )
+            code, out = self.put(ch["id"], body)
+            self.assertEqual(0, code, (ch["id"], out))
+        code, out = self.cmd("number")
+        self.assertEqual(0, code, out)
+        for flag in ("--registering", "--deliver"):
+            code, out = self.cmd("check", flag)
+            self.assertEqual(1, code, (flag, out))
+            self.assertIn("标题层级跳级", out)
+            self.assertIn("缺少上一级（###）", out)
+            self.assertIn("#### 独立业务小节", out)
+        code, out = self.cmd("review", "--action", "prepare", "--reader", "task")
+        self.assertEqual(1, code, out)
+        self.assertIn("标题层级跳级", out)
+
+        # 补齐三级父标题形成合法 H2 -> H3 -> H4 后，编号与检查均通过
+        code, out = self.put("01-background", "### 业务背景\n\n#### 独立业务小节\n\n层级完整的背景正文。\n")
+        self.assertEqual(0, code, out)
+        code, out = self.cmd("number")
+        self.assertEqual(0, code, out)
+        story = self.story_path.read_text(encoding="utf-8")
+        self.assertIn("### 1.1 业务背景", story)
+        self.assertIn("#### 1.1.1 独立业务小节", story)
+        code, out = self.cmd("check", "--registering")
+        self.assertNotIn("标题层级跳级", out, out)
+        self.assertNotIn("标题缺号或号序不符", out, out)
 
 
 class TenChaptersHandOverToTheRecheck(PlanCase):

@@ -156,7 +156,7 @@ function mdLink(rel) {
  * 一组是作者表的一行候选：一份阅读稿，列齐合成它的全部原件与各自的内容摘要；
  * 版本有版号或会议版本时作者写那个，没有就写摘要。链接串相对 story，可以直接粘。
  */
-export function originRows(ctx) {
+export function originRows(ctx, { audience = 'author' } = {}) {
   const set = materialSet(ctx);
   if (set === null) return ['还没有材料索引 `AR/story-src/materials.json`——先跑 `story_flow.py round`。'];
   if (set.origins === null) return [`**输入有缺口**：${set.gaps[0]}。`];
@@ -174,20 +174,22 @@ export function originRows(ctx) {
   const own = designed ? designSource(ctx).adopted?.own : null;
   const cited = new Map();
   for (const f of own?.files ?? []) cited.set(f.source_id, new Set([...(cited.get(f.source_id) ?? []), f.version]));
+  const reader = audience === 'reader';
   const use = (o) => {
     if (!own || !o.source_id) return '';
     const v = cited.get(o.source_id);
-    if (!v) return '；设计未见引用';
+    if (!v) return reader ? '；未采用库存（按本稿疑点回查）' : '；设计未见引用';
     if (v.has(o.version)) return '';
-    return `；设计引证 ${[...v].sort().map(x => `v${x}`).join('、')}，取得的 v${o.version} 未见引用——贡献列写明采用哪一版、为什么不用新版`;
+    return `；设计采用 ${[...v].sort().map(x => `v${x}`).join('、')}，取得的 v${o.version} 未采用`
+      + (reader ? '（按本稿疑点或冲突回查）' : '——贡献列写明采用哪一版、为什么不用新版');
   };
   const rows = [...groups.values()].map((g) => {
     const pictures = g.items.flatMap(o => o.image_paths ?? []);
     if (pictures.length) {
       // 只取图的原件：一份原件一行，材料列与来源列都指它自己；图不逐张成行，说明与取舍见图片登记
       return `- 原件 ${g.items.map(o => `\`${mdLink(o.path)}\`（${version(o)}摘要 ${digest(o)}）`).join('、')}只取图，正文不作依据（导入时判定它的正文已由别的有效材料承接，依据在初析的来源初筛）：`
-        + `抽出 ${pictures.length} 张（${pictures.map(p => p.split('/').pop()).join('、')}），用了哪几张、不用的理由见图片登记；`
-        + '贡献写采用了哪些视觉信息，全部不用也写理由';
+        + `抽出 ${pictures.length} 张（${pictures.map(p => p.split('/').pop()).join('、')}），`
+        + (reader ? '已用图核正文承接，未用图仅按疑点回查' : '用了哪几张、不用的理由见图片登记；贡献写采用了哪些视觉信息，全部不用也写理由');
     }
     return `- 阅读稿 ${g.readable.map(r => `\`${mdLink(r)}\``).join('、') || '（读不到）'}`
       + ` ← 来源 ${g.items.map(o => `\`${mdLink(o.path)}\`（${KIND[o.kind] ?? o.kind}，${version(o)}摘要 ${digest(o)}${use(o)}）`).join('、')}`;

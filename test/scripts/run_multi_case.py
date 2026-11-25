@@ -4079,12 +4079,34 @@ def write_case_observation_record(suite: dict[str, Any],
             lines.extend(["", "## 隔离边界与审阅观测（只读回放）", ""])
             if iso.get("contaminated"):
                 segs = "、".join(iso.get("contaminated_segments") or [])
-                lines.append(f"- **隔离越界**：检测到 {len(iso.get('findings') or [])} 处外部访问（受污染段：`{segs}`；仅路径文字 {len(iso.get('mentions_only') or [])} 条）；{iso.get('policy_note')}")
+                confirmed = iso.get("confirmed_findings") or [f for f in (iso.get("findings") or []) if f.get("access") == "confirmed_access"]
+                pending = iso.get("pending_host_check") or []
+                failed = iso.get("failed_attempts") or []
+                extra = []
+                if pending:
+                    extra.append(f"待宿主核实 {len(pending)} 处")
+                if failed:
+                    extra.append(f"失败尝试 {len(failed)} 处")
+                extra_txt = f"；{'，'.join(extra)}" if extra else ""
+                lines.append(f"- **隔离越界**：检测到 {len(confirmed)} 处已确认外部访问（受污染段：`{segs}`{extra_txt}；仅路径文字 {len(iso.get('mentions_only') or [])} 条）；{iso.get('policy_note')}")
                 for f in (iso.get("findings") or [])[:10]:
                     detail = f" — {f['outcome_detail']}" if f.get("outcome_detail") else ""
                     lines.append(f"  - L{f['line']} [{f['segment']}] `{f['tool']}` {f['kind']}（{f['access']}）→ `{f['resolved_path']}`{detail}")
             else:
-                lines.append(f"- 隔离越界：未检出外部访问（仅提及路径文字 {len(iso.get('mentions_only') or [])} 条）")
+                pending = iso.get("pending_host_check") or []
+                failed = iso.get("failed_attempts") or []
+                if pending or failed:
+                    parts = []
+                    if pending:
+                        parts.append(f"待宿主核实 {len(pending)} 处")
+                    if failed:
+                        parts.append(f"失败尝试 {len(failed)} 处")
+                    lines.append(f"- 隔离越界：未确认受污染（{'，'.join(parts)}；仅路径文字 {len(iso.get('mentions_only') or [])} 条；未触发受污染停评）")
+                    for f in (iso.get("findings") or [])[:10]:
+                        detail = f" — {f['outcome_detail']}" if f.get("outcome_detail") else ""
+                        lines.append(f"  - L{f['line']} [{f['segment']}] `{f['tool']}` {f['kind']}（{f['access']}）→ `{f['resolved_path']}`{detail}")
+                else:
+                    lines.append(f"- 隔离越界：未检出外部访问（仅提及路径文字 {len(iso.get('mentions_only') or [])} 条）")
             deleg = m.get("delegations")
             if deleg:
                 lines.append(

@@ -1911,18 +1911,19 @@ class S15AccessAndReportAttribution(unittest.TestCase):
 
     def test_own_system_copy_allowed_while_sibling_system_copy_and_parent_are_contaminated(self) -> None:
         ws = r"C:\Temp\sw-story\suite\sample"
+        own_sys = r"C:\Temp\sw-sys\suite-deadbeef\sample"
         got_own = self._run_measure([{
             "tool_name": "pwsh",
-            "tool_input": {"command": r"Get-Content C:\Temp\sw-sys\suite\sample\AR1\prd.md"},
+            "tool_input": {"command": rf"Get-Content {own_sys}\AR1\prd.md"},
             "tool_output": "own prd",
-        }], workspace=ws)
+        }], workspace=ws, extra_state={"requirement_system_dir": own_sys})
         self.assertFalse(got_own["isolation_boundary"]["contaminated"])
 
         got_other = self._run_measure([{
             "tool_name": "pwsh",
-            "tool_input": {"command": r"Get-Content C:\Temp\sw-sys\suite\other\AR2\prd.md"},
+            "tool_input": {"command": r"Get-Content C:\Temp\sw-sys\suite-deadbeef\other\AR2\prd.md"},
             "tool_output": "other prd",
-        }], workspace=ws)
+        }], workspace=ws, extra_state={"requirement_system_dir": own_sys})
         iso_other = got_other["isolation_boundary"]
         self.assertTrue(iso_other["contaminated"])
         self.assertEqual("absolute_escape", iso_other["findings"][0]["kind"])
@@ -1932,7 +1933,7 @@ class S15AccessAndReportAttribution(unittest.TestCase):
             "tool_name": "pwsh",
             "tool_input": {"command": r"Get-ChildItem C:\Temp\sw-sys"},
             "tool_output": "suite",
-        }], workspace=ws)
+        }], workspace=ws, extra_state={"requirement_system_dir": own_sys})
         self.assertTrue(got_parent["isolation_boundary"]["contaminated"])
 
     def test_failed_unknown_truncated_and_mixed_outputs_are_distinguished(self) -> None:
@@ -2106,6 +2107,185 @@ class S15AccessAndReportAttribution(unittest.TestCase):
         item = got_amb["delegations"]["items"][0]
         self.assertEqual("unknown", item["settled"])
         self.assertIn("无法唯一绑定", item.get("settled_note", ""))
+
+
+class S16IsolationVerdictAndRoundReportAttribution(unittest.TestCase):
+    """2.0.6 S16（R3/R4 第二次返修）：仅 confirmed_access 判污染，失败/待核不触发停评；
+    字符串过滤不误当读文件；无证明的 sw-sys 路径不放行；同轮报告被覆写或未来轮写出均不误归属。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+
+    def _measure_case(self, name: str, command: str, output: str, *, status: str = "completed",
+                      workspace: str = r"C:\Temp\sw-story\suite\sample",
+                      extra_state: dict | None = None,
+                      suite_json: dict | None = None,
+                      parent_rows: list[dict] | None = None,
+                      child_id: str | None = None,
+                      child_rows: list[dict] | None = None) -> tuple[dict, str]:
+        bundle = self.root / name
+        run = bundle / "cases" / "sample" / "run"
+        run.mkdir(parents=True, exist_ok=True)
+        st = {"workspace": workspace}
+        if extra_state:
+            st.update(extra_state)
+        (run / "state.json").write_text(json.dumps(st), encoding="utf-8")
+        if suite_json is not None:
+            (bundle / "suite.json").write_text(json.dumps(suite_json), encoding="utf-8")
+        event = {
+            "type": "tool", "run_id": "run", "tool_call_id": "t", "tool_name": "pwsh",
+            "tool_input": {"command": command}, "tool_status": status, "tool_output": output,
+            "timestamp": "2026-11-24T10:00:00Z",
+        }
+        ev_path = run / "events.jsonl"
+        ev_path.write_text(json.dumps(event, ensure_ascii=False) + "\n", encoding="utf-8")
+        if parent_rows is not None:
+            sr = run / "native-sessions" / "session-p"
+            _session(sr / "session.v4.jsonl.zstd", "session-p", parent_rows)
+            if child_id is not None and child_rows is not None:
+                _session(sr / f"children/{child_id}/session.v4.jsonl.zstd", child_id, child_rows)
+        got = measure_run.measure(ev_path, run_dir=run)
+        import run_multi_case as rmc  # noqa: PLC0415
+        rmc.write_case_observation_record(
+            {"bundle_root": str(bundle)},
+            {"case": "sample", "feature": "AR1", "end_at": "story:submitted",
+             "status": "completed", "run_id": "run", "workspace": workspace},
+        )
+        obs = (run.parent / "observation-record.md").read_text(encoding="utf-8")
+        return got, obs
+
+    def test_failed_only_does_not_contaminate_or_stop_formal_evaluation(self) -> None:
+        got, obs = self._measure_case("failed_only", "Get-Content ../sibling/missing.md", "Cannot find path", status="error")
+        iso = got["isolation_boundary"]
+        self.assertFalse(iso["contaminated"])
+        self.assertEqual([], iso["contaminated_segments"])
+        self.assertIsNone(iso["policy_note"])
+        self.assertEqual([], iso["confirmed_findings"])
+        self.assertEqual(1, len(iso["failed_attempts"]))
+        self.assertEqual("failed_access", iso["findings"][0]["access"])
+        self.assertNotIn("受污染段停止正式效果评价", obs)
+        self.assertIn("未确认受污染", obs)
+        self.assertNotIn("**已受污染**", measure_run.render(got))
+
+    def test_pending_host_check_outcomes_stay_unconfirmed(self) -> None:
+        got, obs = self._measure_case(
+            "mixed_only", "Get-Content ../sibling/mixed.md; Get-Content local.md", "local text", status="completed"
+        )
+        iso = got["isolation_boundary"]
+        self.assertFalse(iso["contaminated"])
+        self.assertIsNone(iso["policy_note"])
+        self.assertEqual(1, len(iso["pending_host_check"]))
+        self.assertEqual("needs_review", iso["pending_host_check"][0]["access"])
+        self.assertNotIn("受污染段停止正式效果评价", obs)
+        self.assertIn("待宿主核实 1 处", obs)
+
+    def test_select_string_input_object_is_text_mention_only(self) -> None:
+        got, obs = self._measure_case(
+            "literal_pattern",
+            "Select-String -InputObject '../sibling/notes.md' -Pattern 'sibling'",
+            "../sibling/notes.md",
+        )
+        iso = got["isolation_boundary"]
+        self.assertFalse(iso["contaminated"])
+        self.assertEqual([], iso["findings"])
+        self.assertEqual(1, len(iso["mentions_only"]))
+        self.assertEqual("text_mention_only", iso["mentions_only"][0]["access"])
+        self.assertNotIn("受污染", obs)
+
+    def test_unproven_sw_sys_path_is_not_allowed_while_proven_seeded_path_is(self) -> None:
+        got_unproven, _ = self._measure_case(
+            "unproven_allowed_root", r"Get-Content C:\Temp\sw-sys\sample\AR99\prd.md", "stale data"
+        )
+        iso = got_unproven["isolation_boundary"]
+        self.assertEqual([], iso["allowed_external_roots"])
+        self.assertTrue(iso["contaminated"])
+        self.assertEqual("confirmed_access", iso["findings"][0]["access"])
+
+        # suite.json 明确证明已 seed 且使用与 run_multi_case.requirement_system_path 同一摘要路径时放行唯一路径
+        suite_ws_root = r"C:\Temp\sw-story\suite"
+        digest = hashlib.sha256(str(Path(suite_ws_root).resolve()).encode("utf-8")).hexdigest()[:8]
+        proven_sys = rf"C:\Temp\sw-sys\suite-{digest}\sample"
+        suite_meta = {
+            "workspace_root": suite_ws_root,
+            "case_states": {
+                "sample": {
+                    "workspace": r"C:\Temp\sw-story\suite\sample",
+                    "system_seeded": [{"source": "sample/system/AR1/prd.md", "target": "sw-sys/sample/AR1/prd.md"}],
+                }
+            },
+        }
+        got_proven, _ = self._measure_case(
+            "proven_seeded", rf"Get-Content {proven_sys}\AR1\prd.md", "own prd", suite_json=suite_meta
+        )
+        self.assertFalse(got_proven["isolation_boundary"]["contaminated"])
+        self.assertEqual(1, len(got_proven["isolation_boundary"]["allowed_external_roots"]))
+        # 即使已 seed，旧无摘要别名 sw-sys\sample 仍不得放行
+        got_legacy, _ = self._measure_case(
+            "legacy_alias", r"Get-Content C:\Temp\sw-sys\sample\AR1\prd.md", "stale alias", suite_json=suite_meta
+        )
+        self.assertTrue(got_legacy["isolation_boundary"]["contaminated"])
+
+    def test_overwritten_report_and_future_round_write_are_not_misattributed(self) -> None:
+        if shutil.which("node") is None:
+            self.skipTest("环境里没有 node")
+        report = "doc/reports/story/AR1/aaaaaaaaaaaaaaaa/review-original.1.md"
+        child = "11111111-2222-3333-4444-555555555555"
+        key = "a" * 64
+        prompt = f"# Story 独立人读审查 · 派审\n\n- 材料键：`{key}`\n- 本次报告文件：`{report}`\n\n## 先首读\n"
+        body = f"material_key: {key}\nconclusion: pass\n\nFull independent report."
+
+        def write_call(call_id: str, ts: int, mk: str) -> list[dict]:
+            return [
+                {"type": "tool/call", "time": ts, "data": {"callId": call_id, "name": "write",
+                 "arguments": json.dumps({"file_path": report, "content": f"material_key: {mk}\nconclusion: pass\n\nFull independent report."})}},
+                {"type": "tool/result", "time": ts + 1, "data": {"message": {"toolCallId": call_id, "isError": False, "content": [{"type": "text", "text": "ok"}]}}},
+            ]
+
+        base_parent = [
+            {"type": "subagent/catalog", "time": 1000, "data": {"childId": child, "label": "Story 独立人读审查", "childCreatedAt": 1000}},
+            {"type": "tool/call", "time": 1000, "data": {"callId": "c1", "name": "subagent",
+             "arguments": json.dumps({"name": "story-reviewer", "description": "Story 独立人读审查", "prompt": prompt})}},
+            {"type": "tool/result", "time": 1010, "data": {"message": {"toolCallId": "c1", "content": [{"type": "text", "text": "started subagent story-reviewer"}]}}},
+        ]
+
+        # 1. 同轮先写 key=a，后被同路径完整写覆写为 key=b -> 本轮实际报告无效
+        got_over, obs_over = self._measure_case(
+            "overwritten_report", "Get-Content local.md", "local",
+            parent_rows=base_parent, child_id=child,
+            child_rows=write_call("w1", 1100, key) + write_call("w2", 1200, "b" * 64),
+        )
+        d_over = got_over["delegations"]
+        self.assertEqual(0, d_over["story_review_actual_reports"])
+        self.assertFalse(d_over["items"][0]["actual_report"]["verified"])
+        self.assertIsNone(d_over["items"][0]["report_file"])
+        self.assertEqual("unknown", d_over["items"][0]["report_completeness"]["value"])
+        self.assertIn("实际已核报告 0 份", obs_over)
+
+        # 2. 第一轮窗口内无写出，第二轮窗口内写出同路径同键 -> 第一轮不得借未来轮写出判 complete 或 verified
+        future_parent = base_parent + [
+            {"type": "agent/inbox/spliced", "time": 1500, "data": {"inserted": [{
+                "source": {"kind": "subagent-settled", "senderSessionId": child, "summary": "Background subagent story-reviewer finished"},
+                "content": [{"type": "text", "text": f"Background subagent story-reviewer finished\nIts closing message:\n{body}"}],
+            }]}},
+            {"type": "tool/call", "time": 2000, "data": {"callId": "c2", "name": "send_message",
+             "arguments": json.dumps({"agent": "story-reviewer", "message": prompt})}},
+        ]
+        got_fut, obs_fut = self._measure_case(
+            "future_report", "Get-Content local.md", "local",
+            parent_rows=future_parent, child_id=child,
+            child_rows=write_call("w2", 2100, key),
+        )
+        d_fut = got_fut["delegations"]
+        self.assertEqual(2, len(d_fut["items"]))
+        self.assertFalse(d_fut["items"][0]["actual_report"]["verified"])
+        self.assertEqual("unknown", d_fut["items"][0]["report_completeness"]["value"])
+        self.assertTrue(d_fut["items"][1]["actual_report"]["verified"])
+        self.assertEqual("unknown", d_fut["items"][1]["report_completeness"]["value"])
+        self.assertEqual(0, d_fut["story_review_full_replies"])
+        self.assertEqual(1, d_fut["story_review_actual_reports"])
+        self.assertIn("实际已核报告 1 份", obs_fut)
 
 
 if __name__ == "__main__":

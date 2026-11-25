@@ -137,7 +137,7 @@ function bodyFor(k, body, action) {
  * `starter` 为真表示 Feature 还没有知识判断，正文供作者起步判断。
  * `documents` 是送了正文的每份知识（工程相对路径与全文 / 上篇 / 下篇），与正文同一循环得出。
  */
-function knowledgeBlock(root, action, knowledge, related, starter = false) {
+function knowledgeBlock(root, action, knowledge, related, starter = false, cuCompact = false) {
   const byFile = new Map([...knowledge.facts, ...knowledge.constraints, ...knowledge.patterns].map(k => [k.file, k]));
   const all = knowledgeRegistrations(root);
   const ordered = all.map(r => ({ ...byFile.get(r.file), registration: r })).filter(k => k.file);
@@ -149,12 +149,17 @@ function knowledgeBlock(root, action, knowledge, related, starter = false) {
     return { rows: [...rows, `激活清单为空：这个工程还没有登记知识（零项）。知识怎么写、怎么登记见 \`${relDisplay(root, protocol)}\`。`], gaps, documents: [] };
   }
   const sent = ordered.filter(k => reaches(k.registration, action) && (related === null || related.has(k.file)));
+  const indexed = cuCompact && related !== null ? ordered.filter(k => related.has(k.file)) : ordered;
   const where = k => relDisplay(root, path.join(extensionRoot(root), ...k.file.split('/')));
+  if (cuCompact && related !== null) {
+    rows.push(`本单位相关知识 ${indexed.length} / ${ordered.length} 份（受众含 ${action} 的 ${sent.length} 份正文在下）；其余激活知识总入口见 \`doc/extensions/manifest.yaml\`，按需回查（形态见 \`${relDisplay(root, protocol)}\`）。`, '');
+  } else {
   rows.push(`激活 ${ordered.length} 份，按激活顺序；各列与形态怎么读见 \`${relDisplay(root, protocol)}\`。`
     + (starter ? `本 Feature 还没有知识判断：受众里有 ${action} 的 ${sent.length} 份正文都在下面，相关与否、适用与否由你判断，写进契约的 knowledge_facts。`
       : related === null ? `本动作判断全局适用性，受众里有 ${action} 的 ${sent.length} 份正文都在下面。`
         : `与本动作直接相关的 ${sent.length} 份正文在下面；其余按「何时读」判断，需要时按位置读原文。`), '');
-  for (const k of ordered) {
+  }
+  for (const k of indexed) {
     rows.push(`- \`${where(k)}\` · ${k.name ?? k.id}（${k.kind ?? k.file.split('/')[1] ?? ''}，${k.form}）· 单元：${k.units.join('、')}`
       + ` · 何时读：${String(k.appliesWhen ?? '').trim().split(/\s*\n\s*/).join(' ')}`
       + (k.registration.audience === null ? ''
@@ -165,7 +170,7 @@ function knowledgeBlock(root, action, knowledge, related, starter = false) {
   if (related !== null && !sent.length && !gaps.length) {
     rows.push(DESIGN_SIDE.has(action)
       ? '已有有效的 discovery 知识判断且当前无新增、变更、争议或待落实项：正文按索引位置按需回查。'
-      : '本施工单位没有承接或判过的知识，契约与验收也没有引用知识：正文不送；按索引核有没有设计漏判的，漏判交设计负责方。', '');
+      : '本施工单位没有承接或判过的知识，契约与验收也没有引用知识：正文不送；其余激活知识见 `doc/extensions/manifest.yaml`，发现设计漏判交设计负责方。', '');
   }
   const documents = [];
   for (const k of sent) {
@@ -213,19 +218,22 @@ function compactBasisLines(basis) {
 
 /**
  * 施工单位第 2 块：spec / plan 给出本单位相关判断、同因合并后的需求级公共依据与本单位引用的事实；
- * coding / review / ut / testing 只保留本单位义务与待核缺口，退出无关排除清单重复铺陈。
+ * coding / review / ut / testing 保留本单位义务、本单位待定项与待核缺口，退出无关排除清单重复铺陈。
  */
 function unitLines(judged, action) {
   const context = unitContext(judged);
   const { applied, selected } = unitDuties(judged);
   const own = context.mine.filter(d => !applied.includes(d) && !selected.includes(d));
+  const ownPending = own.filter(d => d.outcome === 'pending');
+  const ownOther = own.filter(d => d.outcome !== 'pending');
   const reviews = context.common.filter(d => d.kind === 'constraints' && d.outcome === 'applied' && d.reviewAction);
   const basis = context.common.filter(d => ['not_applicable', 'rejected'].includes(d.outcome));
   const other = context.common.filter(d => d.outcome !== 'pending' && !reviews.includes(d) && !basis.includes(d));
   const unowned = context.common.filter(d => d.outcome === 'pending');
   const designPhase = ['spec', 'plan'].includes(action);
   const lines = [
-    ...(designPhase && own.length ? ['本单位相关、不产生义务的判断（宿主扩展章引用其理由，不重判）：', ...own.map(judgedLine)] : []),
+    ...(ownPending.length ? ['本单位待定知识项（尚未闭合，不作已生效义务或豁免，按待决依据与负责方处理）：', ...ownPending.map(judgedLine)] : []),
+    ...(designPhase && ownOther.length ? ['本单位相关、不产生义务的判断（宿主扩展章引用其理由，不重判）：', ...ownOther.map(judgedLine)] : []),
     ...(reviews.length ? ['需求级评审动作（适用，指向原生决定或需求级对象，由评审承接执行；不产生代码 must 或验收条目，'
       + '本阶段核它要的评审材料与执行是否齐备）：', ...reviews.map(judgedLine)] : []),
     ...(designPhase && basis.length
@@ -393,15 +401,21 @@ function carriedDuties(judged, action, knowledge) {
 const STAGE_OUTPUT = { spec: ['acceptance.yaml', 'acceptance'], plan: ['contracts.yaml', 'contracts'] };
 
 /**
- * 施工单位独立进入 spec / plan、范围还没冻结、本阶段的投影还没物化到本地时：冻结之前先用原生
- * `prepare-blueprint-design --phase <阶段>` 只物化本阶段的那一份。冻结记下的是当时的输入身份，冻结后再物化会让它过期，
- * 所以冻结之后（含 runtime 的 run）一律直接消费原生解析的输入，不再准备。原生物化不覆盖已有合法产物，冲突时报出。
+ * 施工单位独立进入 spec / plan、范围还没冻结、本阶段所需的原生投影还没物化到本地时：冻结之前先用原生
+ * `prepare-blueprint-design --phase <阶段>` 物化本阶段投影（plan 在蓝图带原生用例权威时含 `use-cases.yaml`）。
+ * 冻结记下的是当时的输入身份，冻结之后（含 runtime 的 run）一律直接消费原生解析的输入，不再准备。
  */
-function stagePreparation(f, feature, action) {
+function stagePreparation(root, f, feature, action) {
   const [file, part] = STAGE_OUTPUT[action] ?? [];
-  if (f.identity.kind !== 'cu' || !file || f.scope !== 'not_frozen' || process.env.MAISON_GOAL_RUN_ID?.trim() || f.spec?.[part]) return null;
-  return `冻结之前先物化本阶段的投影 ${file}：在 \`framework/harness\` 下跑`
-    + ` \`npx ts-node scripts/prepare-blueprint-design.ts --feature ${feature} --phase ${action} --project-root <工程根>\`（只写本阶段这一份，不覆盖已有合法产物）；`;
+  if (f.identity.kind !== 'cu' || !file || f.scope !== 'not_frozen' || process.env.MAISON_GOAL_RUN_ID?.trim()) return null;
+  const missing = f.spec?.[part] ? [] : [file];
+  if (action === 'plan' && !f.spec?.useCases) {
+    const n = loadNative(root);
+    const p = n.module('scripts/utils/blueprint-skill-projection.ts').deriveBlueprintSkillInput(n.root, feature, n.frameworkRoot, 'contracts', 'pure');
+    if (p?.artifacts?.['use-cases@1'] || (p?.state === 'invalid' && /use[-_ ]?cases/i.test(String(p.detail ?? '')))) missing.push('use-cases.yaml');
+  }
+  return missing.length ? `冻结之前先物化本阶段的投影 ${missing.join('、')}：在 \`framework/harness\` 下跑`
+    + ` \`npx ts-node scripts/prepare-blueprint-design.ts --feature ${feature} --phase ${action} --project-root <工程根>\`（只写本阶段所需投影，不覆盖已有合法产物）；` : null;
 }
 
 /** 围栏包一段原文：外层比里面最长的反引号串多一个，原文照录不转义。 */
@@ -523,10 +537,10 @@ function featureTask(root, feature, action, supplied, knowledge) {
   }
   // 本单位相关知识按本阶段实际要落实的契约与验收取：产物写出了取产物，还没写出取原生选中的输入
   let stageView = f.spec;
+  duties.push('沿本次请求获准的终点工作。只到 Plan 时，把组件缺陷及验法写入方案；原生输入缺失或已变，先回负责方取得同一需求的有效输入。没有合法接续身份，保住原件并停在写入前。');
   if (f.scope === 'not_frozen') {
-    duties.push('沿本次请求获准的终点工作。只到 Plan 时，把组件缺陷及验法写入方案；原生输入缺失或已变，先回负责方取得同一需求的有效输入。没有合法接续身份，保住原件并停在写入前。',
-      '本阶段的原生输入还没有确定（执行范围未冻结），本任务只是预览，不作为动笔依据。');
-    gaps.push(`执行范围未冻结：已获准开始本阶段的主模型按 story-knowledge Skill 的「范围未冻结时」${stagePreparation(f, feature, action) ?? ''}先准备范围`
+    duties.push('本阶段的原生输入还没有确定（执行范围未冻结），本任务只是预览，不作为动笔依据。');
+    gaps.push(`执行范围未冻结：已获准开始本阶段的主模型按 story-knowledge Skill 的「范围未冻结时」${stagePreparation(root, f, feature, action) ?? ''}先准备范围`
       + '（没有候选先走原生 prepare-scope，再由原生 ensureFeatureExecutionScopeFrozen 冻结），返回 frozen 或 reused 后重取本任务再动笔；原生失败按它的报错交回责任方。');
   } else {
     // 契约与验收：本阶段的产物以原生 SpecLoader 读出的为准；产物还没写出时，按原生选中的输入列义务，并写明它还是输入
@@ -565,6 +579,7 @@ function featureTask(root, feature, action, supplied, knowledge) {
     object: `Feature \`${feature}\`，${kind}，位置 \`${f.feature_path}\``, facts, duties, gaps, page: `hooks/${action}/author.md`,
     preview: f.scope === 'not_frozen', related: relatedFiles(root, action, judged, stageView, f.identity.kind),
     starter: f.identity.kind !== 'cu' && Boolean(judged) && !judged.rows.length && !judged.facts.length,
+    cuCompact: f.identity.kind === 'cu',
   };
 }
 
@@ -582,7 +597,7 @@ export function knowledgeTaskData(root, { action, audience, blueprint, feature, 
   const knowledge = loadKnowledge(root);
   const task = blueprint ? blueprintTask(root, blueprint, action, knowledge)
     : featureTask(root, feature, action, { requirement, requirementFile }, knowledge);
-  const { rows, gaps: routing, documents } = knowledgeBlock(root, action, knowledge, task.related ?? null, task.starter === true);
+  const { rows, gaps: routing, documents } = knowledgeBlock(root, action, knowledge, task.related ?? null, task.starter === true, task.cuCompact === true);
   task.gaps.push(...routing);
   const problems = selfCheck(root, knowledge);
   const page = relDisplay(root, path.join(extensionRoot(root), ...task.page.split('/')));

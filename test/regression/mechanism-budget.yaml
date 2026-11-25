@@ -368,7 +368,44 @@ packages:
         forecast_peak: 19736
         forecast_final: 18864
         source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
+      - release: "2.0.6"
+        date: "2026-11-24"
+        by: "维护设计者 Codex（用户授权）"
+        at_ref: "6da66875"
+        approved_increment_g: 45
+        planned_retirement_x: 49
+        scope: "01批维护域返修G0；02批超估25/21与S17/S18预计20/28，分开核；本项为增量。"
+        actual_batch: {G: 195, X: 313}
+        cumulative_version_estimate: {G: 621, X: 921}
+        source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/02-批次-蓝图裁决与独立成文/评审意见/2026-11-24-193624-02批S03至S05独立复评.md"
+      - release: "2.0.6"
+        date: "2026-11-24"
+        by: "维护设计者 Codex（用户授权）"
+        at_ref: "06a93357"
+        approved_increment_g: 20
+        planned_retirement_x: 24
+        scope: "S19预计G24/X24，G4复用批内余量，追加G20；历史预计X240单列，03批含返修现预计X66。"
+        actual_batch: {G: 160, X: 42}
+        cumulative_version_estimate: {G: 641, X: 747}
+        source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/03-批次-知识与施工接续/评审意见/2026-11-24-194950-03批S06至S08独立复评.md"
     confirmations:
+      - band: ">150%"
+        by: "维护设计者 Codex（受用户委托）"
+        date: "2026-11-24"
+        at_ref: "06a93357"
+        actual_invested_g: 8989
+        scope: "03批实际G160/X42；S06–S08剩余消费者与退场按S19再核。"
+        reason: "包R211.5%；核准必要实投；X少198按真实职责复核，历史G138仍单列。"
+        source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/03-批次-知识与施工接续/评审意见/2026-11-24-194950-03批S06至S08独立复评.md"
+      - band: ">150%"
+        by: "维护设计者 Codex（受用户委托）"
+        date: "2026-11-24"
+        at_ref: "6da66875"
+        scope: "02批S03–S05必要实投及01返修维护域确认，S04/S05退场仍待返修复评"
+        actual_invested_g: 8829
+        confirmed_overrun_g: 25
+        reason: "批次G195/X313；认可替换和真实消费者投入，未追认历史G138。不以预算确认代签批次功能收口。"
+        source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/02-批次-蓝图裁决与独立成文/评审意见/2026-11-24-193624-02批S03至S05独立复评.md"
       - band: ">150%"
         by: 用户
         date: "2026-11-17"

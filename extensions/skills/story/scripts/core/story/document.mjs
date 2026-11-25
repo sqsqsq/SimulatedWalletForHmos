@@ -560,13 +560,17 @@ export function renumberStory(text, chapters = [], counters = []) {
  * 缺号、错号或跳级号报出行号、实际标题与期望标题，交定稿（`story-build review --action prepare` / `number`）归位。
  */
 export function headingNumberProblems(storyText, chapters = [], counters = []) {
-  const before = String(storyText ?? '').split(/\r?\n/);
-  const after = renumberStory(storyText, chapters, counters).split(/\r?\n/);
-  const fenced = maskOf(before, fenceRanges(before));
-  const out = [];
+  const before = String(storyText ?? '').split(/\r?\n/), after = renumberStory(storyText, chapters, counters).split(/\r?\n/);
+  const fenced = maskOf(before, fenceRanges(before)), known = new Set((chapters ?? []).map(c => normalizeHeading(c?.title ?? '')).filter(Boolean));
+  let inChapter = false, seqLen = 0, out = [];
   for (let i = 0; i < before.length; i += 1) {
-    if (fenced.has(i) || !/^#{2,}\s+/.test(before[i]) || before[i] === after[i]) continue;
-    out.push(`story.md 第 ${i + 1} 行标题缺号或号序不符：实际「${before[i]}」，应为「${after[i]}」——定稿编号由 \`story-build review --action prepare\`（或 \`story-build number\`）统一铺设`);
+    const head = !fenced.has(i) && /^(#{2,})\s+(.+?)\s*$/.exec(before[i]);
+    if (!head) continue;
+    const depth = head[1].length - 3;
+    if (depth < 0) { inChapter = known.has(normalizeHeading(head[2])); seqLen = 0; }
+    else if (inChapter && depth > seqLen) { out.push(`story.md 第 ${i + 1} 行标题层级跳级：实际「${before[i]}」缺少上一级（${'#'.repeat(seqLen + 3)}）标题——请补齐父级标题或调整层级，不能跳过父级直接写 ${head[1]}`); continue; }
+    else if (inChapter) seqLen = depth + 1;
+    if (before[i] !== after[i]) out.push(`story.md 第 ${i + 1} 行标题缺号或号序不符：实际「${before[i]}」，应为「${after[i]}」——定稿编号由 \`story-build review --action prepare\`（或 \`story-build number\`）统一铺设`);
   }
   return out;
 }

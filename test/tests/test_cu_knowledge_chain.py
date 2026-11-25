@@ -536,7 +536,8 @@ class NoPatternIsACandidate(ChainCase):
         self.assertIn(f"`{KNOWLEDGE_REF}`", duties)
         self.assertNotIn("模式 `", duties)
         knowledge = out["author"].split("## 4. 激活知识：索引与本动作的原文", 1)[1]
-        self.assertIn(PATTERN_REF, knowledge, "没有候选不等于不给模式知识原文")
+        self.assertIn("doc/extensions/manifest.yaml", knowledge, "未选中的模式不再在 CU 阶段铺全量索引，但保留 manifest.yaml 按需回查入口")
+        self.assertNotIn(PATTERN_REF, knowledge, "未涉及的模式不应在 CU 阶段重复列进精简索引")
 
 
 FACT_PROBE = """
@@ -642,7 +643,8 @@ class SiblingUnitsInOneBlueprint(ChainCase):
         self.assertEqual(sorted([*ELSEWHERE_ROLES, "节点表"]), out[second]["roles"], "承担运行视图的单位漏了它的角色")
 
     def test_each_unit_gets_the_whole_index_and_only_its_own_text(self) -> None:
-        """两个单位都拿到完整索引；正文只送本单位判过、承接或待核的知识（spec 送上下篇的上篇），需求级的整域不涉及只在索引里。"""
+        """S19：施工单位原生入口只列本单位相关知识与 manifest.yaml 按需回查总入口（不再重复全量 13 份）；
+        正文只送本单位判过、承接或待核的知识（spec 送上下篇的上篇），需求级的整域不涉及不重复进 CU 索引。"""
         import re  # noqa: PLC0415
         out, second = self.sibling()
         registered = yaml.safe_load((self.root / "doc/extensions/manifest.yaml").read_text(encoding="utf-8"))["provides"]["knowledge"]
@@ -651,8 +653,9 @@ class SiblingUnitsInOneBlueprint(ChainCase):
                 author = out[f]["author"]
                 part = author.split("## 4. 激活知识：索引与本动作的原文", 1)[1].split("## 5. 本次完成条件", 1)[0]
                 index = [line for line in part.splitlines() if line.startswith("- `doc/extensions/knowledge/")]
-                self.assertEqual(len(registered), len(index), "索引没有列全激活知识")
+                self.assertIn("doc/extensions/manifest.yaml", part, "精简索引缺少按需回查总入口")
                 sent = set(re.findall(r"^- 位置：`doc/extensions/(knowledge/[^`]+)`", part, re.M))
+                self.assertEqual(len(sent), len(index), "CU 阶段索引应只列本单位相关项")
                 self.assertIn(OBS.removeprefix("doc/extensions/"), sent, "本单位承接与待核的规约没有正文")
                 self.assertIn(DECISION_TREE, sent, "本单位承担角色的模式没有正文")
                 self.assertLess(len(sent), len(registered), "施工单位拿到了全部知识的正文")
@@ -720,11 +723,55 @@ class SiblingUnitsInOneBlueprint(ChainCase):
             self.assertIn(DECISION, unowned, f)
         self.assertNotIn(PENDING_ELSEWHERE, out[CU]["author"])
         self.assertNotIn(PENDING_ELSEWHERE, out[CU]["review"])
-        own = out[second]["facts"].split("本单位相关、不产生义务的判断（宿主扩展章引用其理由，不重判）：", 1)[1]
-        self.assertIn(f"`{PENDING_ELSEWHERE}`", own.split("需求级公共依据", 1)[0])
+        own_pend = out[second]["facts"].split("本单位待定知识项", 1)[1]
+        self.assertIn(f"`{PENDING_ELSEWHERE}`", own_pend.split("本单位相关、不产生义务的判断", 1)[0])
         duties = out[second]["author"].split("## 3. 当前契约与义务", 1)[1].split("## 4.", 1)[0]
         self.assertNotIn(PENDING_ELSEWHERE, duties, "待定成了已生效的义务")
         self.assertNotIn(UNOWNED, duties, "待定成了已生效的义务")
+
+    def test_s19_owned_pending_and_compact_index_hold_across_all_six_stages(self) -> None:
+        """S19 R1：同一蓝图双单位在全部 6 个施工阶段（spec/plan/coding/review/ut/testing）：
+        1) 有主待定（OBS-07）在承担单位（balance-runtime）全 6 阶段可见、不因 coding/review/ut/testing 过滤而丢失，且不串给兄弟单位；
+        2) 无主待定（OBS-05）在双单位全 6 阶段均可见；
+        3) 全部 6 阶段第 4 块只列本单位相关知识（2 / 13 份）与 manifest.yaml 总入口，不再每阶段重复全量 13 份索引。"""
+        second = cu_id(BLUEPRINT, self.SECOND)
+        registered = yaml.safe_load((self.root / "doc/extensions/manifest.yaml").read_text(encoding="utf-8"))["provides"]["knowledge"]
+        probe_6 = """
+import { pathToFileURL } from 'node:url';
+const [root, cuA, cuB] = process.argv.slice(1);
+const kt = await import(pathToFileURL(root + '/doc/extensions/hooks/shared/knowledge-task.mjs').href);
+const out = {};
+for (const action of ['spec', 'plan', 'coding', 'review', 'ut', 'testing']) {
+  out[action] = {
+    a: kt.knowledgeTask(root, { action, audience: 'author', feature: cuA }),
+    b: kt.knowledgeTask(root, { action, audience: 'author', feature: cuB }),
+  };
+}
+process.stdout.write(JSON.stringify(out));
+"""
+        proc = subprocess.run(["node", "--input-type=module", "-e", probe_6, str(self.root.as_posix()), CU, second],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        by_stage = json.loads(proc.stdout)
+        for stage, pair in by_stage.items():
+            with self.subTest(stage=stage):
+                a_txt, b_txt = pair["a"], pair["b"]
+                # 有主待定 OBS-07：全 6 阶段留在承担者 balance-runtime，不串给 balance-refresh
+                self.assertNotIn(PENDING_ELSEWHERE, a_txt, f"{stage} 把兄弟单位专属 pending 串给了 CU-A")
+                self.assertIn("本单位待定知识项", b_txt, f"{stage} 丢了本单位待定知识项段")
+                self.assertIn(f"`{PENDING_ELSEWHERE}`", b_txt, f"{stage} 丢了有主待定 OBS-07")
+                # 无主待定 OBS-05：全 6 阶段双单位都收到
+                for txt in (a_txt, b_txt):
+                    self.assertIn(f"`{UNOWNED}`", txt, f"{stage} 丢了无主公共待定 OBS-05")
+                    part = txt.split("## 4. 激活知识：索引与本动作的原文", 1)[1].split("## 5. 本次完成条件", 1)[0]
+                    self.assertIn("doc/extensions/manifest.yaml", part)
+                    idx = [l for l in part.splitlines() if l.startswith("- `doc/extensions/knowledge/")]
+                    self.assertLess(len(idx), len(registered), f"{stage} 不应重复全量 {len(registered)} 份索引")
+                    self.assertEqual(2, len(idx), f"{stage} 应只列本单位相关的 2 份知识")
+                # 后 4 阶段退出本单位无关不适用（OBS-06）与需求级排除清单重复铺陈，仍保 OBS-07 待定
+                if stage not in ("spec", "plan"):
+                    self.assertNotIn(ELSEWHERE_QUIET, b_txt, f"{stage} 仍重复铺陈本单位不适用项 OBS-06")
+                    self.assertNotIn("需求级公共依据（不适用或拒绝", b_txt)
 
 
 class ARequirementLevelReviewActionIsNamedAsSuch(ChainCase):
@@ -988,20 +1035,24 @@ class TheMaterializedContractIsReused(ChainCase):
 
     def test_s07_production_plan_gate_and_pre_verifier_accept_annotated_header_and_diagnose_mixed_column(self) -> None:
         """S07 生产 Plan 门禁与独审装配：合法附注列（含另一职责词或示例）取到原行，单格混合列报精确行号与实际表头。"""
-        # 1) 附注含「统计点」的「责任方法（该统计点的归属）」在生产门禁与独审并列表均正确识别
+        # 1) 附注含「统计点」的「责任方法（该统计点的归属）」+ 同节附加说明表「| 统计点与责任方法说明 | 备注 |」+ 历史子节
         self.variant(
             "plan/plan.md",
             "# Plan\n\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n| 编号 | 落点 |\n|---|---|\n| OBS-02 | HomeRepository.refreshBalance |\n\n"
             "### 设计模式选型与角色\n\n决策树节点表落在 HomeRepository。\n\n"
-            "### 埋点\n\n| 责任方法（该统计点的归属） | 结果 | 统计点（示例：余额刷新） |\n|---|---|---|\n"
+            "### 埋点\n\n| 统计点与责任方法说明 | 备注 |\n|---|---|\n| 仅对主链路记点 | 辅助说明表，不是双职责列 |\n\n"
+            "| 责任方法（该统计点的归属） | 结果 | 统计点（示例：余额刷新） |\n|---|---|---|\n"
             "| HomeRepository.refreshBalance | 成功 | 余额刷新 / 保存结果 |\n"
-            "| HomeRepository.refreshBalance | 拒绝 | 余额刷新 / 保存结果 |\n",
+            "| HomeRepository.refreshBalance | 拒绝 | 余额刷新 / 保存结果 |\n\n"
+            "#### 历史参考\n\n| 统计点 | 责任方法 |\n|---|---|\n| 历史旧点 | Legacy.oldMethod |\n",
         )
         ok_out = self.probe(fresh=True)
         self.assertNotIn("逐点表里没有行", ok_out["gate"], ok_out["gate"])
         self.assertNotIn("结构歧义", ok_out["gate"], ok_out["gate"])
         self.assertIn("余额刷新 / 保存结果", ok_out["review"])
+        self.assertNotIn("历史旧点", ok_out["review"])
         self.assertNotIn("（plan 没有这个统计点）", ok_out["review"])
+        self.assertNotIn("表头结构歧义", ok_out["review"], ok_out["review"])
 
         # 2) 单格混合两职责（统计点/责任方法）：门禁与独审均报出结构歧义、精确行号与实际表头，不误报单纯缺行
         self.variant(
@@ -1017,6 +1068,83 @@ class TheMaterializedContractIsReused(ChainCase):
         self.assertNotIn("逐点表里没有行", bad_out["gate"], bad_out["gate"])
         self.assertIn("表头结构歧义", bad_out["review"], bad_out["review"])
         self.assertIn("| 统计点/责任方法 | 结果 |", bad_out["review"], bad_out["review"])
+
+        # 3) 责任方法不存在于契约时，生产 Plan 门禁明确拦住
+        self.variant(
+            "plan/plan.md",
+            "# Plan\n\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n| 编号 | 落点 |\n|---|---|\n| OBS-02 | HomeRepository.refreshBalance |\n\n"
+            "### 设计模式选型与角色\n\n决策树节点表落在 HomeRepository。\n\n"
+            "### 埋点\n\n| 统计点 | 责任方法 | 结果 |\n|---|---|---|\n"
+            "| 余额刷新 / 保存结果 | HomeRepository.notDefinedMethod | 成功 |\n",
+        )
+        ghost_out = self.probe(fresh=True)
+        self.assertIn("HomeRepository.notDefinedMethod", ghost_out["gate"], ghost_out["gate"])
+
+
+class S19PlanDirectEntryPreparesUseCasesAndKeepsAuthorization(ChainCase):
+    """S19 R3：蓝图带 use_cases 权威的未冻结 CU 即使已有 contracts.yaml，直入 Plan 仍提示 prepare-blueprint-design --phase plan
+    补齐 use-cases.yaml；实际运行准备并冻结后，正式作者任务仍带 S08 受权终点原则且 Plan 门禁通过。"""
+    USE_CASES = True
+    STEPS = ()
+
+    def _run_task(self, action: str) -> str:
+        proc = subprocess.run(
+            ["node", str(self.root / "doc/extensions/hooks/shared/knowledge-task.mjs"),
+             "--project-root", str(self.root), "--feature", CU, "--action", action, "--audience", "author"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
+        )
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        return proc.stdout
+
+    def test_existing_contracts_still_prompts_use_cases_preparation_and_post_freeze_keeps_s08_boundary(self) -> None:
+        # 构造已有 contracts.yaml 但缺 use-cases.yaml 的未冻结 CU 现场
+        contracts_file = self.unit / "contracts.yaml"
+        use_cases_file = self.unit / "use-cases.yaml"
+        self.assertFalse(use_cases_file.exists())
+        # 先从原生准备出完整投影，再删除 use-cases.yaml 模拟“已有 contracts.yaml 缺 use-cases.yaml”
+        prep = subprocess.run(
+            ["npx", "ts-node", "scripts/prepare-blueprint-design.ts", "--feature", CU, "--phase", "plan",
+             "--project-root", str(self.root)],
+            cwd=str(self.root / "framework" / "harness"),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", shell=True, timeout=180,
+        )
+        self.assertEqual(0, prep.returncode, prep.stdout + prep.stderr)
+        self.assertTrue(contracts_file.is_file() and use_cases_file.is_file())
+        use_cases_file.unlink()
+        self.assertFalse(use_cases_file.exists())
+
+        # 未冻结预览：即使 contracts.yaml 已存在，因蓝图有 use_cases 权威，仍提示准备 use-cases.yaml
+        preview = self._run_task("plan")
+        self.assertIn("预览，执行范围未冻结", preview)
+        self.assertIn("prepare-blueprint-design.ts --feature", preview)
+        self.assertIn("--phase plan", preview)
+        self.assertIn("use-cases.yaml", preview)
+
+        # 实际执行准备后 use-cases.yaml 落盘，再重取预览不再重复提示 prepare-blueprint-design
+        prep2 = subprocess.run(
+            ["npx", "ts-node", "scripts/prepare-blueprint-design.ts", "--feature", CU, "--phase", "plan",
+             "--project-root", str(self.root)],
+            cwd=str(self.root / "framework" / "harness"),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", shell=True, timeout=180,
+        )
+        self.assertEqual(0, prep2.returncode, prep2.stdout + prep2.stderr)
+        self.assertTrue(use_cases_file.is_file())
+        preview_ready = self._run_task("plan")
+        self.assertNotIn("prepare-blueprint-design.ts", preview_ready)
+
+        # 冻结范围后重取正式 Plan 任务：不再是预览，且仍带 S08 受权终点原则
+        prepare(self.root, "freeze")
+        formal = self._run_task("plan")
+        self.assertNotIn("预览，执行范围未冻结", formal)
+        self.assertIn(
+            "沿本次请求获准的终点工作。只到 Plan 时，把组件缺陷及验法写入方案；"
+            "原生输入缺失或已变，先回负责方取得同一需求的有效输入。没有合法接续身份，保住原件并停在写入前。",
+            formal,
+        )
+        # 冻结后 Plan 门禁正常通过
+        out = self.probe(fresh=True)
+        self.assertNotIn("use_cases_invalid", out["gate"], out["gate"])
+        self.assertNotIn("没有实体扛着", out["gate"], out["gate"])
 
 
 if __name__ == "__main__":

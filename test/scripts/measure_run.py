@@ -1091,24 +1091,24 @@ def _workspace_root_for_run(run_dir: Path | None, sessions: dict) -> str | None:
 
 
 def _allowed_external_roots(run_dir: Path | None, ws_root: str | None) -> list[str]:
-    """本 Case 合法外部路径：仅放行本 Case 可证明的专属需求系统副本目录（绝不放行整个 sw-sys 父目录或旁案）。"""
+    """本 Case 合法外部路径：仅放行显式登记的专属需求系统副本，或 suite.json 明确证明已 seed 的本 Case 专属副本
+    （按与 run_multi_case.requirement_system_path 同一公式推导唯一路径；无证明时不猜测放行任何 sw-sys 路径）。"""
     allowed: list[str] = []
     explicit_found = False
-    no_system_seeded = False
-    raw_ws: str | None = None
+    suite_ws_root: str | None = None
+    case_name_from_suite: str | None = None
+    system_seeded_proven = False
 
     if run_dir is not None:
         state_file = run_dir / "state.json"
         if state_file.is_file():
             try:
                 st = json.loads(state_file.read_text(encoding="utf-8"))
-                if st.get("workspace"):
-                    raw_ws = str(st["workspace"])
                 for k in ("requirement_system_dir", "system_dir"):
                     val = str(st.get(k) or "").strip()
                     if val and val != _NO_REQ_SYS_PLACEHOLDER:
                         norm = _norm_abs_posix(val)
-                        if norm:
+                        if norm and norm not in allowed:
                             allowed.append(norm)
                             explicit_found = True
             except (OSError, json.JSONDecodeError):
@@ -1120,8 +1120,6 @@ def _allowed_external_roots(run_dir: Path | None, ws_root: str | None) -> list[s
                     suite = json.loads(suite_file.read_text(encoding="utf-8"))
                     case_name = run_dir.parent.name
                     rec = (suite.get("case_states") or {}).get(case_name) or {}
-                    if rec.get("workspace") and not raw_ws:
-                        raw_ws = str(rec["workspace"])
                     for k in ("requirement_system_dir", "system_dir"):
                         val = str(rec.get(k) or "").strip()
                         if val and val != _NO_REQ_SYS_PLACEHOLDER:
@@ -1129,47 +1127,50 @@ def _allowed_external_roots(run_dir: Path | None, ws_root: str | None) -> list[s
                             if norm and norm not in allowed:
                                 allowed.append(norm)
                                 explicit_found = True
-                    if "system_seeded" in rec and not rec["system_seeded"]:
-                        no_system_seeded = True
+                    if isinstance(rec.get("system_seeded"), list) and len(rec["system_seeded"]) > 0:
+                        system_seeded_proven = True
+                        case_name_from_suite = case_name
+                        if suite.get("workspace_root"):
+                            suite_ws_root = str(suite["workspace_root"])
+                        elif rec.get("workspace"):
+                            suite_ws_root = str(Path(str(rec["workspace"])).parent)
                 except (OSError, json.JSONDecodeError):
                     pass
 
-    if explicit_found or no_system_seeded:
+    if explicit_found:
         return allowed
 
-    # 未显式写明但 workspace 位于标准隔离目录 `<temp>/sw-story/<suite>/<case>`：
-    # 仅推导本 Case 专属副本 `<temp>/sw-sys/<suite>-<digest>/<case>`、`<temp>/sw-sys/<suite>/<case>`
-    # 与 `<temp>/sw-sys/<case>`，绝不放行 `<temp>/sw-sys` 父目录或任何旁案目录。
-    if ws_root and "/sw-story/" in ws_root.lower():
-        idx = ws_root.lower().index("/sw-story/")
-        temp_parent = ws_root[:idx]
-        tail = [seg for seg in ws_root[idx + len("/sw-story/"):].split("/") if seg]
-        if len(tail) >= 2:
-            suite_dir, case_id = tail[-2], tail[-1]
-            # 计算与 run_multi_case.requirement_system_path 同源的 suite 摘要目录
-            parent_candidates: list[str] = []
-            if raw_ws:
-                try:
-                    parent_candidates.append(str(Path(raw_ws).parent.resolve()))
-                except OSError:
-                    pass
-                parent_candidates.append(str(Path(raw_ws).parent))
-            ws_parent = "/".join(ws_root.rstrip("/").split("/")[:-1])
-            parent_candidates.append(ws_parent)
-            if re.match(r"^[a-z]:/", ws_parent):
-                win_parent = ws_parent[0].upper() + ws_parent[1:].replace("/", "\\")
-                parent_candidates.append(win_parent)
-            for cand in dict.fromkeys(parent_candidates):
-                digest = hashlib.sha256(cand.encode("utf-8")).hexdigest()[:8]
-                p = f"{temp_parent}/sw-sys/{suite_dir}-{digest}/{case_id}"
-                if p not in allowed:
-                    allowed.append(p)
-            for p in (f"{temp_parent}/sw-sys/{suite_dir}/{case_id}", f"{temp_parent}/sw-sys/{case_id}"):
-                if p not in allowed:
-                    allowed.append(p)
-        elif len(tail) == 1:
-            allowed.append(f"{temp_parent}/sw-sys/{tail[0]}")
+    # 仅在 suite.json 明确证明本 Case 已 seed 需求系统副本时，按与 run_multi_case.requirement_system_path
+    # 同一公式推导唯一路径 `<temp>/sw-sys/<suite>-<digest>/<case>`；绝不放行无证明的旧别名或父目录。
+    if system_seeded_proven and suite_ws_root and case_name_from_suite:
+        resolved_suite_root = str(Path(suite_ws_root).resolve())
+        digest = hashlib.sha256(resolved_suite_root.encode("utf-8")).hexdigest()[:8]
+        suite_dir = Path(resolved_suite_root).name
+        if ws_root and "/sw-story/" in ws_root.lower():
+            temp_parent = ws_root[:ws_root.lower().index("/sw-story/")]
+        else:
+            temp_parent = _norm_abs_posix(tempfile.gettempdir()).rstrip("/")
+        p = f"{temp_parent}/sw-sys/{suite_dir}-{digest}/{case_name_from_suite}"
+        if p not in allowed:
+            allowed.append(p)
     return allowed
+
+
+#: 隔离边界终判口径：仅 confirmed_access 构成已确认外部访问（受污染）；其余非仅文字项分流为待宿主核实或失败尝试
+_NEEDS_HOST_CHECK_ACCESS = frozenset({"unknown_outcome", "truncated_unverified", "needs_review", "empty_outcome"})
+_SELECT_STRING_RE = re.compile(r"^(?:select-string|sls)\b", re.IGNORECASE)
+_HAS_INPUT_OBJECT_RE = re.compile(r"(?:^|\s)-inputobject\b", re.IGNORECASE)
+_HAS_FILE_PATH_OPT_RE = re.compile(r"(?:^|\s)-(?:literalpath|path)\b", re.IGNORECASE)
+
+
+def _stage_has_file_access(stage: str, stage_idx: int) -> bool:
+    """判断单个管道段是否真正执行文件系统访问（区别纯打印与 Select-String -InputObject / 管道纯文本过滤）。"""
+    if PRINT_ONLY_RE.match(stage):
+        return False
+    if _SELECT_STRING_RE.match(stage):
+        if (_HAS_INPUT_OBJECT_RE.search(stage) or stage_idx > 0) and not _HAS_FILE_PATH_OPT_RE.search(stage):
+            return False
+    return bool(ACCESS_VERB_RE.search(stage))
 
 
 def _call_cwd(call: dict, ws_root: str | None) -> str:
@@ -1198,8 +1199,8 @@ def _segment_of(index: int, cut: int | None) -> str:
 
 def scan_isolation_boundary(events: list[dict], calls: list[dict], run_dir: Path | None,
                             sessions: dict, cut: int | None) -> dict:
-    """只读扫描隔离工作区越界：以本 Case workspace 与专属系统副本为授权范围，按每次调用实际 cwd 与独立操作
-    关联路径与返回；区分实际访问（confirmed/failed/unknown/truncated/needs_review）与仅路径文字（mentions_only）。"""
+    """只读扫描隔离工作区越界：以本 Case workspace 与可证明的专属系统副本为授权范围，按每次调用实际 cwd 与独立操作
+    关联路径与返回；仅 confirmed_access 判为受污染（contaminated），失败尝试与待宿主核实项单独列出不触发污染终判。"""
     ws_root = _workspace_root_for_run(run_dir, sessions)
     allowed_ext = _allowed_external_roots(run_dir, ws_root)
     findings: list[dict] = []
@@ -1300,15 +1301,14 @@ def scan_isolation_boundary(events: list[dict], calls: list[dict], run_dir: Path
                         record(call, "relative_escape", cur_cwd, access, s, detail)
                     continue
 
-                # 逐管道段检查：确保 `Write-Output '../sibling' | Select-String ...` 里打印段不被过滤段误判为读文件，
+                # 逐管道段检查：区分纯打印、字符串过滤（Select-String -InputObject）与真实文件访问，
                 # 同时保留 `@' ... fs.readdirSync(...) '@ | node -` 内联脚本自身包含读动词的识别。
                 stages = _split_pipe_stages(s)
-                for stage in stages:
+                for stage_idx, stage in enumerate(stages):
                     st = stage.strip()
                     if not st:
                         continue
-                    stage_is_print_only = bool(PRINT_ONLY_RE.match(st))
-                    stage_has_access = (not stage_is_print_only) and bool(ACCESS_VERB_RE.search(st))
+                    stage_has_access = _stage_has_file_access(st, stage_idx)
 
                     # 1. 动态拼接 / 宿主私有会话库访问
                     if HOST_SESSION_STORE_RE.search(st):
@@ -1341,13 +1341,20 @@ def scan_isolation_boundary(events: list[dict], calls: list[dict], run_dir: Path
                                 access, detail = "text_mention_only", None
                             record(call, "absolute_escape", resolved, access, st, detail)
 
-    contaminated_segments = sorted({f["segment"] for f in findings})
+    confirmed = [f for f in findings if f["access"] == "confirmed_access"]
+    pending_host_check = [f for f in findings if f["access"] in _NEEDS_HOST_CHECK_ACCESS]
+    failed_attempts = [f for f in findings if f["access"] == "failed_access"]
+    contaminated = bool(confirmed)
+    contaminated_segments = sorted({f["segment"] for f in confirmed})
     return {
         "workspace_root": ws_root,
         "allowed_external_roots": allowed_ext,
-        "contaminated": bool(findings),
+        "contaminated": contaminated,
         "contaminated_segments": contaminated_segments,
-        "policy_note": "受污染段停止正式效果评价，仅保留事后诊断（TEST §6.2）" if findings else None,
+        "policy_note": "受污染段停止正式效果评价，仅保留事后诊断（TEST §6.2）" if contaminated else None,
+        "confirmed_findings": confirmed,
+        "pending_host_check": pending_host_check,
+        "failed_attempts": failed_attempts,
         "findings": findings,
         "mentions_only": mentions_only,
     }
@@ -1408,65 +1415,109 @@ def _classify_send_message_dispatch(prompt: str, prev_role: str, prev_basis: str
     return None, None
 
 
-def _actual_report_evidence(prompt: str, child: dict | None, completeness: dict,
-                            t_start: int | None, t_next: int | None) -> dict:
-    """独立核实本轮是否真正产出了可绑定到（对象、读者、本轮路径）的实际报告原件。
+def _window_report_evidence(prompt: str, child: dict | None,
+                            t_start: int | None = None, t_next: int | None = None) -> dict:
+    """统一核实单轮派审窗口 `[t_start, t_next)` 内的读者报告原件：
+    同时服务实际报告存在性（`actual_report`）与逐字节完整性（`_reader_original` / `_report_completeness`）。
 
-    指定报告路径只是预期（expected_report_file），不证明报告存在；只有读者原生子会话在本轮窗口内
-    成功写出并绑定同一 material_key 的原件（或历史前合同的 recorded_report）才计入实际报告。
+    同路径后续若被另一次完整 `write` 覆写为其他材料键，本轮窗口末原件不再属于当前对象，
+    返回 `verified=False` 且 `text=None`；仅当窗口末最后一次完整 `write` 匹配本轮材料键且后续仅有局部编辑时，
+    才判 `verified=True, basis='child_write_then_edited'`（`text=None`，完整性留 `unknown`）。
     """
     files = DISPATCH_REPORT_RE.findall(prompt)
     if not files:
-        if completeness.get("basis") == "recorded_report":
-            return {"verified": True, "report_file": None, "basis": "recorded_report", "why": None}
-        return {"verified": False, "report_file": None, "basis": None,
-                "why": "派审载体未指定报告文件且无可核的历史报告形态"}
+        return {"kind": "no_contract", "verified": False, "report_file": None, "text": None, "basis": None,
+                "why": "派审载体没有写明这一次的本次报告文件"}
     if len(files) > 1:
-        return {"verified": False, "report_file": None, "basis": None,
+        return {"kind": "contract", "verified": False, "report_file": None, "text": None, "basis": None,
                 "why": "派审载体写明了不止一个本次报告文件，无法唯一绑定实际原件"}
     report_file = files[0]
     want = _writer_path(report_file)
     if not REPORT_ORIGINAL_RE.search(want):
-        return {"verified": False, "report_file": None, "basis": None,
-                "why": f"指定路径不是读者报告原件形态（review-original.<n>.md）：{report_file}"}
+        return {"kind": "contract", "verified": False, "report_file": report_file, "text": None, "basis": None,
+                "why": f"派审载体写的报告位置不是读者报告原件（review-original.<n>.md）：{report_file}"}
     carrier = CARRIER_KEY_RE.findall(prompt)
     if len(carrier) != 1:
-        return {"verified": False, "report_file": None, "basis": None,
+        return {"kind": "contract", "verified": False, "report_file": report_file, "text": None, "basis": None,
                 "why": "派审载体缺少唯一材料键，无法绑定实际报告原件"}
     if not child:
-        return {"verified": False, "report_file": None, "basis": None,
-                "why": "没有保全的读者子会话，无法核实实际报告原件是否写出"}
+        return {"kind": "contract", "verified": False, "report_file": report_file, "text": None, "basis": None,
+                "why": "没有保全的读者子会话，取不到读者原件"}
     if child.get("error"):
-        return {"verified": False, "report_file": None, "basis": None,
-                "why": f"读者子会话读不出（{child['error']}），无法核实实际报告原件"}
+        return {"kind": "contract", "verified": False, "report_file": report_file, "text": None, "basis": None,
+                "why": f"读者子会话读不出（{child['error']}）"}
 
     cwd = (child.get("header") or {}).get("cwd")
-    authoring = [call for call in child.get("calls") or [] if call.get("name") in AUTHORING_TOOLS]
-    touched_all = [call for call in authoring if _is_report_path(_args(call).get("file_path"), want, cwd)]
-    # 若派发与子会话调用均带时间戳，仅认本轮派发窗口 [t_start, t_next) 内的写出，避免重派同路径误借上轮原件
-    if t_start is not None:
-        touched = [c for c in touched_all
-                   if c.get("time") is None or (c["time"] >= t_start and (t_next is None or c["time"] < t_next))]
+    authoring_all = [call for call in child.get("calls") or [] if call.get("name") in AUTHORING_TOOLS]
+    if t_start is not None or t_next is not None:
+        authoring = [c for c in authoring_all
+                     if c.get("time") is None
+                     or ((t_start is None or c["time"] >= t_start) and (t_next is None or c["time"] < t_next))]
     else:
-        touched = touched_all
-    succeeded = [c for c in touched if _write_outcome(c) == "success"]
+        authoring = authoring_all
+    touched = [call for call in authoring if _is_report_path(_args(call).get("file_path"), want, cwd)]
+    if not touched:
+        elsewhere = next((call for call in authoring
+                          if _writer_path(_args(call).get("file_path")).endswith("/" + want)), None)
+        if elsewhere:
+            return {"kind": "contract", "verified": False, "report_file": report_file, "text": None, "basis": None,
+                    "why": f"读者写的是 {_writer_path(_args(elsewhere).get('file_path'))}，"
+                           f"不是本次报告文件位置 {want}：同名后缀不能跨目录或工作区代证"}
+        return {"kind": "contract", "verified": False, "report_file": report_file, "text": None, "basis": None,
+                "why": f"读者子会话本轮窗口内没有写本次报告文件 {want}"}
+
+    done = [(call, _write_outcome(call)) for call in touched]
+    succeeded = [call for call, outcome in done if outcome == "success"]
     if not succeeded:
-        if touched:
-            return {"verified": False, "report_file": None, "basis": None,
-                    "why": "读者对本次报告文件的写调用失败或无结果，未产出实际报告原件"}
+        outcome = done[-1][1]
+        why = ("读者写本次报告文件的调用返回错误，参数里的正文不能证明文件已经写出"
+               if outcome == "error" else
+               "读者写本次报告文件的调用没有结果，不能证明文件已经写出")
+        return {"kind": "contract", "verified": False, "report_file": report_file, "text": None, "basis": None, "why": why}
+
+    full_writes = [c for c in succeeded if c.get("name") == "write"]
+    if not full_writes:
+        last_name = succeeded[-1].get("name")
+        return {"kind": "contract", "verified": False, "report_file": report_file, "text": None, "basis": None,
+                "why": f"本次报告文件本轮最后一次成功改动不是写出全文（{last_name}），无法绑定或重建原样正文"}
+    last_write = full_writes[-1]
+    text = _args(last_write).get("content")
+    if not isinstance(text, str):
+        return {"kind": "contract", "verified": False, "report_file": report_file, "text": None, "basis": None,
+                "why": "本次报告文件的写出调用没有可恢复的正文"}
+    if REPLY_KEY_RE.findall(text)[:1] != carrier:
+        had_earlier_bound = any(
+            isinstance(_args(c).get("content"), str) and REPLY_KEY_RE.findall(str(_args(c).get("content")))[:1] == carrier
+            for c in full_writes[:-1]
+        )
+        why = ("读者原件在本轮窗口末已被后续完整写出覆写为其他材料键，原件不再属于本次派审对象"
+               if had_earlier_bound else
+               "读者原件的材料键不是这一次派审的对象，不能拿它核完整")
+        return {"kind": "contract", "verified": False, "report_file": report_file, "text": None, "basis": None, "why": why}
+    if succeeded[-1] is last_write:
+        return {"kind": "contract", "verified": True, "report_file": report_file, "text": text,
+                "basis": "child_write_original", "why": None}
+    last_name = succeeded[-1].get("name")
+    return {"kind": "contract", "verified": True, "report_file": report_file, "text": None,
+            "basis": "child_write_then_edited",
+            "why": f"本次报告文件最后一次成功改动不是写出全文（{last_name}），重建不出原样正文"}
+
+
+def _actual_report_evidence(prompt: str, child: dict | None, completeness: dict,
+                            t_start: int | None, t_next: int | None) -> dict:
+    """独立核实本轮是否真正产出了可绑定到（对象、读者、本轮路径）的实际报告原件。"""
+    ev = _window_report_evidence(prompt, child, t_start, t_next)
+    if ev["kind"] == "no_contract":
+        if completeness.get("basis") == "recorded_report":
+            return {"verified": True, "report_file": None, "basis": "recorded_report", "why": None}
         return {"verified": False, "report_file": None, "basis": None,
-                "why": f"派审指定了 {want}，但读者子会话本轮未成功写出报告原件"}
-    bound_writes = [c for c in succeeded
-                    if c.get("name") == "write"
-                    and isinstance(_args(c).get("content"), str)
-                    and REPLY_KEY_RE.findall(str(_args(c).get("content")))[:1] == carrier]
-    if not bound_writes:
-        return {"verified": False, "report_file": None, "basis": None,
-                "why": "读者虽触及报告路径，但未成功写出带本轮材料键的绑定原件"}
-    if succeeded[-1].get("name") == "write" and succeeded[-1] is bound_writes[-1]:
-        return {"verified": True, "report_file": report_file, "basis": "child_write_original", "why": None}
-    return {"verified": True, "report_file": report_file, "basis": "child_write_then_edited",
-            "why": "读者子会话本轮已成功写出带本轮材料键的报告原件，其后又做局部编辑（原件存在，逐字节完整回复核验另列未核证）"}
+                "why": "派审载体未指定报告文件且无可核的历史报告形态"}
+    return {
+        "verified": ev["verified"],
+        "report_file": ev["report_file"] if ev["verified"] else None,
+        "basis": ev["basis"],
+        "why": ev["why"],
+    }
 
 
 def native_delegations(sessions: dict, children: dict[Path, dict] | None = None) -> dict:
@@ -1562,6 +1613,7 @@ def native_delegations(sessions: dict, children: dict[Path, dict] | None = None)
             for idx_in_group, d in enumerate(group):
                 t_start = d["start_time"]
                 t_next = group[idx_in_group + 1]["start_time"] if idx_in_group + 1 < len(group) else None
+                d["win_start"] = t_start if idx_in_group > 0 else None
                 d["next_time"] = t_next
                 cands: list[tuple[int, dict]] = []
                 for si, cand in enumerate(s_queue):
@@ -1638,10 +1690,11 @@ def native_delegations(sessions: dict, children: dict[Path, dict] | None = None)
             if d.get("settled_note"):
                 row["settled_note"] = d["settled_note"]
             if row["role"] == "story_review":
+                w_start = d.get("win_start")
                 row["review_mode"] = _review_mode(prompt)
                 row["review_conclusion"] = _reply_conclusion(prompt, reply, done)
-                row["report_completeness"] = _report_completeness(prompt, reply, row["review_conclusion"], d["child"])
-                actual = _actual_report_evidence(prompt, d["child"], row["report_completeness"], t_start, t_next)
+                row["report_completeness"] = _report_completeness(prompt, reply, row["review_conclusion"], d["child"], w_start, t_next)
+                actual = _actual_report_evidence(prompt, d["child"], row["report_completeness"], w_start, t_next)
                 row["actual_report"] = actual
                 row["report_file"] = actual["report_file"] if actual["verified"] else None
             rows.append(row)
@@ -1810,55 +1863,15 @@ def _write_outcome(call: dict) -> str:
     return "error" if results[-1].get("isError") else "success"
 
 
-def _reader_original(prompt: str, child: dict | None) -> dict:
-    """读者原件：派审载体分配的报告文件，在同一个读者子会话里由读者自己成功写出的正文。
+def _reader_original(prompt: str, child: dict | None,
+                     t_start: int | None = None, t_next: int | None = None) -> dict:
+    """读者原件：派审载体分配的报告文件，在同一个读者子会话的本轮窗口内由读者自己成功写出的正文。
 
-    `{report_file, text, why}`。只认载体写明的那个位置（同一工作区、同一相对路径；同名后缀不代证）：
-    调用失败或没有结果不算写出；同一位置最后一次成功改动不是「写出全文」时重建不出原样正文；
-    没有保全的子会话或读不出时取不到；原件的材料键不是这一次派审的对象也不采用。
+    `{report_file, text, why}`。与 `_actual_report_evidence` 共用 `_window_report_evidence`，
+    保证实际报告存在性与逐字节完整性核验遵守同一窗口边界与覆写规则。
     """
-    files = DISPATCH_REPORT_RE.findall(prompt)
-    if len(files) != 1:
-        return {"report_file": None, "text": None, "why": "派审载体没有写明这一次的本次报告文件"}
-    report_file = files[0]
-    want = _writer_path(report_file)
-    if not REPORT_ORIGINAL_RE.search(want):
-        return {"report_file": report_file, "text": None,
-                "why": f"派审载体写的报告位置不是读者报告原件（review-original.<n>.md）：{report_file}"}
-    if not child:
-        return {"report_file": report_file, "text": None, "why": "没有保全的读者子会话，取不到读者原件"}
-    if child.get("error"):
-        return {"report_file": report_file, "text": None, "why": f"读者子会话读不出（{child['error']}）"}
-    cwd = (child.get("header") or {}).get("cwd")
-    calls = [call for call in child.get("calls") or [] if call.get("name") in AUTHORING_TOOLS]
-    touched = [call for call in calls if _is_report_path(_args(call).get("file_path"), want, cwd)]
-    if not touched:
-        elsewhere = next((call for call in calls
-                          if _writer_path(_args(call).get("file_path")).endswith("/" + want)), None)
-        if elsewhere:
-            return {"report_file": report_file, "text": None,
-                    "why": f"读者写的是 {_writer_path(_args(elsewhere).get('file_path'))}，"
-                           f"不是本次报告文件位置 {want}：同名后缀不能跨目录或工作区代证"}
-        return {"report_file": report_file, "text": None, "why": f"读者子会话里没有写本次报告文件 {want}"}
-    done = [(call, _write_outcome(call)) for call in touched]
-    if not any(outcome == "success" for _, outcome in done):
-        outcome = done[-1][1]
-        why = ("读者写本次报告文件的调用返回错误，参数里的正文不能证明文件已经写出"
-               if outcome == "error" else
-               "读者写本次报告文件的调用没有结果，不能证明文件已经写出")
-        return {"report_file": report_file, "text": None, "why": why}
-    last = next(call for call, outcome in reversed(done) if outcome == "success")
-    if last.get("name") != "write":
-        return {"report_file": report_file, "text": None,
-                "why": f"本次报告文件最后一次成功改动不是写出全文（{last.get('name')}），重建不出原样正文"}
-    text = _args(last).get("content")
-    if not isinstance(text, str):
-        return {"report_file": report_file, "text": None, "why": "本次报告文件的写出调用没有可恢复的正文"}
-    carrier = CARRIER_KEY_RE.findall(prompt)
-    if len(carrier) != 1 or REPLY_KEY_RE.findall(text)[:1] != carrier:
-        return {"report_file": report_file, "text": None,
-                "why": "读者原件的材料键不是这一次派审的对象，不能拿它核完整"}
-    return {"report_file": report_file, "text": text, "why": None}
+    ev = _window_report_evidence(prompt, child, t_start, t_next)
+    return {"report_file": ev["report_file"], "text": ev["text"], "why": ev["why"]}
 
 
 def _whole_text(text: str) -> str:
@@ -1879,11 +1892,12 @@ def _original_completeness(original: str, final: str) -> str | None:
     return "最终回复与读者原件不是同一份（报告文件是原件，最终回复要给同一份正文）"
 
 
-def _report_completeness(prompt: str, reply: dict, conclusion: dict, child: dict | None) -> dict:
+def _report_completeness(prompt: str, reply: dict, conclusion: dict, child: dict | None,
+                         t_start: int | None = None, t_next: int | None = None) -> dict:
     """报告完整性的可核结论：{value: complete/unknown, why, basis, report_file}。
 
     **任务收尾、取得回复文本、声明结论、报告可核完整是四件事。** 有现行报告合同的派审（载体写明了
-    `本次报告文件`），先核同一次派审、同一对象、所配位置上有成功结果的那次完整写入（读者原件），
+    `本次报告文件`），先核同一次派审窗口内、同一对象、所配位置上有成功结果的那次完整写入（读者原件），
     再与整份 final 对同一份正文：一致且原件有正文才算 complete。只有失败或没有结果的调用、写进别的
     相对目录或别的同名后缀，都不足以证明文件存在。载体没有现行报告合同的是按当时身份保全下来的历史
     派审，只能按当时的完整报告形态（三个二级标题）读取；现行作者自己选的 Markdown 标题不改变证据标准。
@@ -1904,7 +1918,7 @@ def _report_completeness(prompt: str, reply: dict, conclusion: dict, child: dict
     if len(files) > 1:
         return {"value": "unknown", "basis": None, "report_file": None,
                 "why": "派审载体写明了不止一个本次报告文件，无法确定哪一份是这一次的原件"}
-    original = _reader_original(prompt, child)
+    original = _reader_original(prompt, child, t_start, t_next)
     if original["text"] is None:
         return {"value": "unknown", "why": original["why"], "basis": None, "report_file": original["report_file"]}
     why = _original_completeness(original["text"], reply["reply"])
@@ -2049,14 +2063,20 @@ def render(result: dict) -> str:
                  if "review_conclusion" in i else "") for i in result["delegations"]["items"]),
             *(f"    读不了：{p}" for p in result["delegations"]["problems"])]),
         "",
-        "  ── 隔离边界（只读扫描；受污染段停止正式评价）──",
+        "  ── 隔离边界（只读扫描；仅已确认外部访问触发受污染停评）──",
         *(["    未检出外部访问"
            + (f"（仅提及路径文字 {len(result['isolation_boundary'].get('mentions_only') or [])} 条）"
               if (result.get("isolation_boundary") or {}).get("mentions_only") else "")]
-          if not (result.get("isolation_boundary") or {}).get("contaminated") else [
-            f"    **已受污染**：{len(result['isolation_boundary']['findings'])} 处外部访问"
-            f"（影响段：{', '.join(result['isolation_boundary']['contaminated_segments'])}；"
-            f"仅路径文字 {len(result['isolation_boundary'].get('mentions_only') or [])} 条）",
+          if not (result.get("isolation_boundary") or {}).get("findings") else [
+            (f"    **已受污染**：{len(result['isolation_boundary'].get('confirmed_findings') or [])} 处已确认外部访问"
+             f"（影响段：{', '.join(result['isolation_boundary']['contaminated_segments'])}；"
+             f"待核实 {len(result['isolation_boundary'].get('pending_host_check') or [])} 处，"
+             f"失败尝试 {len(result['isolation_boundary'].get('failed_attempts') or [])} 处，"
+             f"仅路径文字 {len(result['isolation_boundary'].get('mentions_only') or [])} 条）"
+             if (result.get("isolation_boundary") or {}).get("contaminated") else
+             f"    未确认受污染（待宿主核实 {len(result['isolation_boundary'].get('pending_host_check') or [])} 处，"
+             f"失败尝试 {len(result['isolation_boundary'].get('failed_attempts') or [])} 处，"
+             f"仅路径文字 {len(result['isolation_boundary'].get('mentions_only') or [])} 条；未触发受污染停评）"),
             *(f"    - L{f['line']} [{f['segment']}] {f['tool']} {f['kind']}（{f['access']}）→ {f['resolved_path']}"
               + (f" — {f['outcome_detail']}" if f.get("outcome_detail") else "")
               + (" [截断待核]" if f.get("truncated_needs_host_check") else "")
