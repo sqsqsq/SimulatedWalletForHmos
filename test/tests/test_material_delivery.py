@@ -28,7 +28,7 @@ from flow_steps import ensure_framework
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO_ROOT / "test" / "scripts"
 sys.path.insert(0, str(REPO_ROOT))
-STORY_SCRIPTS = DEV_EXT / "skills" / "story" / "scripts" / "core"
+STORY_SCRIPTS = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(STORY_SCRIPTS))
 from materials import registry  # noqa: E402
@@ -386,7 +386,7 @@ class SupplementForImagesOnlyLeavesTheTextAlone(unittest.TestCase):
 
     def run_import(self) -> subprocess.CompletedProcess:
         return subprocess.run(
-            [sys.executable, str(DEV_EXT / "skills/story/scripts/core/import_sources.py"),
+            [sys.executable, str(DEV_EXT / "base" / "skills/story/scripts/core/import_sources.py"),
              "--feature", "IM90002", "--project-root", str(self.root)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
 
@@ -487,7 +487,7 @@ class MarkdownKeepsItsPictures(unittest.TestCase):
 
     def run_import(self) -> subprocess.CompletedProcess:
         return subprocess.run(
-            [sys.executable, str(DEV_EXT / "skills/story/scripts/core/import_sources.py"),
+            [sys.executable, str(DEV_EXT / "base" / "skills/story/scripts/core/import_sources.py"),
              "--feature", "MD90001", "--project-root", str(self.root)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
 
@@ -543,7 +543,7 @@ class MarkdownKeepsItsPictures(unittest.TestCase):
         """设计只在事实里引用说明的阅读稿：附录的版本与三张图都进采用集合。"""
         self.first_import()
         ensure_framework(self.root)
-        access = (DEV_EXT / "hooks" / "shared" / "framework-access.mjs").resolve().as_uri()
+        access = (DEV_EXT / "base" / "hooks" / "shared" / "framework-access.mjs").resolve().as_uri()
         ref = f"doc/features/MD90001/{self.reading_of('local:docs/说明.md').relative_to(self.feature_root).as_posix()}"
         proc = subprocess.run(["node", "--input-type=module", "-e", self.ADOPTED, access, str(self.root), "MD90001", ref],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
@@ -636,7 +636,7 @@ class AnOldIndexIsNotTakenOver(unittest.TestCase):
             index.write_text(json.dumps({"schema": 2, "materials": [], "notes": {}}), encoding="utf-8")
             before = {p.relative_to(feature_root).as_posix(): p.read_bytes() for p in feature_root.rglob("*") if p.is_file()}
             proc = subprocess.run(
-                [sys.executable, str(DEV_EXT / "skills/story/scripts/core/import_sources.py"),
+                [sys.executable, str(DEV_EXT / "base" / "skills/story/scripts/core/import_sources.py"),
                  "--feature", "OLD90001", "--project-root", str(root)],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
             self.assertNotEqual(0, proc.returncode)

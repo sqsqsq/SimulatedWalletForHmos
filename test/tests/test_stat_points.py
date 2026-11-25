@@ -12,7 +12,7 @@ import unittest
 
 from ext_workspace import DEV_EXT
 
-MODULE = (DEV_EXT / "hooks" / "shared" / "stat-points.mjs").resolve().as_uri()
+MODULE = (DEV_EXT / "base" / "hooks" / "shared" / "stat-points.mjs").resolve().as_uri()
 
 EVENT = """总述：开票结果进成功率统计。
 

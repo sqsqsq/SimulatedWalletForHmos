@@ -18,7 +18,7 @@ from pathlib import Path
 from ext_workspace import DEV_EXT, link_framework
 import shared_state
 
-STATS = DEV_EXT / "skills" / "story-stats" / "scripts" / "stats.py"
+STATS = DEV_EXT / "base" / "skills" / "story-stats" / "scripts" / "stats.py"
 A, B, C = "AR1-20261001T010000.000Z", "DTS22-20261002T010000.000Z", "AR333-20261003T010000.000Z"
 
 
@@ -223,13 +223,13 @@ class TheArchivedRecordIsSelfContained(GitRepo):
         # 目标仓的做法：需求目录整体不入库，随代码归档的使用记录只有 doc/usage.json
         cls.commit("项目起点", {"src/app.txt": "1\n", ".gitignore": "doc/features/\n"})
         # 纯 Framework 需求：开始 plan 的工作（共享记录器 begin 建身份），做完、原生闭环后照阶段闭环页收尾——收尾命令原样
-        closure = (root / "doc/extensions/skills/story/reference/phase-closure.md").read_text(encoding="utf-8")
-        finalize = re.search(r"`(python doc/extensions/skills/story/scripts/core/usage\.py [^`]+--finalize[^`]*)`", closure).group(1)
+        closure = (root / "doc/extensions/base/skills/story/reference/phase-closure.md").read_text(encoding="utf-8")
+        finalize = re.search(r"`(python doc/extensions/base/skills/story/scripts/core/usage\.py [^`]+--finalize[^`]*)`", closure).group(1)
 
         def run(args: list[str]) -> subprocess.CompletedProcess:
             return subprocess.run([sys.executable, *args], cwd=root, capture_output=True, text=True,
                                   encoding="utf-8", errors="replace", env=cls.env())
-        cls.begun = run(["doc/extensions/skills/story/scripts/core/usage.py", "--project-root", ".", "--feature", "AR77",
+        cls.begun = run(["doc/extensions/base/skills/story/scripts/core/usage.py", "--project-root", ".", "--feature", "AR77",
                          "--begin", "--step", "plan"])
         reports = root / "doc" / "features" / "AR77" / "plan" / "reports"
         reports.mkdir(parents=True, exist_ok=True)
@@ -238,7 +238,7 @@ class TheArchivedRecordIsSelfContained(GitRepo):
             "closure_commit": {"committed_at": datetime.now(timezone.utc).isoformat()}}), encoding="utf-8")
         import design_kit  # noqa: PLC0415
         design_kit.write_native_evidence(root, "AR77", ["spec", "plan"],
-                                         root / "doc/extensions/hooks/shared/framework-access.mjs")
+                                         root / "doc/extensions/base/hooks/shared/framework-access.mjs")
         cls.closed = run(finalize.replace("<Feature id>", "AR77").replace("<阶段>", "plan").split()[1:])
         cls.commit("plan 设计落地", {"src/app.txt": "1\n2\n3\n"})
         # 需求目录不入库：工作区里 doc/features 一直在，提交里只有代码与 usage
@@ -247,7 +247,7 @@ class TheArchivedRecordIsSelfContained(GitRepo):
         cls.clone = base / "clone"
 
     def stats(self, root: Path) -> dict:
-        script = self.package / "doc" / "extensions" / "skills" / "story-stats" / "scripts" / "stats.py"
+        script = self.package / "doc" / "extensions" / "base" / "skills" / "story-stats" / "scripts" / "stats.py"
         out = json.loads(subprocess.run([sys.executable, str(script), "collect", "--project-root", str(root)],
                                         capture_output=True, text=True, encoding="utf-8", errors="replace",
                                         timeout=120, env=self.env()).stdout)
@@ -312,7 +312,7 @@ class Installed(GitRepo):
         """Framework 按 manifest 给每个宿主物化的 story-stats 入口都指向随包的统计 Skill；/story 的 stats 路由也指向它。"""
         from ext_workspace import installed_package
         root = installed_package()
-        target = root / "doc" / "extensions" / "skills" / "story-stats" / "SKILL.md"
+        target = root / "doc" / "extensions" / "base" / "skills" / "story-stats" / "SKILL.md"
         entries = [p for p in root.rglob("*.md") if p.relative_to(root).parts[0] not in ("doc", "framework")
                    and '"bridgeId":"story-stats"' in p.read_text(encoding="utf-8")]
         self.assertEqual(6, len(entries), [e.relative_to(root).as_posix() for e in entries])
@@ -320,11 +320,11 @@ class Installed(GitRepo):
             with self.subTest(entry.relative_to(root).as_posix()):
                 link = re.search(r"\]\(([^)]*story-stats/SKILL\.md)\)", entry.read_text(encoding="utf-8")).group(1)
                 self.assertTrue((entry.parent / link).resolve().samefile(target))
-        story = root / "doc" / "extensions" / "skills" / "story" / "SKILL.md"
+        story = root / "doc" / "extensions" / "base" / "skills" / "story" / "SKILL.md"
         row = next(line for line in story.read_text(encoding="utf-8").splitlines() if line.startswith("| `stats"))
         link = row.split("](", 1)[1].split(")", 1)[0]
         self.assertTrue((story.parent / link).resolve().samefile(target))
-        script = root / "doc" / "extensions" / "skills" / "story-stats" / "scripts" / "stats.py"
+        script = root / "doc" / "extensions" / "base" / "skills" / "story-stats" / "scripts" / "stats.py"
         p = subprocess.run([sys.executable, str(script), "collect", "--project-root", str(self.root)],
                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, env=self.env())
         out = json.loads(p.stdout)

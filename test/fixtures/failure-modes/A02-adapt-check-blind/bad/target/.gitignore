@@ -1,0 +1,5 @@
+doc/features/**/AR/story-src/drafts/
+doc/features/**/.usage-input.json
+doc/features/.usage-state.json*
+/doc/usage.json.lock
+/doc/.usage.json.*.tmp

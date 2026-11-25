@@ -19,7 +19,7 @@ from flow_steps import ensure_framework, project_root_of
 from xml.sax.saxutils import escape
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CORE = DEV_EXT / "skills" / "story" / "scripts" / "core"
+CORE = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
 sys.path.insert(0, str(CORE))
 from flow import meetings  # noqa: E402
 from materials import importer, meeting, registry  # noqa: E402
@@ -291,7 +291,7 @@ class AMeetingIsCitedThroughItsCorrections(MeetingCase):
         folder = self.corrected()
         registry.refresh(self.fr)
         ensure_framework(project_root_of(self.fr))
-        access = (DEV_EXT / "hooks" / "shared" / "framework-access.mjs").resolve().as_uri()
+        access = (DEV_EXT / "base" / "hooks" / "shared" / "framework-access.mjs").resolve().as_uri()
         ref = f"doc/features/{FEATURE}/{folder}/{meeting.EVIDENCE}"
         proc = subprocess.run(["node", "--input-type=module", "-e", self.ADOPTED, access, str(self.root), FEATURE, ref],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)

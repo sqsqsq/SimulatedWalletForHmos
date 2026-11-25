@@ -11,8 +11,8 @@ from pathlib import Path
 from ext_workspace import DEV_EXT
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "test" / "scripts"
-OVERLAY = DEV_EXT / "rules" / "story-reader-rules.yaml"
-REPORT_CONTRACT = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story" / "review-report-contract.mjs"
+OVERLAY = DEV_EXT / "base" / "rules" / "story-reader-rules.yaml"
+REPORT_CONTRACT = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core" / "story" / "review-report-contract.mjs"
 
 sys.path.insert(0, str(SCRIPTS))
 from check_failure_modes import maintenance_path_hits  # noqa: E402

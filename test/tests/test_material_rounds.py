@@ -19,7 +19,7 @@ from pathlib import Path, PurePosixPath
 from ext_workspace import DEV_EXT, DEV_ROOT
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-STORY_SCRIPTS = DEV_EXT / "skills" / "story" / "scripts" / "core"
+STORY_SCRIPTS = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
 FLOW = STORY_SCRIPTS / "story_flow.py"
 MATERIALS = STORY_SCRIPTS / "materials" / "registry.py"
 
@@ -935,8 +935,8 @@ class StopsAreNotDelegated(unittest.TestCase):
     于是固定长出第三个停等点。那个问题在更早的两个地方已经有答案。
     """
 
-    SKILL = (DEV_EXT / "skills/story/SKILL.md")
-    FLOW = (DEV_EXT / "skills/story/scripts/core/story_flow.py")
+    SKILL = (DEV_EXT / "base" / "skills/story/SKILL.md")
+    FLOW = (DEV_EXT / "base" / "skills/story/scripts/core/story_flow.py")
 
     def skill(self) -> str:
         return self.SKILL.read_text(encoding="utf-8")
@@ -983,8 +983,8 @@ class StopsAreNotDelegated(unittest.TestCase):
 
     def test_no_delegated_choice_path_remains(self) -> None:
         """代选路径整个退场——它就是材料环节被跳过的那条路。"""
-        for rel in ("doc/extensions/skills/story/rules/init_analysis.md",
-                    "doc/extensions/skills/story/SKILL.md"):
+        for rel in ("doc/extensions/base/skills/story/rules/init_analysis.md",
+                    "doc/extensions/base/skills/story/SKILL.md"):
             text = (DEV_ROOT / rel).read_text(encoding="utf-8")
             for gone in ('by:"ai"', "AI 代选", "代选永远不选"):
                 self.assertNotIn(gone, text, "%s 里还留着代选路径：%s" % (rel, gone))
@@ -1798,7 +1798,7 @@ class ImageLinksKeepTheirFullTarget(ManifestCase):
     """原件名带空格与括号不要求改名：图片引用按完整目标认出登记的那一张，身份、去处与断链三处核对都成立（A4）。"""
 
     NAME = "界面稿/申请 页（一）(v2).png"
-    STORY_JS = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story"
+    STORY_JS = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core" / "story"
 
     def prepare(self, name: str = NAME) -> None:
         """真实导入一张名字带空格与括号的界面图。"""
@@ -1922,7 +1922,7 @@ class OnlyTheManifestModuleHashesMaterial(unittest.TestCase):
     def test_the_data_layer_never_hears_about_the_manifest(self) -> None:
         """对接层的 js 各部署环境自备、不随包交付，不能要求它们跟着改。"""
         for name in ("story.js", "token.js"):
-            text = (STORY_SCRIPTS.parent / "adapters" / name).read_text(encoding="utf-8")
+            text = (DEV_EXT / "adapters" / name).read_text(encoding="utf-8")
             for word in ("materials.json", "manifest"):
                 self.assertNotIn(word, text,
                                  "%s 里出现了 %s —— 清单的事不该落到对接层" % (name, word))
@@ -2022,11 +2022,11 @@ class RegistrationReprojectsFirst(unittest.TestCase):
     """
 
     def test_the_order_is_project_then_number_then_check(self) -> None:
-        source = (DEV_EXT / "skills" / "story" / "scripts" / "core" / "story-build.mjs").read_text(encoding="utf-8")
+        source = (DEV_EXT / "base" / "skills" / "story" / "scripts" / "core" / "story-build.mjs").read_text(encoding="utf-8")
         body = source.split("function cmdReview(", 1)[1].split("\n}\n", 1)[0]
         order = [body.index(step) for step in ("cmdProject(ctx)", "cmdNumber(ctx)", "storyCheck(ctx", "prepareReview(")]
         self.assertEqual(sorted(order), order, "准备审查时没有先定稿再检查、再准备请求")
-        lifecycle = (DEV_EXT / "skills" / "story" / "scripts" / "core" / "flow" / "lifecycle.py").read_text(encoding="utf-8")
+        lifecycle = (DEV_EXT / "base" / "skills" / "story" / "scripts" / "core" / "flow" / "lifecycle.py").read_text(encoding="utf-8")
         registration = lifecycle.split("def cmd_story(", 1)[1].split("\ndef ", 1)[0]
         for gone in ('"project"', '"number"', 'build("build")'):
             self.assertNotIn(gone, registration, "登记又在改被审对象")
@@ -2037,7 +2037,7 @@ class RegistrationReprojectsFirst(unittest.TestCase):
         过程件走不漏：归档只上传 story.md 与按需的设计参考，这一层整个留在本地。
         删掉的代价倒是实的——update 里作者要改某一章，手上却没有可改的东西。
         """
-        source = (DEV_EXT / "skills" / "story" / "scripts"
+        source = (DEV_EXT / "base" / "skills" / "story" / "scripts"
                   / "core" / "flow" / "lifecycle.py").read_text(encoding="utf-8")
         body = source.split("def cmd_story(", 1)[1].split("\ndef ", 1)[0]
         for gone in ("rmtree", "unlink", "sweep"):

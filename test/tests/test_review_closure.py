@@ -116,7 +116,7 @@ class ClosureCase(unittest.TestCase):
     def gate(self, phase: str = "spec") -> str:
         proc = subprocess.run(
             ["node", str(self.root / "drive.mjs"),
-             str(self.root / f"doc/extensions/hooks/{'spec/post_check' if phase == 'spec' else 'shared/pre_verifier'}.mjs"),
+             str(self.root / f"doc/extensions/base/hooks/{'spec/post_check' if phase == 'spec' else 'shared/pre_verifier'}.mjs"),
              "spec", FEATURE, str(self.root)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         self.assertEqual(0, proc.returncode, proc.stderr[-800:])
@@ -124,7 +124,7 @@ class ClosureCase(unittest.TestCase):
 
     def overlay_ids(self) -> list[str]:
         import yaml
-        return list(yaml.safe_load((EXT / "rules" / "spec-rules.overlay.yaml").read_text(encoding="utf-8"))
+        return list(yaml.safe_load((EXT / "base" / "rules" / "spec-rules.overlay.yaml").read_text(encoding="utf-8"))
                     ["semantic_checks"])
 
     def put_report(self, text: str, reports: Path | None = None) -> Path:
@@ -188,8 +188,8 @@ class TheReportIsCheckedReadOnly(ClosureCase):
 DIRECT = """
 import { pathToFileURL } from 'node:url';
 const [ext, root, phase, ...features] = process.argv.slice(2);
-const report = await import(pathToFileURL(`${ext}/hooks/shared/verifier-report.mjs`).href);
-const access = await import(pathToFileURL(`${ext}/hooks/shared/framework-access.mjs`).href);
+const report = await import(pathToFileURL(`${ext}/base/hooks/shared/verifier-report.mjs`).href);
+const access = await import(pathToFileURL(`${ext}/base/hooks/shared/framework-access.mjs`).href);
 const out = {};
 for (const f of features) out[f] = { dir: access.phaseReportsDir(root, f, phase), problems: report.reportProblems(root, f, phase) };
 process.stdout.write(JSON.stringify(out));
@@ -340,7 +340,7 @@ class ThePlanReviewUsesTheSameCoverageContract(ClosureCase):
     def plan_report(self, details: str) -> list[str]:
         """按当前报告合同落一份 Plan 审查回复（汇总表、终态块，加 `details`），返回 reportProblems 的问题。"""
         import yaml
-        ids = list(yaml.safe_load((EXT / "rules" / "plan-rules.overlay.yaml").read_text(encoding="utf-8"))["semantic_checks"])
+        ids = list(yaml.safe_load((EXT / "base" / "rules" / "plan-rules.overlay.yaml").read_text(encoding="utf-8"))["semantic_checks"])
         reports = self.fr / "plan" / "reports"
         reports.mkdir(parents=True, exist_ok=True)
         rel = f"doc/features/{FEATURE}/plan/reports/verifier.report.{SUBJECT}.md"
@@ -354,7 +354,7 @@ class ThePlanReviewUsesTheSameCoverageContract(ClosureCase):
               "process.stdout.write(JSON.stringify(reportProblems(process.argv[2], process.argv[3], 'plan')));")
 
     def problems(self) -> list[str]:
-        module = (self.root / "doc/extensions/hooks/shared/verifier-report.mjs").resolve().as_uri()
+        module = (self.root / "doc/extensions/base/hooks/shared/verifier-report.mjs").resolve().as_uri()
         proc = subprocess.run(["node", "--input-type=module", "-e", self.DRIVER, module, str(self.root), FEATURE],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         self.assertEqual(0, proc.returncode, proc.stderr[-800:])

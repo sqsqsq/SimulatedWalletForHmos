@@ -116,7 +116,7 @@ class ProtocolCase(nk.NeutralKnowledgeCase):
 
     def hook_result(self, phase: str) -> dict:
         proc = nk.node("--input-type=module", "-e",
-                       f"const hook = (await import({nk.as_url(self.ext / 'hooks' / phase / 'post_check.mjs')})).default;"
+                       f"const hook = (await import({nk.as_url(self.ext / 'base' / 'hooks' / phase / 'post_check.mjs')})).default;"
                        f"const out = await hook({{ phase: '{phase}', feature: {json.dumps(nk.FEATURE)},"
                        f" projectRoot: {json.dumps(self.root.as_posix())} }});"
                        "process.stdout.write(JSON.stringify(out));")
@@ -499,7 +499,7 @@ class TheAuthorPagesSayWhereThingsGo(unittest.TestCase):
     """作者页：coding 不再要「说法」、模式指针指下篇；plan 有执行体对照、义务带出自的决定、业务规则不挂义务。"""
 
     def read(self, phase: str) -> str:
-        return (nk.EXT / "hooks" / phase / "author.md").read_text(encoding="utf-8")
+        return (nk.EXT / "base" / "hooks" / phase / "author.md").read_text(encoding="utf-8")
 
     def test_the_coding_page(self) -> None:
         page = self.read("coding")
@@ -576,7 +576,7 @@ class TheNativeInputProblemIsNeverDropped(ProtocolCase):
 
     def run_hook(self, phase: str, feature: str) -> dict:
         proc = nk.node("--input-type=module", "-e",
-                       f"const hook = (await import({nk.as_url(self.ext / 'hooks' / phase / 'post_check.mjs')})).default;"
+                       f"const hook = (await import({nk.as_url(self.ext / 'base' / 'hooks' / phase / 'post_check.mjs')})).default;"
                        f"const out = await hook({{ phase: '{phase}', feature: {json.dumps(feature)},"
                        f" projectRoot: {json.dumps(self.root.as_posix())} }});"
                        "process.stdout.write(JSON.stringify(out));")

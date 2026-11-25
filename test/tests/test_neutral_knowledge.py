@@ -182,7 +182,7 @@ class NeutralKnowledgeCase(unittest.TestCase):
     # ---- 驱动 ----
 
     def module(self, name: str) -> Path:
-        return self.ext / "hooks" / "shared" / name
+        return self.ext / "base" / "hooks" / "shared" / name
 
     def eval_js(self, expr: str) -> str:
         proc = node("--input-type=module", "-e",
@@ -251,7 +251,7 @@ class NeutralKnowledgeCase(unittest.TestCase):
     def hook(self, phase: str) -> str:
         """跑本阶段的 post_check，返回它的消息。"""
         proc = node("--input-type=module", "-e",
-                    f"const hook = (await import({as_url(self.ext / 'hooks' / phase / 'post_check.mjs')})).default;"
+                    f"const hook = (await import({as_url(self.ext / 'base' / 'hooks' / phase / 'post_check.mjs')})).default;"
                     f"const out = await hook({{ phase: '{phase}', feature: {json.dumps(FEATURE)},"
                     f" projectRoot: {json.dumps(self.root.as_posix())} }});"
                     "process.stdout.write(JSON.stringify(out));")
@@ -368,7 +368,7 @@ class TheRuleTextFollowsTheExtensionDir(TheRuleTextIsHandedOverByPath):
         for phase in ("spec", "plan"):
             with self.subTest(phase=phase):
                 proc = node("--input-type=module", "-e",
-                            f"const m = (await import({as_url(self.ext / 'hooks' / 'shared' / 'pre_verifier.mjs')})).default;"
+                            f"const m = (await import({as_url(self.ext / 'base' / 'hooks' / 'shared' / 'pre_verifier.mjs')})).default;"
                             f"const out = await m({{ phase: '{phase}', feature: {json.dumps(FEATURE)},"
                             f" projectRoot: {json.dumps(self.root.as_posix())} }});"
                             "process.stdout.write((out.promptFragments ?? []).join('\\n\\n'));")

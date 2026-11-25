@@ -10,7 +10,7 @@ from __future__ import annotations
 import unittest
 from ext_workspace import DEV_EXT
 
-SKILL = DEV_EXT / "skills" / "story"
+SKILL = DEV_EXT / "base" / "skills" / "story"
 
 
 def read(rel: str) -> str:
@@ -18,7 +18,7 @@ def read(rel: str) -> str:
 
 
 def read_ext(rel: str) -> str:
-    return (DEV_EXT / rel).read_text(encoding="utf-8")
+    return (DEV_EXT / "base" / rel).read_text(encoding="utf-8")
 
 
 class TheTwoScopeCommandsRouteDifferently(unittest.TestCase):

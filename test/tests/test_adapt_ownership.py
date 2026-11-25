@@ -1,21 +1,16 @@
-"""所有权由目录表达 —— `core/` 整份换掉，`adapters/` 与 `knowledge/` 一寸不碰。
+"""所有权由目录表达 —— `base/` 整目录随发行替换，`adapters/` 与 `knowledge/` 一寸不碰。
 
 ## 为什么有这一份
 
-上一版 `adapt-scan` 按**路径长相**分类：`skills/story/scripts/<name>.js` 是对接层，
-其余一概是机制。于是目标为自定义对接装的依赖（`package.json` 不是 `.js`、
-`node_modules/**` 有下级目录）统统落进机制，撞上「机制内容 == 包」恒 FAIL，
-目标绕不过去。更早还栽过一次：知识文件按路径判成随包维护，一次升级盖掉了目标的业务定义。
+2.0.6 起目录边界直接表达所有权，并在目标业务工程内就地适配（不再跨仓 `--package` 拷贝）：
 
-两次都是同一个根因——**路径长相回答不了「这是谁的东西」**。
+    base/           通用机制包，整目录替换（含 package-manifest.yaml、.gitignore、首装临时 examples/）
+    adapters/       业务侧对接实现与依赖闭包，升级一个字节不碰
+    knowledge/      业务侧知识，升级不读不写
+    manifest.yaml   运行时唯一清单：机制登记由 base/package-manifest.yaml 合成，name/description/业务 knowledge 归目标
+    adaptation.yaml 目标的对接标记与 adapted_for，归目标
 
-现在所有权写在目录本身：
-
-    scripts/core/       归包，升级整份换掉，包里没有的删掉
-    scripts/adapters/   归目标，升级一个字节不碰
-    knowledge/          归目标，升级不读不写
-
-没有推断，也就没有推错的可能。下面锁三件：边界守得住、升级动得对、前置拦得住。
+下面锁：边界守得住、状态只读、演进跟进与独审门禁、前置拦得住、使用记录建立与两套 shell 补建命令原样可跑。
 """
 from __future__ import annotations
 
@@ -23,35 +18,28 @@ import json
 import shutil
 import subprocess
 import tempfile
-import sys
 import unittest
 from pathlib import Path
 import yaml
-from ext_workspace import (change_versions, copy_host_entries, git_init_excluding_framework, installed_package,
-                           link_framework, link_harness_yaml)
+from ext_workspace import (DEV_BASE, change_versions, copy_host_entries, git_init_excluding_framework,
+                           installed_package, link_framework)
 
 REPO = Path(__file__).resolve().parents[2]
-#: 包：装好了开发源的临时消费工程——adapt 从包里的脚本起跑（运行态）
+#: 已装好开发源的参考工程（含 base/、adapters/、knowledge/、manifest.yaml 与物化好的宿主入口）
 PKG_ROOT = installed_package()
 PKG_EXT = PKG_ROOT / "doc" / "extensions"
-SCAN = PKG_EXT / "skills" / "story-adaptation" / "scripts" / "adapt-scan.mjs"
-ENTRIES = PKG_EXT / "skills" / "story-adaptation" / "scripts" / "entries.mjs"
+ENTRIES_REF = PKG_EXT / "base" / "skills" / "story-adaptation" / "scripts" / "entries.mjs"
 #: 包的版本：`adapted_for` 只会被脚本写成它
-PKG_VERSION = yaml.safe_load((PKG_EXT / "manifest.yaml").read_text(encoding="utf-8"))["version"]
+PKG_VERSION = yaml.safe_load((DEV_BASE / "package-manifest.yaml").read_text(encoding="utf-8"))["version"]
 
 
 class AdaptCase(unittest.TestCase):
-    """每个用例搭一个「接入了 demo Framework、已装好扩展、已提交」的目标工程，跑真 `adapt-scan`。
-
-    目标必须是 git 仓且有基线提交：核对靠 `git diff`，没有底就没有「变了哪些」。宿主入口取包工程里
-    Framework 物化好的那一份，与目标的配置一致。
-    """
+    """每个用例搭一个「接入了被测 Framework、已装好 base/ 与业务面、已提交」的目标工程，就地跑 `adapt-scan`。"""
 
     def setUp(self) -> None:  # noqa: D102
-        if shutil.which("node") is None:
-            self.skipTest("环境里没有 node")
-        if shutil.which("git") is None:
-            self.skipTest("环境里没有 git")
+        for tool in ("node", "git"):
+            if shutil.which(tool) is None:
+                self.skipTest(f"环境里没有 {tool}")
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.target = Path(self._tmp.name) / "target"
@@ -63,9 +51,11 @@ class AdaptCase(unittest.TestCase):
                         ignore=shutil.ignore_patterns("__pycache__", ".adapt-*"))
         copy_host_entries(PKG_ROOT, self.target)
         self.ext = self.target / "doc" / "extensions"
-        self.scripts = self.ext / "skills" / "story" / "scripts"
-        self.core = self.scripts / "core"
-        self.adapters = self.scripts / "adapters"
+        self.base = self.ext / "base"
+        self.core = self.base / "skills" / "story" / "scripts" / "core"
+        self.adapters = self.ext / "adapters"
+        self.scan = self.base / "skills" / "story-adaptation" / "scripts" / "adapt-scan.mjs"
+        self.entries_script = self.base / "skills" / "story-adaptation" / "scripts" / "entries.mjs"
         # 已适配到本版的目标有使用记录：由适配建立的空表（没有使用记录的情形由各用例自己删掉）
         (self.target / "doc" / "usage.json").write_text('{\n  "schema": 1,\n  "requirements": {}\n}\n', encoding="utf-8")
         self.commit("baseline")
@@ -83,34 +73,32 @@ class AdaptCase(unittest.TestCase):
         self.git("add", "-A")
         self.git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", message)
 
-    def adapt(self, mode: str) -> subprocess.CompletedProcess:
+    def adapt(self, mode: str, *extra: str) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["node", str(SCAN), mode, "--target", str(self.target),
-             "--package", str(PKG_ROOT)],
+            ["node", str(self.scan), mode, *extra],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
 
     def out(self, proc: subprocess.CompletedProcess) -> str:
         return ((proc.stdout or "") + (proc.stderr or "")).strip()
 
     def make_fresh(self) -> None:
-        """退回空仓：撤掉扩展，再让 Framework 按「没有扩展」重新物化入口（入口文件里不再有扩展那一节）。"""
+        """退回首装态：仅保留刚解包到位的 `doc/extensions/base/`，无 manifest/knowledge/adapters，宿主入口按空仓物化。"""
         shutil.rmtree(self.ext)
-        proc = subprocess.run(["node", str(ENTRIES), "--project-root", str(self.target), "--action", "materialize"],
+        proc = subprocess.run(["node", str(ENTRIES_REF), "--project-root", str(self.target), "--action", "materialize"],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
         self.assertEqual(0, proc.returncode, self.out(proc))
-        self.commit("空仓")
+        shutil.copytree(DEV_BASE, self.base, ignore=shutil.ignore_patterns("__pycache__"))
+        self.commit("空仓解包 base")
 
     def write_review(self, *, digest: str | None = None, verdict: str = "PASS", skip: int = 0,
                      dup_pass: bool = False) -> None:
-        """独立审查者交回的证据块：摘要与激活清单取自 `--status`，四个维度逐份给结论。
-
-        `dup_pass` 在末尾给第一份知识再补一项全 PASS——重复项不能盖住前面的结论。"""
+        """独立审查者交回的证据块：摘要与激活清单取自 `--status`，四个维度逐份给结论。"""
         knowledge = json.loads(self.adapt("--status").stdout)["knowledge"]
         files = knowledge["files"][skip:]
         dims = lambda v: "".join(f"      {d}: {{verdict: {v}, evidence: 核过 {d}}}\n"  # noqa: E731
                                  for d in ("granularity", "fact_use", "duplication", "coding_boundary"))
         rows = "".join(f"    - path: {f}\n{dims(verdict)}" for f in files)
-        if dup_pass:
+        if dup_pass and files:
             rows += f"    - path: {files[0]}\n{dims('PASS')}"
         review = self.ext / ".adapt" / "knowledge-review.md"
         review.parent.mkdir(parents=True, exist_ok=True)
@@ -123,12 +111,10 @@ class TheTargetKeepsWhatIsItsOwn(AdaptCase):
     """`adapters/` 与 `knowledge/` 归目标，升级碰都不碰。"""
 
     def test_a_clean_target_passes(self) -> None:
-        """基线：什么都不动，`--check` 必须过——不然下面几条测不出东西。"""
         proc = self.adapt("--check")
         self.assertEqual(0, proc.returncode, self.out(proc))
 
     def test_an_upgrade_leaves_the_adapters_untouched(self) -> None:
-        """目标自己实现的对接脚本，升级之后逐字未变。"""
         mine = "// 这个仓自己实现的\nmodule.exports = {};\n"
         for name in ("story.js", "token.js"):
             (self.adapters / name).write_text(mine, encoding="utf-8")
@@ -141,10 +127,7 @@ class TheTargetKeepsWhatIsItsOwn(AdaptCase):
                              f"升级动了 {name}——那是目标自己实现的")
 
     def test_dependencies_under_the_adapters_dir_are_free(self) -> None:
-        """对接层的依赖闭包也归目标：`package.json`、`node_modules/` 一律不碰。
-
-        它们不是 `.js`、还带下级目录——按后缀或路径长相分类时正是在这里判错的。
-        """
+        """对接层的依赖闭包也归目标：`package.json`、`node_modules/` 一律不碰。"""
         (self.adapters / "package.json").write_text(
             json.dumps({"name": "story-adapters", "dependencies": {"axios": "^1"}}),
             encoding="utf-8")
@@ -172,64 +155,25 @@ class TheTargetKeepsWhatIsItsOwn(AdaptCase):
         self.assertEqual(body, mine.read_text(encoding="utf-8"), "升级盖掉了目标的知识")
 
 
-
-class TheMechanismFollowsThePackage(AdaptCase):
-    """`core/` 与其余机制面跟着包走，包里没有的清掉。"""
-
-    def test_a_file_the_package_dropped_is_removed(self) -> None:
-        """包里不再有的文件，升级之后目标那边也没有。"""
-        stale = self.core / "retired.mjs"
-        stale.write_text("export const gone = 1;\n", encoding="utf-8")
-        self.commit("目标上留着一个包里已经没有的文件")
-
-        proc = self.adapt("--apply")
-        self.assertEqual(0, proc.returncode, self.out(proc))
-        self.assertFalse(stale.exists(), "包里没有的文件还留在目标上")
-        self.assertIn("retired.mjs", self.out(proc), "清掉了却没报出来——静默删比不删更糟")
-
-    def test_a_python_package_arrives_and_its_flat_predecessor_goes(self) -> None:
-        """按功能分的子目录要真被装上，同名的旧平铺文件要真被清掉。
-
-        两件事都靠「整份换掉」这一条，而不靠列文件名。漏了前一半，目标上跑的命令
-        import 不到模块；漏了后一半，`core/materials.py` 与 `core/materials/` 同时在，
-        Python 认包不认模块，于是目标读的是新包、维护者看的是旧文件。
-        """
-        flat = self.core / "materials.py"
-        flat.write_text("SCHEMA = 1  # 上一版的平铺实现\n", encoding="utf-8")
-        self.commit("目标上还留着上一版的平铺材料模块")
-
-        proc = self.adapt("--apply")
-        self.assertEqual(0, proc.returncode, self.out(proc))
-        self.assertFalse(flat.exists(), "旧的平铺文件还在，和新包同时存在")
-        for rel in ("flow/state.py", "flow/lifecycle.py",
-                    "materials/registry.py", "materials/importer.py"):
-            self.assertTrue((self.core / rel).is_file(), f"{rel} 没被装上")
-
-    def test_a_mechanism_file_changed_on_the_target_is_restored(self) -> None:
-        """目标改了机制面，升级把它换回包的版本——机制不归目标。"""
-        f = self.core / "story" / "chapter-contract.mjs"
-        original = f.read_text(encoding="utf-8")
-        f.write_text(original + "\n// 目标自己加的\n", encoding="utf-8")
-        self.commit("目标改了机制文件")
-
-        proc = self.adapt("--apply")
-        self.assertEqual(0, proc.returncode, self.out(proc))
-        self.assertEqual(original, f.read_text(encoding="utf-8"), "机制没被换回包的版本")
+class TheManifestAndLayoutFollowOwnership(AdaptCase):
+    """一个 manifest 两种所有权；旧混装目录在升级时退场，--package 参数已退出。"""
 
     def test_the_manifest_keeps_the_targets_knowledge_list(self) -> None:
-        """一个文件两种所有权：机制登记跟包，`provides.knowledge` 跟目标。"""
+        """机制登记取自 base/package-manifest.yaml，业务 provides.knowledge 跟目标。"""
         manifest = self.ext / "manifest.yaml"
-        text = manifest.read_text(encoding="utf-8")
         (self.ext / "knowledge" / "facts" / "own-profile.md").write_text(
             "---\nname: 自己的画像\nkind: facts\nform: facets\n"
             "applies_when: 判断需求归不归本部件时读：本部件是谁\n---\n\n## 职责\n\n负责本部件的业务。\n",
             encoding="utf-8")
-        mine = "  knowledge:\n    - knowledge/facts/own-profile.md\n"
+        text = manifest.read_text(encoding="utf-8")
         head, _, tail = text.partition("  knowledge:\n")
-        keep = tail.split("\n  hooks:", 1)[1] if "\n  hooks:" in tail else ""
-        manifest.write_text(head + mine + "\n  hooks:" + keep, encoding="utf-8")
-        # 目标改了激活清单，它的 Framework 按改后的清单重物化入口（入口里的知识路由随清单）
-        rendered = subprocess.run(["node", str(ENTRIES), "--project-root", str(self.target), "--action", "materialize"],
+        keep = tail.split("\n  hooks:", 1)[1]
+        entry = ("    - path: base/skills/story-knowledge/SKILL.md\n"
+                 "      summary: 各阶段知识装配入口\n"
+                 "      audience: [spec, plan, coding, review, ut, testing]\n")
+        manifest.write_text(head + "  knowledge:\n" + entry + "    - knowledge/facts/own-profile.md\n  hooks:" + keep,
+                            encoding="utf-8")
+        rendered = subprocess.run(["node", str(self.entries_script), "--project-root", str(self.target), "--action", "materialize"],
                                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
         self.assertEqual(0, rendered.returncode, self.out(rendered))
         self.commit("目标只激活一份知识")
@@ -238,9 +182,15 @@ class TheMechanismFollowsThePackage(AdaptCase):
         self.assertEqual(0, proc.returncode, self.out(proc))
         after = manifest.read_text(encoding="utf-8")
         self.assertIn("    - knowledge/facts/own-profile.md\n", after)
+        self.assertIn("base/skills/story-knowledge/SKILL.md", after)
         self.assertNotIn("knowledge/constraints/ux-consistency.md", after,
-                         "升级把包的知识清单塞给了目标——知识激活随目标，不因升级重选")
-        self.assertIn("story-adaptation", after, "机制登记没跟上包")
+                         "升级把样例知识塞给了目标——知识激活随目标")
+        self.assertIn("base/hooks/spec/post_check.mjs", after, "机制登记没跟上 base/package-manifest.yaml")
+
+    def test_retired_package_flag_is_refused(self) -> None:
+        proc = self.adapt("--apply", "--package", str(PKG_ROOT))
+        self.assertEqual(2, proc.returncode, self.out(proc))
+        self.assertIn("--package", self.out(proc))
 
 
 class StatusCase(AdaptCase):
@@ -258,8 +208,7 @@ class StatusCase(AdaptCase):
 
 
 class TheStatusViewOnlyReads(StatusCase):
-    """`--status`：刚装完、没有任何需求时照样能核知识；只读——前后文件集合与内容一致；
-    未安装、坏清单、坏配置分别是不同的事实，不能都变成「零知识且通过」。"""
+    """`--status`：只读；未安装、坏清单、坏配置分别是不同的事实。"""
 
     def test_an_installed_target_reports_versions_counts_and_digest(self) -> None:
         code, got = self.status()
@@ -284,7 +233,7 @@ class TheStatusViewOnlyReads(StatusCase):
         self.assertFalse((self.target / "doc" / "features").exists(), "检查造了需求目录")
 
     def test_not_installed_is_a_fact_not_an_error(self) -> None:
-        shutil.rmtree(self.ext)
+        self.make_fresh()
         code, got = self.status()
         self.assertEqual(0, code, got)
         self.assertEqual("not_installed", got["state"])
@@ -315,26 +264,26 @@ class TheStatusViewOnlyReads(StatusCase):
                             for i in got["items"]["知识"]), got["items"])
         self.assertNotIn("在途单", got["items"], "adapt 不处理旧需求，跟进里不该有在途单块")
 
-
     def test_a_target_on_2_0_3_gets_the_newer_knowledge_and_adapter_topics(self) -> None:
-        """游标在 2.0.3：跟进里是 2.0.4 的两条知识主题、2.0.5 的三条主题与一条对接层条目；机制升级不改目标知识。"""
+        """游标在 2.0.3：跟进里含 2.0.4/2.0.5 知识主题与 2.0.5+ 对接层条目；机制升级不改目标知识。"""
         (self.ext / "adaptation.yaml").write_text('adapters: stand-in\nadapted_for: "2.0.3"\n', encoding="utf-8")
         code, got = self.status()
         self.assertEqual(0, code, got)
         topics = got["items"]["知识"]
         self.assertEqual(["2.0.4", "2.0.4", "2.0.5", "2.0.5", "2.0.5"],
-                         [t.split("：", 1)[0] for t in topics], topics)
+                         [t.split("：", 1)[0] for t in topics[:5]], topics)
         self.assertIn("工程能力", topics[0])
         self.assertIn("性能与资源引入", topics[1])
         for theme in ("蓝图唯一决定", "Story 评审回流", "原话与知识验收责任"):
             self.assertTrue(any(theme in t for t in topics[2:]), (theme, topics))
-        self.assertEqual(["2.0.5"], [i.split("：", 1)[0] for i in got["items"]["对接层"]], got["items"])
-        self.assertIn("review_out", got["items"]["对接层"][0])
+        adapter_versions = [i.split("：", 1)[0] for i in got["items"]["对接层"]]
+        self.assertIn("2.0.5", adapter_versions, got["items"])
+        self.assertTrue(any("review_out" in i for i in got["items"]["对接层"]))
         self.assertNotIn("目标仓已采用", json.dumps(topics, ensure_ascii=False), "把待判断的主题写成了目标已采用")
 
+
 class SameUseCandidatesAreOnlyHints(StatusCase):
-    """同用途声明候选只按 `applies_when` 原文相同分组，给独立审查当线索：不改 PASS，不推断相似，
-    为空也不说明没有重复。重复与否、互补与否由审查读正文判。"""
+    """同用途声明候选只按 `applies_when` 原文相同分组，给独立审查当线索。"""
 
     def set_applies(self, name: str, text: str) -> None:
         f = self.ext / "knowledge" / "facts" / name
@@ -343,7 +292,6 @@ class SameUseCandidatesAreOnlyHints(StatusCase):
         f.write_text("\n".join(rows), encoding="utf-8")
 
     def test_the_same_declared_use_is_listed_without_changing_the_verdict(self) -> None:
-        """同用途但内容互补：脚本只列出来，不判它们重复。"""
         self.set_applies("component-profile.md", "设计要用项目已有能力时：在哪、怎么用")
         self.set_applies("engineering-capabilities.md", "  设计要用项目已有能力时：在哪、怎么用  ")
         code, got = self.status()
@@ -355,7 +303,6 @@ class SameUseCandidatesAreOnlyHints(StatusCase):
                       [sorted(f) for f in files])
 
     def test_different_wording_is_not_claimed_free_of_duplicates(self) -> None:
-        """用途写法不同而正文重复：脚本不列，也不说「没有重复」——那归审查。"""
         self.set_applies("component-profile.md", "查本部件边界时")
         self.set_applies("engineering-capabilities.md", "查已有能力时")
         code, got = self.status()
@@ -368,7 +315,7 @@ class SameUseCandidatesAreOnlyHints(StatusCase):
 class TheIndependentReviewIsDeliveredBeforeMarking(unittest.TestCase):
     """独立审查的任务页交付四个维度，SKILL 与方法页在 --mark-adapted 之前送达它。"""
 
-    REF = PKG_EXT / "skills" / "story-adaptation"
+    REF = DEV_BASE / "skills" / "story-adaptation"
 
     def test_the_task_page_names_the_four_dimensions_and_its_inputs(self) -> None:
         page = (self.REF / "reference" / "knowledge-review.md").read_text(encoding="utf-8")
@@ -415,11 +362,10 @@ class TheUpgradeFollowsTheVersionRecord(AdaptCase):
         self.assertIn("停一次问人", proc.stdout)
 
     def test_nothing_to_adapt_is_one_sentence_and_records_the_version(self) -> None:
-        """已按包的版本适配过、知识合协议：没有更晚的演进条目，不问人，脚本把 adapted_for 写成包的版本。"""
         self.set_adapted(PKG_VERSION)
         proc = self.adapt("--apply")
         self.assertEqual(0, proc.returncode, self.out(proc))
-        self.assertIn("目标已按包的版本适配，知识与当前协议一致", proc.stdout)
+        self.assertIn("目标已按包的版本适配", proc.stdout)
         self.assertNotIn("停一次问人", proc.stdout)
         adaptation = (self.ext / "adaptation.yaml").read_text(encoding="utf-8")
         self.assertIn(f'adapted_for: "{PKG_VERSION}"', adaptation, "无事可做却没记下已按包的版本适配")
@@ -428,7 +374,6 @@ class TheUpgradeFollowsTheVersionRecord(AdaptCase):
         self.assertEqual(0, self.adapt("--check").returncode, "写了 adapted_for 之后核对不再通过")
 
     def test_a_target_without_adapted_for_starts_from_the_knowledge_baseline(self) -> None:
-        """没按任何版本适配过：知识块从基线一节列起，连同后面各版的知识条目。"""
         adaptation = self.ext / "adaptation.yaml"
         adaptation.write_text("adapters: stand-in\n", encoding="utf-8")
         self.commit("没写过 adapted_for")
@@ -446,12 +391,13 @@ class TheUpgradeFollowsTheVersionRecord(AdaptCase):
 class TheUpgradeRecordKeepsTheOldSiteBoundary(unittest.TestCase):
     """2.0.5 起旧流程契约不迁移：记录写明原版收口/新 init 与保原件，主题只写待判断，不写成目标已采用。"""
 
-    RECORD = PKG_EXT / "skills" / "story-adaptation" / "reference" / "upgrade-changes.md"
+    RECORD = DEV_BASE / "skills" / "story-adaptation" / "reference" / "upgrade-changes.md"
 
     def section(self) -> str:
         text = self.RECORD.read_text(encoding="utf-8")
         self.assertIn("## 2.0.5", text, "演进记录没有 2.0.5 一节")
-        return text.split("## 2.0.5", 1)[1]
+        after = text.split("## 2.0.5", 1)[1]
+        return after.split("\n## ", 1)[0]
 
     def test_it_names_the_old_site_boundary_and_keeps_originals(self) -> None:
         section = self.section()
@@ -470,8 +416,6 @@ class TheUpgradeRecordKeepsTheOldSiteBoundary(unittest.TestCase):
                 self.assertIn("核：", line)
 
     def test_the_topics_keep_real_business_requirements_and_only_remove_the_runtime_text(self) -> None:
-        """R4（S18）：作者先核目标仓真实的业务审批、权限与验收并保留；只有混进目标知识的 Extension
-        阶段、路径或已撤载体那段运行说明才删，当前做法由已安装机制给出——不把阶段与路径换成另一种写法写回知识。"""
         topics = [l for l in self.section().splitlines() if l.startswith("- [知识]")]
         self.assertEqual(3, len(topics), "2.0.5 的知识主题条数变了：先核这些断言是否还对着同一批主题")
         for line in topics:
@@ -483,13 +427,12 @@ class TheUpgradeRecordKeepsTheOldSiteBoundary(unittest.TestCase):
 
 
 class TheAdaptedVersionIsWrittenByTheScript(AdaptCase):
-    """`--mark-adapted` 把 adapted_for 写成包的版本；值不由模型定，前置不满足就停。"""
+    """`--mark-adapted` 核入口/知识/独审、清理 base/examples/（保留 base/.gitignore）并最后写 adapted_for。"""
 
     def mark(self) -> subprocess.CompletedProcess:
         return self.adapt("--mark-adapted")
 
     def set_manifest_line(self, key: str, value: str) -> None:
-        """`adapted_for` 写在目标的 adaptation.yaml，`version` 写在 manifest。"""
         if key == "adapted_for":
             (self.ext / "adaptation.yaml").write_text(f'adapters: stand-in\nadapted_for: "{value}"\n', encoding="utf-8")
         else:
@@ -506,10 +449,11 @@ class TheAdaptedVersionIsWrittenByTheScript(AdaptCase):
         self.assertEqual(0, proc.returncode, self.out(proc))
         adaptation = (self.ext / "adaptation.yaml").read_text(encoding="utf-8")
         self.assertIn(f'adapted_for: "{PKG_VERSION}"', adaptation)
+        self.assertFalse((self.base / "examples").exists(), "完成后应清理 base/examples/")
+        self.assertTrue((self.base / ".gitignore").is_file(), "清理后必须保留 base/.gitignore")
         self.assertEqual(0, self.adapt("--check").returncode, self.out(self.adapt("--check")))
 
     def test_knowledge_due_for_adaptation_needs_matching_independent_evidence(self) -> None:
-        """有知识演进条目时，加载通过不等于适配完成：缺审、过期、漏一份、判 FAIL 都不写 adapted_for。"""
         self.set_manifest_line("adapted_for", "1.9.2")
         before = (self.ext / "adaptation.yaml").read_text(encoding="utf-8")
         cases = {"缺审": (None, "missing"), "过期": ({"digest": "sha256:0000000000000000"}, "stale"),
@@ -536,15 +480,13 @@ class TheAdaptedVersionIsWrittenByTheScript(AdaptCase):
                          "知识改过之后旧结论还盖着新内容")
 
     def test_a_mechanism_only_upgrade_needs_no_review(self) -> None:
-        """没有晚于 adapted_for 的知识条目：不要求独审，照常记版本。"""
         latest = change_versions(PKG_EXT, "知识")[-1]
         self.set_manifest_line("adapted_for", latest)
         proc = self.mark()
         self.assertEqual(0, proc.returncode, self.out(proc))
 
     def test_it_stops_when_the_target_has_no_manifest(self) -> None:
-        shutil.rmtree(self.ext)
-        self.commit("空仓")
+        self.make_fresh()
         proc = self.mark()
         self.assertEqual(2, proc.returncode, self.out(proc))
         self.assertIn("还没装过", self.out(proc))
@@ -573,25 +515,25 @@ class ThePreflightStopsInsteadOfGuessing(AdaptCase):
     """前置不满足就停，不猜、不替用户动工作区。"""
 
     def test_a_dirty_write_face_stops_the_upgrade(self) -> None:
-        """写入面上有未提交改动就停——盖掉了在 diff 里还看不出来，没法补救。"""
-        (self.core / "story" / "chapter-contract.mjs").write_text("目标改了一半没提交\n", encoding="utf-8")
+        """写入面上（宿主入口）有未提交改动就停——盖掉了在 diff 里还看不出来。"""
+        entry = self.target / ".claude" / "commands" / "story.md"
+        entry.write_text("目标改了一半没提交\n", encoding="utf-8")
         proc = self.adapt("--apply")
         self.assertEqual(2, proc.returncode, "工作区脏却照写了")
-        self.assertIn("chapter-contract.mjs", self.out(proc), "停了却没点名是哪个文件脏")
-        self.assertEqual("目标改了一半没提交\n",
-                         (self.core / "story" / "chapter-contract.mjs").read_text(encoding="utf-8"),
-                         "停之前已经写过盘了")
+        self.assertIn(".claude/commands/story.md", self.out(proc), "停了却没点名是哪个文件脏")
+        self.assertEqual("目标改了一半没提交\n", entry.read_text(encoding="utf-8"), "停之前已经写过盘了")
 
     def test_a_target_outside_git_stops_the_upgrade(self) -> None:
-        """不是 git 仓就停：确认靠 diff，没有 git 就没有「变了哪些文件」这个答案。"""
-        # 挪走而不是删：Windows 上 git 的对象文件是只读的，rmtree 会撞权限
+        import os  # noqa: PLC0415
         (self.target / ".git").rename(self.target.parent / "git-moved-away")
-        proc = self.adapt("--apply")
+        proc = subprocess.run(
+            ["node", str(self.scan), "--apply"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300,
+            env={**os.environ, "GIT_CEILING_DIRECTORIES": str(self.target.parent)})
         self.assertEqual(2, proc.returncode, "没有 git 却照写了")
         self.assertIn("git", self.out(proc))
 
     def test_running_twice_says_the_mechanism_is_current(self) -> None:
-        """同版本重复执行不损坏内容，第二次说「机制已在包的版本上」而不是「写入 0 个文件」。"""
         first = self.adapt("--apply")
         self.assertEqual(0, first.returncode, self.out(first))
         self.commit("第一次升级")
@@ -601,30 +543,25 @@ class ThePreflightStopsInsteadOfGuessing(AdaptCase):
 
 
 class AFreshInstallRunsOutOfTheBox(AdaptCase):
-    """空仓装完就能跑 —— 清单登记的是刚建的骨架，不是包里的 Demo 知识。
-
-    照抄包的清单会登记十几份目标里根本没有的知识正文，`activeKnowledge` 当场报
-    「登记的文件读不到」：新仓装完第一件事是撞墙。而「装完就能跑」是 A3 的直接后果——
-    首次安装不建知识骨架，清单为空，第一份部件画像由模型按方法页写。
-    """
+    """空仓解包 base/ 后 `--apply` 就能跑：业务知识清单为空，机制入口可用，首装完成后清理 examples/。"""
 
     def setUp(self) -> None:  # noqa: D102
         super().setUp()
         self.make_fresh()
 
-    def test_the_manifest_registers_no_knowledge_and_writes_none(self) -> None:
+    def test_the_manifest_registers_no_business_knowledge_and_writes_none(self) -> None:
         proc = self.adapt("--apply")
         self.assertEqual(0, proc.returncode, self.out(proc))
         manifest = yaml.safe_load((self.ext / "manifest.yaml").read_text(encoding="utf-8"))
-        self.assertEqual([], manifest["provides"]["knowledge"], "首次安装替目标激活了知识")
+        biz = [k for k in manifest["provides"]["knowledge"]
+               if (k["path"] if isinstance(k, dict) else k) != "base/skills/story-knowledge/SKILL.md"]
+        self.assertEqual([], biz, "首次安装替目标激活了业务知识")
         self.assertRegex(manifest["name"], r"^[a-z][a-z0-9_-]*$", "Framework 只认小写 slug 的 name")
         written = [p for p in (self.ext / "knowledge").rglob("*") if p.is_file()] if (self.ext / "knowledge").exists() else []
         self.assertEqual([], written, "脚本往目标的 knowledge/ 写了东西")
-        self.assertEqual("{}\n", (self.ext / "adaptation.yaml").read_text(encoding="utf-8"),
-                         "首次安装的适配状态应为空映射：包的替身身份与已适配版本不属于目标")
+        self.assertEqual("{}\n", (self.ext / "adaptation.yaml").read_text(encoding="utf-8"))
 
     def test_the_derivation_runs_on_a_fresh_install(self) -> None:
-        """装完直接跑知识派生：四类皆空、不抛——这是「装完就能跑」的判据本身。"""
         self.assertEqual(0, self.adapt("--apply").returncode)
         probe = (
             "const k = await import(process.argv[1]);"
@@ -634,7 +571,7 @@ class AFreshInstallRunsOutOfTheBox(AdaptCase):
             "  patterns: kn.patterns.length, entries: kn.entries.length,"
             "  problems: k.selfCheck(process.argv[2], kn).length }));"
         )
-        module = (self.ext / "hooks" / "shared" / "knowledge.mjs").resolve().as_uri()
+        module = (self.base / "hooks" / "shared" / "knowledge.mjs").resolve().as_uri()
         proc = subprocess.run(
             ["node", "--input-type=module", "-e", probe, module, str(self.target)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
@@ -643,16 +580,11 @@ class AFreshInstallRunsOutOfTheBox(AdaptCase):
                           "entries": 0, "problems": 0}, json.loads(proc.stdout))
 
     def test_a_fresh_install_passes_its_own_check(self) -> None:
-        """刚装完跑 `--check` 要过：首次安装的知识清单为空，判据不把它当成装错。
-
-        两态不分的话，判据会把自己刚写出来的东西判成「升级动了目标的知识」。
-        """
         self.assertEqual(0, self.adapt("--apply").returncode)
         proc = self.adapt("--check")
         self.assertEqual(0, proc.returncode, self.out(proc))
 
     def test_a_fresh_install_lists_the_knowledge_baseline_and_leaves_adapted_for_to_the_script(self) -> None:
-        """首次安装就列出从基线起的知识条目，不带 adapted_for；交回后 `--mark-adapted` 写成包的版本。"""
         proc = self.adapt("--apply")
         self.assertEqual(0, proc.returncode, self.out(proc))
         self.assertNotIn("adapted_for", (self.ext / "adaptation.yaml").read_text(encoding="utf-8"))
@@ -663,43 +595,31 @@ class AFreshInstallRunsOutOfTheBox(AdaptCase):
                          "首次没从知识基线起拿到各版知识条目")
         self.assertNotIn("在途单", items, "adapt 不处理旧需求，跟进里不该有在途单块")
         self.commit("首次装好")
-        self.assertEqual(2, self.adapt("--mark-adapted").returncode, "首装写了知识却没独审，也记成已适配")
+        self.assertEqual(2, self.adapt("--mark-adapted").returncode, "首装未独审却记成已适配")
         self.write_review()
         marked = self.adapt("--mark-adapted")
         self.assertEqual(0, marked.returncode, self.out(marked))
         self.assertIn(f'adapted_for: "{PKG_VERSION}"', (self.ext / "adaptation.yaml").read_text(encoding="utf-8"))
+        self.assertFalse((self.base / "examples").exists(), "首装完成应清理 base/examples/")
+        self.assertTrue((self.base / ".gitignore").is_file(), "首装清理后必须保留 base/.gitignore")
         self.assertEqual(0, self.adapt("--check").returncode)
 
 
-
 class ThePackageKeepsItsOwnDirectoriesStraight(AdaptCase):
-    """⑤ 判的是包：`scripts/` 那一层只有 core/ 与 adapters/。"""
+    """`base/skills/story/scripts/` 下只有 `core/`，不含任何替身 adapters 或游离脚本。"""
 
-    def test_the_package_scripts_dir_has_exactly_two_subdirs(self) -> None:
-        """真包上直接核：所有权由目录表达的前提，就是根这一层是空的。"""
-        at = PKG_EXT / "skills" / "story" / "scripts"
+    def test_the_package_scripts_dir_has_only_core(self) -> None:
+        at = DEV_BASE / "skills" / "story" / "scripts"
         dirs = sorted(p.name for p in at.iterdir() if p.is_dir() and p.name != "__pycache__")
-        self.assertEqual(["adapters", "core"], dirs)
+        self.assertEqual(["core"], dirs)
         files = sorted(p.name for p in at.iterdir() if p.is_file())
-        self.assertEqual([], files, "scripts/ 根下多了文件——它归谁又要靠推断了")
+        self.assertEqual([], files, "base/skills/story/scripts/ 根下多了文件")
 
-    def test_a_stray_file_in_the_package_is_named(self) -> None:
-        """反向锁：包里往根下放一个脚本，`--check` 要报出来。
-
-        判的是**包**不是目标，所以这条用临时包跑：把真包复制一份、放一个脚本进去。
-        """
-        pkg = Path(self._tmp.name) / "pkg"
-        link_framework(pkg)
-        shutil.copytree(PKG_EXT, pkg / "doc" / "extensions",
-                        ignore=shutil.ignore_patterns("__pycache__", ".adapt-*"))
-        (pkg / "doc" / "extensions" / "skills" / "story" / "scripts" / "loose.mjs").write_text(
+    def test_a_stray_file_in_base_scripts_is_named(self) -> None:
+        (self.base / "skills" / "story" / "scripts" / "loose.mjs").write_text(
             "export const x = 1;\n", encoding="utf-8")
-
-        proc = subprocess.run(
-            ["node", str(SCAN), "--check", "--target", str(self.target),
-             "--package", str(pkg)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
-        self.assertEqual(1, proc.returncode, "包的 scripts 根下有脚本却判通过了")
+        proc = self.adapt("--check")
+        self.assertEqual(1, proc.returncode, "base scripts 根下有游离脚本却判通过了")
         self.assertIn("loose.mjs", self.out(proc))
 
 
@@ -731,8 +651,6 @@ class TheUsageRecordIsSetUpByApply(AdaptCase):
         self.assertEqual(0, self.adapt("--check").returncode, self.out(self.adapt("--check")))
 
     def test_an_upgrade_from_an_older_version_sets_it_up(self) -> None:
-        core = next(self.core.rglob("*.py"))
-        core.write_text(core.read_text(encoding="utf-8") + "\n# 旧版本\n", encoding="utf-8")
         manifest = self.ext / "manifest.yaml"
         manifest.write_text("\n".join('version: "1.9.8"' if l.startswith("version:") else l
                                       for l in manifest.read_text(encoding="utf-8").split("\n")), encoding="utf-8")
@@ -748,18 +666,18 @@ class TheUsageRecordIsSetUpByApply(AdaptCase):
         self.commit("装好")
         self.without_record("使用记录被删了")
         proc = self.adapt("--apply")
-        self.assertIn("没有机制文件要写", proc.stdout)
+        self.assertIn("机制已在包的版本上", proc.stdout)
         self.assert_set_up(proc)
 
     def test_an_existing_record_is_kept_byte_for_byte(self) -> None:
         for text in ('{\n  "schema": 1,\n  "requirements": {}\n}\n', self.REAL):
             with self.subTest(text=text[:20]):
-                self.record.write_text(text, encoding="utf-8")      # 未提交的改动也照样保留
+                self.record.write_text(text, encoding="utf-8")
                 proc = self.adapt("--apply")
                 self.assertEqual(0, proc.returncode, self.out(proc))
                 self.assertIn("已在且合法，保留未动", proc.stdout)
                 self.assertEqual(text, self.record.read_text(encoding="utf-8"))
-                self.git("checkout", "--", "AGENTS.md")       # 入口文件归 apply 重写，下一轮保持写入面干净
+                self.git("checkout", "--", "AGENTS.md")
 
     def test_status_and_check_only_read(self) -> None:
         self.without_record()
@@ -772,12 +690,12 @@ class TheUsageRecordIsSetUpByApply(AdaptCase):
         self.assertEqual(before, self.doc_listing(), "检查命令建了文件、锁或临时文件")
 
     def test_a_bad_record_stops_apply_before_anything_is_written(self) -> None:
-        core = next(self.core.rglob("*.py"))
-        stale = core.read_text(encoding="utf-8") + "\n# 旧版本\n"
+        manifest = self.ext / "manifest.yaml"
+        stale = manifest.read_text(encoding="utf-8").replace(f'version: "{PKG_VERSION}"', 'version: "1.9.8"', 1)
         for name, text in {"坏 JSON": "{ 坏了", "冲突标记": '<<<<<<< HEAD\n{"schema": 1}\n=======\n{}\n>>>>>>> b\n',
                            "旧 schema": '{"schema": 0, "requirements": {}}'}.items():
             with self.subTest(name):
-                core.write_text(stale, encoding="utf-8")
+                manifest.write_text(stale, encoding="utf-8")
                 self.record.write_text(text, encoding="utf-8")
                 self.commit(name)
                 proc = self.adapt("--apply")
@@ -785,7 +703,7 @@ class TheUsageRecordIsSetUpByApply(AdaptCase):
                 self.assertIn("不合法", self.out(proc))
                 self.assertIn("机制一个字节没写", self.out(proc))
                 self.assertEqual(text, self.record.read_text(encoding="utf-8"))
-                self.assertEqual(stale, core.read_text(encoding="utf-8"), "坏记录却先写了机制文件")
+                self.assertEqual(stale, manifest.read_text(encoding="utf-8"), "坏记录却先写了 manifest")
 
     def test_an_ignored_record_is_not_called_a_finished_adaptation(self) -> None:
         self.without_record()
@@ -798,7 +716,6 @@ class TheUsageRecordIsSetUpByApply(AdaptCase):
         self.assertNotIn("升级完成", proc.stdout)
 
     def test_a_record_that_cannot_be_written_gives_the_one_repair(self) -> None:
-        """写不进去：说清机制已写完、使用记录没建，给出原样可跑的补建一行；照它补完 --check 通过。"""
         self.without_record()
         lock = self.target / "doc" / "usage.json.lock"
         lock.mkdir()
@@ -849,6 +766,7 @@ class TheRepairLineRunsAsPrinted(unittest.TestCase):
         config = json.loads((target / "framework.config.json").read_text(encoding="utf-8"))
         config.setdefault("paths", {})["extension_dir"] = "doc/my ext"
         (target / "framework.config.json").write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
+        shutil.copytree(DEV_BASE, target / "doc" / "my ext" / "base", ignore=shutil.ignore_patterns("__pycache__"))
         for args in (["init", "-q"], ["add", "-A"], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base"]):
             subprocess.run(["git", "-C", str(target), *args], capture_output=True)
         (target / "doc").mkdir(exist_ok=True)
@@ -856,7 +774,8 @@ class TheRepairLineRunsAsPrinted(unittest.TestCase):
         return target
 
     def adapt(self, target: Path, mode: str, env: dict) -> subprocess.CompletedProcess:
-        return subprocess.run(["node", str(SCAN), mode, "--target", str(target), "--package", str(PKG_ROOT)],
+        scan = target / "doc" / "my ext" / "base" / "skills" / "story-adaptation" / "scripts" / "adapt-scan.mjs"
+        return subprocess.run(["node", str(scan), mode],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, env=env)
 
     def check_shell(self, shell: str) -> None:
@@ -888,6 +807,7 @@ class TheRepairLineRunsAsPrinted(unittest.TestCase):
 
     def test_posix_shell(self) -> None:
         self.check_shell("bash")
+
 
 if __name__ == "__main__":
     unittest.main()

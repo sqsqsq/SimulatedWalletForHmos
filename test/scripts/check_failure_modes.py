@@ -67,6 +67,16 @@ def executor_ext() -> Path:
     return installed_extension(PROJECT_ROOT)
 
 
+def _mech_root(root: Path) -> Path:
+    """机制包根：2.0.6 布局下为 root/base，兼容旧扁平夹具返回 root。"""
+    return root / "base" if (root / "base" / "package-manifest.yaml").is_file() else root
+
+
+def executor_base() -> Path:
+    """消费工程里装好的机制包目录（ext/base，旧版回退 ext）。"""
+    return _mech_root(executor_ext())
+
+
 def installed_extension(project_root: Path) -> Path:
     """消费工程里扩展的安装位：按它 framework.config.json 的 paths.extension_dir。"""
     config = project_root / "framework.config.json"
@@ -330,7 +340,7 @@ ALL_SUFFIXES = CODE_SUFFIXES + TEXT_SUFFIXES
 #: - ``adapt``：``story adapt`` 在目标工程就地生成的工作目录（两棵树清单、备份、方案、
 #:   安装记录）。它按定义会照录目标工程的知识标识、层名与绝对路径，扫它等于把运行产物
 #:   当交付件判；SKILL 明写「包不交付它」，机制类文件也不会落在这里。
-NON_MECHANISM_DIRS = ("knowledge", "_knowledge", "adapt")
+NON_MECHANISM_DIRS = ("knowledge", "_knowledge", "adapt", "examples", "base/examples", "adapters")
 
 
 #: 占位前缀：刻意表示「任意域」的示例编号，不是硬编码（`XXX-01` 这类）。
@@ -348,7 +358,12 @@ def activation_names(root: Path) -> dict:
     清单只有一份（``provides.knowledge``）；文件属于哪类由它自己 frontmatter 的
     ``kind`` 决定。本函数只需要「有哪些文件、哪些条目」，不关心分类。
     """
+    base_dir = root
     manifest = root / "manifest.yaml"
+    if not manifest.exists() and (root / "base" / "package-manifest.yaml").is_file():
+        if (executor_ext() / "manifest.yaml").is_file():
+            base_dir = executor_ext()
+            manifest = base_dir / "manifest.yaml"
     if not manifest.exists():
         return {"entries": set(), "prefixes": set(), "slugs": set(), "derived": False}
     try:
@@ -357,15 +372,14 @@ def activation_names(root: Path) -> dict:
         return {"entries": set(), "prefixes": set(), "slugs": set(), "derived": False}
     listed = (data.get("provides") or {}).get("knowledge") or []
     slugs, entries, prefixes = set(), set(), set()
-    for rel in listed:
-        rel = str(rel).replace("\\", "/")
+    for item in listed:
+        rel = (item.get("path", "") if isinstance(item, dict) else str(item)).replace("\\", "/")
+        if not rel or rel == "base/skills/story-knowledge/SKILL.md":
+            continue
         slug = rel.rsplit("/", 1)[-1].removesuffix(".md")
-        # 通用文件名（README/index）不具标识性：写它不等于耦合了知识内容，
-        # 而把它当标识会把所有提到 README 的地方一起误报。
-        # 这类文件的显式路径引用由 M17 的第二条判据覆盖。
         if slug.lower() not in ("readme", "index"):
             slugs.add(slug)
-        f = root / rel
+        f = base_dir / rel
         if not f.exists():
             continue
         text = read_text(f)
@@ -1355,7 +1369,10 @@ ADAPT_SCRIPT = "skills/story-adaptation/scripts/adapt-scan.mjs"
 
 def manifest_hook_phases(root: Path) -> list[str]:
     """扩展登记了哪几个阶段钩子——阶段名的真源是 manifest，不是 ``hooks/`` 的目录长相。"""
-    text = read_text(root / "manifest.yaml")
+    mf = root / "manifest.yaml"
+    if not mf.is_file():
+        mf = root / "base" / "package-manifest.yaml"
+    text = read_text(mf) if mf.is_file() else ""
     if not text:
         return []
     lines = split_lines(text)
@@ -1387,7 +1404,7 @@ def a01_adapt_couples_to_mechanism(root: Path, ctx: Ctx) -> Outcome:
     把它算进阶段，adapt 复用一份公共解析器就成了「耦合某个阶段的实现」——而这条判据
     要防的是「机制的阶段结构一改 adapt 就废」，与共享工具的复用是两件事。
     """
-    adapt_dir = root / "skills" / "story-adaptation"
+    adapt_dir = _mech_root(root) / "skills" / "story-adaptation"
     if not adapt_dir.exists():
         return Outcome(True, "无 adapt 交付件（能力未建）")
     phases = sorted(manifest_hook_phases(root))
@@ -1431,19 +1448,10 @@ def _link_framework(tree: Path) -> None:
         os.symlink(source, link, target_is_directory=True)
 
 
-def _run_adapt_check(target: Path, package: Path) -> subprocess.CompletedProcess:
-    """把目标做成一个提交过的 git 仓，施加 ``after/`` 的变更，再跑真实 ``--check``。
-
-    核对靠 `git diff`：没有基线提交就没有「哪些文件变了」，那时脚本报的是「目标不是
-    git 仓库」，与「四项核对判不判得出」不是同一件事。所以先 init + commit，
-    再把 ``after/``（写入后的状态）盖上去——差集就是这次适配动过的东西。
-
-    ``package`` 是装好扩展的工程；执行器是消费工程里装的那份 adapt（运行态），``--package`` 指向包工程。
-    判定不在这里重实现：调真实脚本，退出码即结论（同 M15 / M18 的做法）。
-    """
-    script = executor_ext() / ADAPT_SCRIPT
+def _run_adapt_check(target: Path) -> subprocess.CompletedProcess:
+    """在就地目标工程上施加 ``after/`` 的变更后跑真实 ``adapt-scan.mjs --check``。"""
+    script = executor_base() / ADAPT_SCRIPT
     _git(target, "init", "-q")
-    # framework/ 是指向被查工程 Framework 的链接，git 会跟进去收录整个 Framework
     (target / ".git" / "info" / "exclude").write_text("/framework/\n", encoding="utf-8")
     _git(target, "add", "-A")
     _git(target, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "baseline")
@@ -1455,52 +1463,59 @@ def _run_adapt_check(target: Path, package: Path) -> subprocess.CompletedProcess
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 dst.write_bytes(src.read_bytes())
     return subprocess.run(
-        ["node", str(script), "--check", "--target", str(target), "--package", str(package)],
+        ["node", str(script), "--check", "--target", str(target)],
         capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(REPO_ROOT))
 
 
 @checker
 def a02_adapt_check_blind(root: Path, ctx: Ctx) -> Outcome:
-    """适配后的核对判不出已知违规（核对形同虚设）。
-
-    所有权由目录表达之后，核对要有区分力的是三件：① 升级伸进了目标的知识 ② 升级动了
-    目标自己实现的对接层 ③ 入口文件的扩展段或标记区没写进去。只要有一种漏过，
-    「适配完成」就只是句口号——而这三件恰好是升级唯一能造成不可逆损失的地方。
-
-    夹具自带 ``package/``（装好扩展的工程）与 ``target/`` 两棵树、可选 ``after/``（写入后的状态）；整棵树先复制到
-    临时目录、接上被查工程的 Framework、目标的宿主入口当场物化，再跑，夹具本身不被写脏。真实目标用**当前包**去核一棵已提交的未适配目标树，
-    验证它在真包上同样判得出——不是只在迷你夹具里有效。
-    """
+    """适配后的核对判不出已知违规（核对形同虚设）。"""
     import shutil, tempfile
 
-    if not (executor_ext() / ADAPT_SCRIPT).exists():
+    if not (executor_base() / ADAPT_SCRIPT).exists():
         return Outcome(True, "无 adapt 辅助脚本（能力未建）")
 
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
-        if (root / "target").exists() and (root / "package").exists():   # 夹具
+        if (root / "target").exists():
             shutil.copytree(root, tmp / "case")
-            for tree in ("target", "package"):
-                _link_framework(tmp / "case" / tree)
-            # 夹具目标的宿主入口按被查工程的 Framework 当场物化：入口形态随 Framework 版本，不写死在夹具里
-            entries = executor_ext() / "skills" / "story-adaptation" / "scripts" / "entries.mjs"
-            made = subprocess.run(["node", str(entries), "--project-root", str(tmp / "case" / "target"),
+            target = tmp / "case" / "target"
+            _link_framework(target)
+            tgt_base = target / "doc" / "extensions" / "base"
+            if tgt_base.is_dir():
+                for rel in ("hooks", "skills/story/contracts", "skills/story/scripts/core"):
+                    src = executor_base() / rel
+                    dst = tgt_base / rel
+                    if not src.exists():
+                        continue
+                    if not dst.exists():
+                        shutil.copytree(src, dst)
+                    else:
+                        for f in src.rglob("*"):
+                            if f.is_file():
+                                to = dst / f.relative_to(src)
+                                if not to.exists():
+                                    to.parent.mkdir(parents=True, exist_ok=True)
+                                    shutil.copy2(f, to)
+            entries = executor_base() / "skills" / "story-adaptation" / "scripts" / "entries.mjs"
+            made = subprocess.run(["node", str(entries), "--project-root", str(target),
                                    "--action", "materialize"], capture_output=True, text=True,
                                   encoding="utf-8", errors="replace", cwd=str(REPO_ROOT))
             if made.returncode != 0:
                 return Outcome(False, "夹具目标的宿主入口物化失败：" + (made.stdout + made.stderr).strip()[:300])
-            proc = _run_adapt_check(tmp / "case" / "target", tmp / "case" / "package")
-        else:                                                            # 真实目标
+            proc = _run_adapt_check(target)
+        else:
             src = REPO_ROOT / "test" / "fixtures" / "adapt" / "target-prior"
             if not src.exists():
                 return Outcome(False, "缺未适配目标树夹具，真实目标无法取证")
             shutil.copytree(src, tmp / "target")
-            proc = _run_adapt_check(tmp / "target", PROJECT_ROOT)
+            _link_framework(tmp / "target")
+            shutil.copytree(executor_base(), tmp / "target" / "doc" / "extensions" / "base")
+            proc = _run_adapt_check(tmp / "target")
         out = (proc.stdout + proc.stderr).strip()
 
-    if (root / "target").exists():                       # 夹具：退出码即结论
-        return Outcome(proc.returncode == 0, out[:400] if proc.returncode else "四项核对通过")
-    # 真实目标：未适配的树必须被判出来；判通过才是形态成立（核对瞎了）
+    if (root / "target").exists():
+        return Outcome(proc.returncode == 0, out[:400] if proc.returncode else "核对通过")
     if proc.returncode == 0:
         return Outcome(False, "对未适配的目标树判了通过——核对失效")
     return Outcome(True, "当前包对未适配目标树判得出差异：" + out.splitlines()[0][:160])
@@ -1524,7 +1539,7 @@ def a03_author_channel_broken(root: Path, ctx: Ctx) -> Outcome:
     测试负责；页面简洁、可读、有没有重复展开判据或知识正文，由维护内容评审按职责与实际信息量核，不用行数、
     标题数或词表代替（2026-10-10 维护设计者裁定退出这三类代理）。判定基准派生自 ``hooks/`` 的阶段目录，不写死阶段名。
     """
-    hooks_dir = root / "hooks"
+    hooks_dir = _mech_root(root) / "hooks"
     if not hooks_dir.exists():
         return Outcome(True, "无 hooks 目录")
     phases = sorted(p.name for p in hooks_dir.iterdir() if p.is_dir() and p.name != "shared")
@@ -1549,21 +1564,42 @@ def a05_author_knowledge_unbound(root: Path, ctx: Ctx) -> Outcome:
     ``before_phase_work`` 都要挂着一个 ``provides.skills`` 声明过、``skills/<id>/SKILL.md`` 存在的 Skill。
     """
     manifest = root / "manifest.yaml"
+    is_pkg = False
+    if not manifest.is_file() and (root / "base" / "package-manifest.yaml").is_file():
+        manifest = root / "base" / "package-manifest.yaml"
+        is_pkg = True
     if not manifest.is_file():
         return Outcome(False, f"没有 manifest.yaml：{manifest}")
     doc = yaml.safe_load(read_text(manifest)) or {}
     provides = doc.get("provides") or {}
-    declared = set(provides.get("skills") or [])
-    phases = list((provides.get("hooks") or {}).keys())
+    declared_skills = set(provides.get("skills") or [])
+    declared_knowledge = {
+        (k.get("path") if isinstance(k, dict) else str(k))
+        for k in (provides.get("knowledge") or [])
+    }
+    ke = provides.get("knowledge_entry")
+    if isinstance(ke, dict) and ke.get("path"):
+        declared_knowledge.add(str(ke["path"]))
+    phases = [ph for ph in (provides.get("hooks") or {}).keys() if ph != "docs"]
     if not phases:
         return Outcome(True, "没有登记钩子的 Feature 阶段（该形态未启用）")
     missing: list[str] = []
+    mech = _mech_root(root)
     for phase in phases:
         slot = ((doc.get("phase_bindings") or {}).get(phase) or {}).get("before_phase_work") or []
-        skills = [b.get("ref") for b in slot if isinstance(b, dict) and b.get("kind") == "skill"]
-        good = [s for s in skills if s in declared and (root / "skills" / str(s) / "SKILL.md").is_file()]
-        if not good:
-            missing.append(f"{phase}（挂的 Skill：{skills or '无'}）")
+        ok_skill = any(
+            isinstance(b, dict) and b.get("kind") == "skill" and b.get("ref") in declared_skills
+            and (mech / "skills" / str(b.get("ref")) / "SKILL.md").is_file()
+            for b in slot
+        )
+        ok_know = any(
+            isinstance(b, dict) and b.get("kind") == "knowledge" and str(b.get("ref")) in declared_knowledge
+            and ((root / str(b.get("ref"))).is_file() or (is_pkg and (mech / str(b.get("ref")).removeprefix("base/")).is_file()))
+            for b in slot
+        )
+        if not (ok_skill or ok_know):
+            refs = [f"{b.get('kind')}:{b.get('ref')}" for b in slot if isinstance(b, dict)]
+            missing.append(f"{phase}（挂的绑定：{refs or '无'}）")
     if missing:
         return Outcome(False, "这些阶段动笔前没挂上可用的知识 Skill：" + "；".join(missing))
     return Outcome(True, f"{len(phases)} 个阶段动笔前都挂着已声明的知识 Skill")
@@ -1607,7 +1643,7 @@ def _run_node(root: Path, name: str, script: str) -> tuple[dict | None, str]:
 
 def _ext_file(root: Path, rel: str) -> Path | None:
     """夹具里没有就用消费工程里装的真实扩展——夹具只放源码片段，执行器始终是真的那一份。"""
-    for base in (root, executor_ext()):
+    for base in (root, root / "base", executor_base(), executor_ext()):
         p = base / rel
         if p.exists():
             return p
@@ -1664,19 +1700,19 @@ def b01_probe_no_discrimination(root: Path, ctx: Ctx) -> Outcome:
 def _story_build_in(root: Path, extra_verdict: str | None, feature: str = "REQ-DEMO") -> tuple[int, str]:
     build = _ext_file(root, "skills/story/scripts/core/story-build.mjs")
     if build is None:
-        build = executor_ext() / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
+        build = executor_base() / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
 
     # 先让材料清单就位：图片身份与材料清单集合这两条判据都问它，没有清单它们只会
     # 说「未执行」——而夹具自检要的是**判据真的跑过**，跳过等于放过。
     flow = _ext_file(root, "skills/story/scripts/core/story_flow.py")
     if flow is None:
-        flow = executor_ext() / "skills" / "story" / "scripts" / "core" / "story_flow.py"
+        flow = executor_base() / "skills" / "story" / "scripts" / "core" / "story_flow.py"
     subprocess.run(
         [sys.executable, str(flow), "round", "--feature", feature,
          "--project-root", str(root)],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     # 成文按已准入的蓝图写：夹具里没有同根蓝图的，用真实流程命令走完关卡、放一份准入蓝图，附录按它重投
-    access = _ext_file(root, "hooks/shared/framework-access.mjs") or executor_ext() / "hooks" / "shared" / "framework-access.mjs"
+    access = _ext_file(root, "hooks/shared/framework-access.mjs") or executor_base() / "hooks" / "shared" / "framework-access.mjs"
     story_src = root / "doc" / "features" / feature / "AR" / "story-src"
     if not (story_src / "story-flow.json").is_file() or not (story_src.parents[1] / "blueprint" / "component-blueprint.yaml").is_file():
         (story_src / "story-flow.json").unlink(missing_ok=True)
@@ -1729,7 +1765,7 @@ def r02_knowledge_row_missing(root: Path, ctx: Ctx) -> Outcome:
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp) / root.name
         shutil.copytree(root, work)
-        access = executor_ext() / "hooks" / "shared" / "framework-access.mjs"
+        access = executor_base() / "hooks" / "shared" / "framework-access.mjs"
         try:
             design_fixture.install_blueprint(work, "REQ-DEMO", access, judgements=judgements, exact=True,
                                              consume=False, projection=False)
@@ -1761,7 +1797,7 @@ def _spec_post_check(root: Path) -> tuple[bool, str] | None:
         _link_framework(work)  # 门禁经原生身份定位 Feature，要接上被查工程的 Framework
         hook = _ext_file(work, "hooks/spec/post_check.mjs")
         if hook is None:
-            hook = executor_ext() / "hooks" / "spec" / "post_check.mjs"
+            hook = executor_base() / "hooks" / "spec" / "post_check.mjs"
         # 平铺 Feature 的契约记这一轮的知识输入身份：它随激活知识变，夹具不存；按作者的做法由产品生成、原样写进副本
         contracts = work / "doc" / "features" / "REQ-DEMO" / "contracts.yaml"
         if contracts.is_file() and "knowledge_facts:" in (text := contracts.read_text(encoding="utf-8")) \
@@ -1861,7 +1897,7 @@ process.stdout.write(JSON.stringify(out));
 
 def _story_rule(root: Path, op: str, *args: str) -> tuple[list[str] | None, str]:
     """在夹具上直接调一条真实判据，回它报的问题串；跑不起来回 (None, 原因)。"""
-    ext = executor_ext()
+    ext = executor_base()
     core, hooks = ext / "skills" / "story" / "scripts" / "core", ext / "hooks" / "shared"
     r = subprocess.run(["node", "--input-type=module", "-e", STORY_RULES, str(core), str(hooks), str(root), "REQ-DEMO", op, *args],
                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
@@ -2119,7 +2155,8 @@ def m19_rule_defined_twice(root: Path, ctx: Ctx) -> Outcome:
 def _knowledge_structure_words(root: Path) -> set[str]:
     """从知识目录派生：知识名、角色名、节名与表头列名。"""
     words: set[str] = set()
-    for path in iter_files(root / "knowledge", (".md",)) if (root / "knowledge").is_dir() else []:
+    kdir = root / "knowledge" if (root / "knowledge").is_dir() else executor_ext() / "knowledge"
+    for path in iter_files(kdir, (".md",)) if kdir.is_dir() else []:
         text = read_text(path)
         fm = re.match(r"^---\n(.*?)\n---", text, flags=re.S)
         if fm:
@@ -2246,9 +2283,12 @@ _CHAIN_OWNED = ("scripts/", "doc/extensions/")
 
 def _chain_files(root: Path):
     """作者必读链：主 agent 的阶段须知、子 agent 的作业书、Skill 正文。"""
-    yield from root.glob("hooks/*/author.md")
-    yield from root.glob("**/phases/*.md")
-    yield from root.glob("**/SKILL.md")
+    m = _mech_root(root)
+    yield from m.glob("hooks/*/author.md")
+    yield from m.glob("**/phases/*.md")
+    for p in m.glob("**/SKILL.md"):
+        if "examples" not in p.parts:
+            yield p
 
 
 def _chain_resolves(root: Path, src: Path, ref: str) -> bool:
@@ -2257,8 +2297,11 @@ def _chain_resolves(root: Path, src: Path, ref: str) -> bool:
     if not ref:
         return True
     cands = [root / ref]
+    if ref.startswith("doc/extensions/adapters/"):
+        return True  # 业务侧对接实现归目标仓，不随通用机制包交付
     if ref.startswith("doc/extensions/"):
-        cands.append(root / ref[len("doc/extensions/"):])
+        tail = ref[len("doc/extensions/"):]
+        cands.extend([root / tail, _mech_root(root) / tail.removeprefix("base/")])
     cur = src.parent
     while True:
         cands.append(cur / ref)
@@ -2307,7 +2350,7 @@ def f02_verifier_task_not_well_defined(root: Path, ctx: Ctx) -> Outcome:
     # 旧文件没了就返回「未启用」是静默放过——判据要跟着对象走。
     overlay = _ext_file(root, "rules/spec-rules.overlay.yaml")
     if overlay is None:
-        overlay = executor_ext() / "rules" / "spec-rules.overlay.yaml"
+        overlay = executor_base() / "rules" / "spec-rules.overlay.yaml"
     verify_doc = overlay if overlay.is_file() else None
     if write_doc is None or verify_doc is None:
         return Outcome(True, "作业书不全（该形态未启用）")
@@ -2351,8 +2394,8 @@ def r04_flow_status_after_s5(root: Path, ctx: Ctx) -> Outcome:
     范围由蓝图承载，旧的范围重开关卡随职责退出，不在本步重演。
     """
     # 流程命令要在接入了 Framework 的工程里跑：一律取装在被测工程里的扩展，不取开发源目录
-    flow = executor_ext() / "skills/story/scripts/core/story_flow.py"
-    build = executor_ext() / "skills/story/scripts/core/story-build.mjs"
+    flow = executor_base() / "skills/story/scripts/core/story_flow.py"
+    build = executor_base() / "skills/story/scripts/core/story-build.mjs"
     feature = "REQ-DEMO"
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp) / "work"

@@ -18,7 +18,7 @@ from pathlib import Path
 from ext_workspace import DEV_EXT, DEV_ROOT, link_harness_yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CONTRACTS_MJS = DEV_EXT / "hooks" / "shared" / "contracts.mjs"
+CONTRACTS_MJS = DEV_EXT / "base" / "hooks" / "shared" / "contracts.mjs"
 FEATURE = "AR90001"
 
 CONTRACT_YAML = """interfaces:
@@ -88,8 +88,8 @@ class PatternSignalSourceIsStatedToBothReaders(unittest.TestCase):
         "信号来自**业务流程本身**：数分支、数步数、看失败处理时，以需求描述的那个业务过程为准。",
         "当前用模拟、演示或简化方式承载某一步，不改变业务信号——承载会换，业务不会。",
     )
-    PROTOCOL = Path("doc/extensions/skills/story/reference/knowledge/protocol.md")
-    TEMPLATE = Path("doc/extensions/hooks/blueprint/author.md")
+    PROTOCOL = Path("doc/extensions/base/skills/story/reference/knowledge/protocol.md")
+    TEMPLATE = Path("doc/extensions/base/hooks/blueprint/author.md")
 
     def test_both_readers_carry_the_same_sentences(self) -> None:
         protocol = (DEV_ROOT / self.PROTOCOL).read_text(encoding="utf-8")

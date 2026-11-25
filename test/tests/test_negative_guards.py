@@ -35,7 +35,7 @@ from test_story_build import (  # noqa: E402
 )
 from ext_workspace import DEV_EXT  # noqa: E402
 
-CONTRACT = (DEV_EXT / "skills" / "story"
+CONTRACT = (DEV_EXT / "base" / "skills" / "story"
             / "contracts" / "story-chapters.json")
 
 
@@ -163,14 +163,14 @@ class LedgersMustAllExist(NegativeCase):
 
     def test_the_whitelist_is_the_same_five_on_both_sides(self) -> None:
         """登记、存在性两处说的必须是同一批台账——各写一份就会改一处忘一处。"""
-        flow = (DEV_EXT / "skills/story/scripts/core/flow/state.py"
+        flow = (DEV_EXT / "base" / "skills/story/scripts/core/flow/state.py"
                 ).read_text(encoding="utf-8")
         block = flow.split("STORY_REGISTERED = (", 1)[1].split(")", 1)[0]
         ledgers = [rel.rsplit("/", 1)[1] for rel in re.findall(r'"([^"]+)"', block)
                    if rel.startswith("AR/story-src/")]
         self.assertEqual(tuple(sorted(ledgers)), tuple(sorted(self.LEDGERS)))
 
-        build = (DEV_EXT / "skills/story/scripts/core/story/context.mjs"
+        build = (DEV_EXT / "base" / "skills/story/scripts/core/story/context.mjs"
                  ).read_text(encoding="utf-8")
         ledgers = build.split("const STORY_SRC_LEDGERS = [", 1)[1].split("];", 1)[0]
         keys = re.findall(r"\['(\w+Path)'", ledgers)
@@ -247,7 +247,7 @@ class CheckOutputIsGroupedByJudgement(NegativeCase):
 
     def test_no_second_artifact_and_no_threshold(self) -> None:
         """不写第二个文件、不设「超过 N 条才聚合」的阈值。"""
-        body = (DEV_EXT / "skills/story/scripts/core/story/check.mjs"
+        body = (DEV_EXT / "base" / "skills/story/scripts/core/story/check.mjs"
                 ).read_text(encoding="utf-8")
         self.assertNotIn("check-detail", body, "又长出了第二个明细文件")
         seg = body.split("function groupedProblems", 1)[1].split("\n}\n", 1)[0]
@@ -324,11 +324,11 @@ class TheLibraryItselfIsComplete(unittest.TestCase):
 class NoWordListForToolVocabulary(unittest.TestCase):
     """语言红线合同与判定脚本里没有按字面拦装置用语的词表。"""
 
-    LANGUAGE = DEV_EXT / "skills/story/scripts/core/story/language.mjs"
+    LANGUAGE = DEV_EXT / "base" / "skills/story/scripts/core/story/language.mjs"
 
     def test_no_word_list_for_tool_vocabulary_is_left(self) -> None:
         """装置词表退出：合同与脚本里都不再有按字面拦「关卡」「台账」一类词的表。"""
-        contract = json.loads((DEV_EXT / "skills/story/contracts/story-chapters.json")
+        contract = json.loads((DEV_EXT / "base" / "skills/story/contracts/story-chapters.json")
                               .read_text(encoding="utf-8"))
         redline = json.dumps(contract["language_redline"], ensure_ascii=False)
         for gone in ("harness_terms", "关卡", "台账", "人话", "search_phrase", "ai_heading", "placeholder_heading"):

@@ -20,7 +20,7 @@ from pathlib import Path
 from ext_workspace import DEV_EXT
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SKILL = DEV_EXT / "skills" / "story"
+SKILL = DEV_EXT / "base" / "skills" / "story"
 CONTRACT = json.loads((SKILL / "contracts" / "story-chapters.json").read_text(encoding="utf-8"))
 
 
@@ -30,7 +30,7 @@ def read(rel: str) -> str:
 
 def read_ext(rel: str) -> str:
     """扩展根下的文件——任务包在 hooks 那边，与作业书不在同一棵子树。"""
-    return (DEV_EXT / rel).read_text(encoding="utf-8")
+    return (DEV_EXT / "base" / rel).read_text(encoding="utf-8")
 
 
 def section(guide: str, name: str) -> str:
@@ -357,7 +357,7 @@ class TheFigureTripleAndTheReviewSplitAreSaidOnce(unittest.TestCase):
         for row in ("有阻断项", "PASS，改动只影响表达", "PASS，改动改变业务口径", "PASS，建议不在本阶段修"):
             self.assertIn(row, closure, f"闭环表缺「{row}」这一类")
         self.assertFalse((SKILL / "phases" / "spec.md").exists(), "Story 编排已迁到 phases/design.md")
-        for f in (self.EXT / "hooks" / "plan" / "author.md", self.EXT / "hooks" / "spec" / "author.md"):
+        for f in (self.EXT / "base" / "hooks" / "plan" / "author.md", self.EXT / "base" / "hooks" / "spec" / "author.md"):
             text = f.read_text(encoding="utf-8")
             with self.subTest(file=f.name):
                 self.assertIn("「闭环」", text, "没有指向唯一的处置规则")
@@ -374,7 +374,7 @@ class TheFigureTripleAndTheReviewSplitAreSaidOnce(unittest.TestCase):
                 self.assertNotIn(old, text)
 
     def test_the_reviewer_asks_the_three_figure_questions(self) -> None:
-        overlay = (self.EXT / "rules" / "story-reader-rules.yaml").read_text(encoding="utf-8")
+        overlay = (self.EXT / "base" / "rules" / "story-reader-rules.yaml").read_text(encoding="utf-8")
         for q in ("图前是不是说清了读者看这张图要看出什么", "图后是不是用列表补上了图里没表达的条件", "没做同图增强算遗漏",
                   "图种合不合读者要判断的那件事", "一段是不是讲了几件独立的事", "verdicts.chapter_dimensions"):
             with self.subTest(q=q):
@@ -405,7 +405,7 @@ class TheWritingMindOpensTheGuide(unittest.TestCase):
                 self.assertNotIn(old, text)
 
     def test_the_reviewer_names_document_talk_as_an_advisory(self) -> None:
-        overlay = (self.EXT / "rules" / "story-reader-rules.yaml").read_text(encoding="utf-8")
+        overlay = (self.EXT / "base" / "rules" / "story-reader-rules.yaml").read_text(encoding="utf-8")
         self.assertIn(f"正文里指着文档说话的句子——{self.DOCTALK}——与章开场白", overlay)
 
 

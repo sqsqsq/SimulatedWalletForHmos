@@ -229,7 +229,7 @@ STAT_DETAIL = f"""story_details:
 PROBE = """
 import { pathToFileURL } from 'node:url';
 const [root, feature] = process.argv.slice(1);
-const base = pathToFileURL(root + '/doc/extensions/hooks/').href;
+const base = pathToFileURL(root + '/doc/extensions/base/hooks/').href;
 const c = await import(base + 'shared/contracts.mjs');
 const plan = (await import(base + 'plan/post_check.mjs')).default;
 const pre = (await import(base + 'shared/pre_verifier.mjs')).default;
@@ -251,7 +251,7 @@ process.stdout.write(JSON.stringify({ must: i.methods?.[0]?.must ?? null, roles:
 SPEC_PROBE = """
 import { pathToFileURL } from 'node:url';
 const [root, feature] = process.argv.slice(1);
-const base = pathToFileURL(root + '/doc/extensions/hooks/').href;
+const base = pathToFileURL(root + '/doc/extensions/base/hooks/').href;
 const spec = (await import(base + 'spec/post_check.mjs')).default;
 const pre = (await import(base + 'shared/pre_verifier.mjs')).default;
 const gate = await spec({ phase: 'spec', feature, projectRoot: root });
@@ -543,7 +543,7 @@ class NoPatternIsACandidate(ChainCase):
 FACT_PROBE = """
 import { pathToFileURL } from 'node:url';
 const [root, feature] = process.argv.slice(1);
-const k = await import(pathToFileURL(root + '/doc/extensions/hooks/shared/knowledge-application.mjs').href);
+const k = await import(pathToFileURL(root + '/doc/extensions/base/hooks/shared/knowledge-application.mjs').href);
 const j = k.featureKnowledge(root, feature, null);
 const c = k.unitContext(j);
 process.stdout.write(JSON.stringify({ facts: c.facts.map(f => f.fact_id), located: c.located.map(f => f.fact_id), refs: j.scope.refs() }));
@@ -582,7 +582,7 @@ class FactsBelongByTheirReferences(ChainCase):
 SIBLING_PROBE = """
 import { pathToFileURL } from 'node:url';
 const [root, ...features] = process.argv.slice(1);
-const base = pathToFileURL(root + '/doc/extensions/hooks/').href;
+const base = pathToFileURL(root + '/doc/extensions/base/hooks/').href;
 const k = await import(base + 'shared/knowledge-application.mjs');
 const kt = await import(base + 'shared/knowledge-task.mjs');
 const pre = (await import(base + 'shared/pre_verifier.mjs')).default;
@@ -675,7 +675,7 @@ class SiblingUnitsInOneBlueprint(ChainCase):
         text = original.decode("utf-8")
         self.assertIn(f"    - {rel}\n", text)
         manifest.write_bytes(text.replace(f"    - {rel}\n", f"    - {{path: {rel}, audience: [coding]}}\n", 1).encode("utf-8"))
-        proc = subprocess.run(["node", str(self.root / "doc/extensions/hooks/shared/knowledge-task.mjs"), "--project-root", str(self.root),
+        proc = subprocess.run(["node", str(self.root / "doc/extensions/base/hooks/shared/knowledge-task.mjs"), "--project-root", str(self.root),
                                "--feature", CU, "--action", "spec", "--audience", "author"],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
         gaps = proc.stdout.split("## 6. 缺口与责任", 1)[1]
@@ -739,7 +739,7 @@ class SiblingUnitsInOneBlueprint(ChainCase):
         probe_6 = """
 import { pathToFileURL } from 'node:url';
 const [root, cuA, cuB] = process.argv.slice(1);
-const kt = await import(pathToFileURL(root + '/doc/extensions/hooks/shared/knowledge-task.mjs').href);
+const kt = await import(pathToFileURL(root + '/doc/extensions/base/hooks/shared/knowledge-task.mjs').href);
 const out = {};
 for (const action of ['spec', 'plan', 'coding', 'review', 'ut', 'testing']) {
   out[action] = {
@@ -860,7 +860,7 @@ class APlanWithoutAProjectionWritesItsOwnContract(ChainCase):
 STAGE_PROBE = """
 import { pathToFileURL } from 'node:url';
 const [root, feature, phase] = process.argv.slice(1);
-const base = pathToFileURL(root + '/doc/extensions/hooks/').href;
+const base = pathToFileURL(root + '/doc/extensions/base/hooks/').href;
 const access = await import(base + 'shared/framework-access.mjs');
 const gate = await (await import(base + phase + '/post_check.mjs')).default({ phase, feature, projectRoot: root });
 const view = f => ({ status: f.status, issues: f.issues, inputs: Object.fromEntries(Object.entries(f.inputs).map(([k, v]) => [k, [v.state, v.binding?.source ?? null]])) });
@@ -906,7 +906,7 @@ class ThePlanChecksTheSelectedAcceptanceWhenTheSpecIsReused(StageCase):
 ACCEPTANCE_CHECK = """
 import { pathToFileURL } from 'node:url';
 const [root, feature, acceptanceJson] = process.argv.slice(1);
-const base = pathToFileURL(root + '/doc/extensions/hooks/').href;
+const base = pathToFileURL(root + '/doc/extensions/base/hooks/').href;
 const ka = await import(base + 'shared/knowledge-application.mjs');
 const knowledge = (await import(base + 'shared/knowledge.mjs')).activeKnowledge(root);
 const active = ka.activation(root, knowledge);
@@ -946,11 +946,11 @@ class TheAcceptanceOwnershipIsCheckedPerReference(ChainCase):
         self.assertIn(f"两种都在 knowledge_refs 列 {KNOWLEDGE_REF}", problems[0])
 
     def test_the_check_reads_no_files_and_has_the_two_gates_as_callers(self) -> None:
-        source = (design_kit.DEV_EXT / "hooks" / "shared" / "knowledge-application.mjs").read_text(encoding="utf-8")
+        source = (design_kit.DEV_EXT / "base" / "hooks" / "shared" / "knowledge-application.mjs").read_text(encoding="utf-8")
         body = source.split("export function knowledgeAcceptanceProblems", 1)[1].split("\n}\n", 1)[0]
         for call in ("fs.", "readFileSync", "activation(", "activeKnowledge(", "readFeature(", "phaseArtifacts("):
             self.assertNotIn(call, body)
-        hooks = design_kit.DEV_EXT / "hooks"
+        hooks = design_kit.DEV_EXT / "base" / "hooks"
         callers = sorted(p.relative_to(hooks).as_posix() for p in hooks.rglob("*.mjs")
                          if "knowledgeAcceptanceProblems(" in p.read_text(encoding="utf-8") and p.name != "knowledge-application.mjs")
         self.assertEqual(["plan/post_check.mjs", "spec/post_check.mjs"], callers)
@@ -1080,24 +1080,51 @@ class TheMaterializedContractIsReused(ChainCase):
         ghost_out = self.probe(fresh=True)
         self.assertIn("HomeRepository.notDefinedMethod", ghost_out["gate"], ghost_out["gate"])
 
-        # 4) S22 R2：合法表同节并排「| 统计点以及责任方法 | 场景 |」数据表：门禁与独审均报精确行号、原表头与原表行，不被合法表掩盖
-        self.variant(
-            "plan/plan.md",
-            "# Plan\n\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n| 编号 | 落点 |\n|---|---|\n| OBS-02 | HomeRepository.refreshBalance |\n\n"
-            "### 设计模式选型与角色\n\n决策树节点表落在 HomeRepository。\n\n"
-            "### 埋点\n\n| 统计点与责任方法说明 | 备注 |\n|---|---|\n| 辅助说明 | 仅注释 |\n\n"
-            "| 统计点 | 责任方法 | 结果 |\n|---|---|---|\n"
-            "| 余额刷新 / 保存结果 | HomeRepository.refreshBalance | 成功 |\n\n"
-            "| 统计点以及责任方法 | 场景 |\n|---|---|\n"
-            "| 余额刷新 / 保存结果 HomeRepository.refreshBalance | 返回首页 |\n",
-        )
-        mixed_beside_valid = self.probe(fresh=True)
-        self.assertIn("第 25 行", mixed_beside_valid["gate"], mixed_beside_valid["gate"])
-        self.assertIn("| 统计点以及责任方法 | 场景 |", mixed_beside_valid["gate"], mixed_beside_valid["gate"])
-        self.assertNotIn("统计点与责任方法说明", mixed_beside_valid["gate"], mixed_beside_valid["gate"])
-        self.assertIn("表头结构歧义", mixed_beside_valid["review"], mixed_beside_valid["review"])
-        self.assertIn("| 统计点以及责任方法 | 场景 |", mixed_beside_valid["review"], mixed_beside_valid["review"])
-        self.assertIn("返回首页", mixed_beside_valid["review"], mixed_beside_valid["review"])
+        # 4) S22/S24：合法表同节并排说明表（无引用 / 引用真实方法 / 引用文件名）均不被硬拦、原表留给独审且不计覆盖；
+        #    切换为真混合点位记录（| 统计点以及责任方法 | 或合填已知点位+方法）时门禁与独审均定位行号、表头与原行
+        for note_case, note_text in (
+            ("无引用", "仅注释，无带点引用"),
+            ("引用真实方法", "只说明复用 HomeRepository.refreshBalance，不追加统计点"),
+            ("引用文件名", "字段释义见 docs.md"),
+        ):
+            with self.subTest(note_case=note_case):
+                self.variant(
+                    "plan/plan.md",
+                    "# Plan\n\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n| 编号 | 落点 |\n|---|---|\n| OBS-02 | HomeRepository.refreshBalance |\n\n"
+                    "### 设计模式选型与角色\n\n决策树节点表落在 HomeRepository。\n\n"
+                    "### 埋点\n\n| 统计点与责任方法说明 | 备注 |\n|---|---|\n"
+                    f"| 仅对主链路记点 | {note_text} |\n\n"
+                    "| 统计点 | 责任方法 | 结果 |\n|---|---|---|\n"
+                    "| 余额刷新 / 保存结果 | HomeRepository.refreshBalance | 成功 |\n\n"
+                    "#### 历史参考\n\n| 统计点 | 责任方法 |\n|---|---|\n| 历史旧点 | Legacy.oldMethod |\n",
+                )
+                note_out = self.probe(fresh=True)
+                self.assertNotIn("结构歧义", note_out["gate"], (note_case, note_out["gate"]))
+                self.assertNotIn("逐点表里没有行", note_out["gate"], (note_case, note_out["gate"]))
+                self.assertNotIn("表头结构歧义", note_out["review"], (note_case, note_out["review"]))
+                self.assertIn("埋点段附表", note_out["review"], (note_case, note_out["review"]))
+                self.assertIn(note_text, note_out["review"], (note_case, note_out["review"]))
+                self.assertNotIn("历史旧点", note_out["review"])
+
+        for mixed_header in ("| 统计点以及责任方法 | 场景 |", "| 埋点记录 | 场景 |"):
+            with self.subTest(mixed_header=mixed_header):
+                self.variant(
+                    "plan/plan.md",
+                    "# Plan\n\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n| 编号 | 落点 |\n|---|---|\n| OBS-02 | HomeRepository.refreshBalance |\n\n"
+                    "### 设计模式选型与角色\n\n决策树节点表落在 HomeRepository。\n\n"
+                    "### 埋点\n\n| 统计点与责任方法说明 | 备注 |\n|---|---|\n| 辅助说明 | 只说明复用 HomeRepository.refreshBalance |\n\n"
+                    "| 统计点 | 责任方法 | 结果 |\n|---|---|---|\n"
+                    "| 余额刷新 / 保存结果 | HomeRepository.refreshBalance | 成功 |\n\n"
+                    f"{mixed_header}\n|---|---|\n"
+                    "| 余额刷新 / 保存结果 HomeRepository.refreshBalance | 返回首页 |\n",
+                )
+                mixed_beside_valid = self.probe(fresh=True)
+                self.assertIn("第 25 行", mixed_beside_valid["gate"], mixed_beside_valid["gate"])
+                self.assertIn(mixed_header, mixed_beside_valid["gate"], mixed_beside_valid["gate"])
+                self.assertNotIn("统计点与责任方法说明", mixed_beside_valid["gate"], mixed_beside_valid["gate"])
+                self.assertIn("表头结构歧义", mixed_beside_valid["review"], mixed_beside_valid["review"])
+                self.assertIn(mixed_header, mixed_beside_valid["review"], mixed_beside_valid["review"])
+                self.assertIn("返回首页", mixed_beside_valid["review"], mixed_beside_valid["review"])
 
 
 class S19PlanDirectEntryPreparesUseCasesAndKeepsAuthorization(ChainCase):
@@ -1108,7 +1135,7 @@ class S19PlanDirectEntryPreparesUseCasesAndKeepsAuthorization(ChainCase):
 
     def _run_task(self, action: str) -> str:
         proc = subprocess.run(
-            ["node", str(self.root / "doc/extensions/hooks/shared/knowledge-task.mjs"),
+            ["node", str(self.root / "doc/extensions/base/hooks/shared/knowledge-task.mjs"),
              "--project-root", str(self.root), "--feature", CU, "--action", action, "--audience", "author"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
         )
@@ -1176,7 +1203,7 @@ class S22PlanAuthorityMissingStopsAndRoutesToDesignOwner(ChainCase):
 
     def _run_task(self, action: str) -> str:
         proc = subprocess.run(
-            ["node", str(self.root / "doc/extensions/hooks/shared/knowledge-task.mjs"),
+            ["node", str(self.root / "doc/extensions/base/hooks/shared/knowledge-task.mjs"),
              "--project-root", str(self.root), "--feature", CU, "--action", action, "--audience", "author"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
         )

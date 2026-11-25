@@ -29,14 +29,14 @@ import design_fixture  # noqa: E402
 from test_knowledge_task import IMPACT_BASIS, REPO_ROOT, REQUIREMENT  # noqa: E402
 import yaml  # noqa: E402
 
-STORY_BUILD = "doc/extensions/skills/story/scripts/core/story-build.mjs"
+STORY_BUILD = "doc/extensions/base/skills/story/scripts/core/story-build.mjs"
 UNIT = "balance-refresh"
 
 RENDER = """
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 const [root, blueprint] = process.argv.slice(1);
-const { loadNative } = await import(pathToFileURL(path.join(root, 'doc/extensions/hooks/shared/framework-access.mjs')).href);
+const { loadNative } = await import(pathToFileURL(path.join(root, 'doc/extensions/base/hooks/shared/framework-access.mjs')).href);
 const native = loadNative(root);
 const r = native.module('scripts/utils/blueprint-review-materialization.ts').materializeBlueprintReview(native.root, blueprint);
 if (r.status === 'failed') { process.stderr.write(`评审投影原生物化失败：${r.reason ?? ''}`); process.exit(1); }
@@ -58,7 +58,7 @@ MANIFEST = """
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 const [root, feature, phase] = process.argv.slice(1);
-const access = await import(pathToFileURL(path.join(root, 'doc/extensions/hooks/shared/framework-access.mjs')).href);
+const access = await import(pathToFileURL(path.join(root, 'doc/extensions/base/hooks/shared/framework-access.mjs')).href);
 const native = access.loadNative(root);
 const m = native.module('scripts/utils/phase-evidence-manifest.ts');
 const summary = path.join(access.featureDir(root, feature), phase, 'reports', 'summary.json');
@@ -403,14 +403,14 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 const [root, file] = process.argv.slice(1);
-const { loadNative } = await import(pathToFileURL(path.join(root, 'doc/extensions/hooks/shared/framework-access.mjs')).href);
+const { loadNative } = await import(pathToFileURL(path.join(root, 'doc/extensions/base/hooks/shared/framework-access.mjs')).href);
 process.stdout.write(loadNative(root).module('scripts/utils/execution-scope.ts')
   .executionScopeFingerprint(JSON.parse(fs.readFileSync(file, 'utf8')).execution_scope));
 """
 REVIEW_INPUTS = """
 import { pathToFileURL } from 'node:url';
 const [root, feature] = process.argv.slice(1);
-const { reviewInputs } = await import(pathToFileURL(root + '/doc/extensions/hooks/shared/review-inputs.mjs').href);
+const { reviewInputs } = await import(pathToFileURL(root + '/doc/extensions/base/hooks/shared/review-inputs.mjs').href);
 const b = reviewInputs(root, feature, 'plan');
 process.stdout.write(JSON.stringify({ inputs: b.inputs.map(({ key, required, missing, output }) => ({ key, required, missing, output: !!output })),
   gaps: b.gaps }));
@@ -419,7 +419,7 @@ FREEZE = """
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 const [root, feature] = process.argv.slice(1);
-const { loadNative } = await import(pathToFileURL(path.join(root, 'doc/extensions/hooks/shared/framework-access.mjs')).href);
+const { loadNative } = await import(pathToFileURL(path.join(root, 'doc/extensions/base/hooks/shared/framework-access.mjs')).href);
 const n = loadNative(root);
 const frozen = n.module('scripts/utils/feature-execution-scope.ts').ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot: n.frameworkRoot, feature });
 if (!['frozen', 'reused'].includes(frozen.status)) { process.stderr.write(JSON.stringify(frozen)); process.exit(1); }
@@ -525,7 +525,7 @@ def review_inputs(root: Path) -> dict:
 REPORT_CHECK = """
 import { pathToFileURL } from 'node:url';
 const [root, feature] = process.argv.slice(1);
-const { reportProblems } = await import(pathToFileURL(root + '/doc/extensions/hooks/shared/verifier-report.mjs').href);
+const { reportProblems } = await import(pathToFileURL(root + '/doc/extensions/base/hooks/shared/verifier-report.mjs').href);
 process.stdout.write(JSON.stringify(reportProblems(root, feature, 'plan')));
 """
 #: 夹具作者读过的工程来源：从 demo 复制，是消费工程里本来就有的文件
@@ -627,7 +627,7 @@ class APlanClosesThroughTheNativeRequest(unittest.TestCase):
         (unit / "context" / "facts.md").write_text(
             f'---\nschema_version: "1.1"\nfeature: "{CU}"\nphase: "plan"\nestablished_by: "plan"\n'
             f'frozen_scope_fingerprint: "{fingerprint.stdout.strip()}"\nready_to_produce: true\nhas_blocker_coverage_risk: false\n'
-            'key_inputs_read:\n  - "paths.module_catalog — 已读"\n  - "doc/extensions/hooks/plan/author.md — 已读"\n'
+            'key_inputs_read:\n  - "paths.module_catalog — 已读"\n  - "doc/extensions/base/hooks/plan/author.md — 已读"\n'
             '  - "build-profile.json5 — 已读"\n  - "module.json5 — 已读"\nsource_code_paths:\n'
             + "".join(f"  - {r}\n" for r in EXPLORED)
             + 'exploration_mode: "sequential"\nchange_intent: "feature"\nestimated_loc_delta: 20\ntouches_layers: ["02-Feature"]\n'
@@ -852,7 +852,7 @@ class TheStoryEndIsTheDeliveryGate(TheStoryIsReviewedRegisteredAndDeliveredCase)
         imp = subprocess.run(["python", str(imp_py), "--feature", ar_feat, "--project-root", str(ar_root)],
                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         self.assertEqual(0, imp.returncode, imp.stdout + imp.stderr)
-        design_kit.install_review_mechanism(ar_root, DEV_STORY_BUILD.parents[4])
+        design_kit.install_review_mechanism(ar_root, DEV_STORY_BUILD.parents[5])
         ar_story = ar_root / "doc" / "features" / ar_feat / "AR" / "story.md"
         ar_src = ar_story.parent / "story-src"
         ar_design = ar_story.parent.parent / "blueprint" / "component-blueprint.review.md"
@@ -1096,7 +1096,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 const [root, feature, runDir] = process.argv.slice(1);
-const access = await import(pathToFileURL(path.join(root, 'doc/extensions/hooks/shared/framework-access.mjs')).href);
+const access = await import(pathToFileURL(path.join(root, 'doc/extensions/base/hooks/shared/framework-access.mjs')).href);
 const native = access.loadNative(root);
 const { loadScopeRevisions } = native.module('scripts/utils/goal-run-creation.ts');
 const { assertRevisionKeepsRequiredObligations } = native.module('scripts/utils/execution-scope.ts');
@@ -1176,7 +1176,7 @@ class TheFrozenRequestRecoversAndObserverTracksPerUnitAuthority(unittest.TestCas
         bp.write_bytes(old_bp.decode("utf-8").replace(old_ref, sha(src.read_bytes())).encode("utf-8"))
         cu_path.write_bytes(cu_path.read_bytes().replace(sha(old_bp).encode(), sha(bp.read_bytes()).encode()))
         draft = textwrap.dedent(chain.design(root, True, pattern="none", nested=False))
-        design_fixture.render_projection(root, BLUEPRINT, root / "doc/extensions/hooks/shared/framework-access.mjs")
+        design_fixture.render_projection(root, BLUEPRINT, root / "doc/extensions/base/hooks/shared/framework-access.mjs")
         for rel in EXPLORED:
             (root / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(REPO_ROOT / "demo" / rel, root / rel)
@@ -1232,14 +1232,14 @@ class TheFrozenRequestRecoversAndObserverTracksPerUnitAuthority(unittest.TestCas
             bp_check = native_cli(proj, "scripts/check-component-blueprint.ts", "--project-root", str(proj),
                                   "--blueprint", BLUEPRINT, "--json")
             assert bp_check.returncode == 0, bp_check.stdout[-800:]
-            design_fixture.render_projection(proj, BLUEPRINT, proj / "doc/extensions/hooks/shared/framework-access.mjs")
+            design_fixture.render_projection(proj, BLUEPRINT, proj / "doc/extensions/base/hooks/shared/framework-access.mjs")
             expected = {k: u_doc[k] for k in ("artifact", "component_id", "blueprint_id", "change_unit_id", "revision")}
             expected["artifact_sha256"] = sha(bcu)
             for ref in [u_doc["component_blueprint_ref"], *u_doc["design_refs"],
                         *[m["design_ref"] for m in u_doc.get("touches", []) if "design_ref" in m]]:
                 ref.update(revision=new_rev, artifact_sha256=sha(p_bp.read_bytes()))
             rev_proc = subprocess.run(
-                ["node", str(proj / "doc/extensions/hooks/shared/framework-access.mjs"),
+                ["node", str(proj / "doc/extensions/base/hooks/shared/framework-access.mjs"),
                  "--action", "change-unit-revise", "--project-root", str(proj), "--blueprint", BLUEPRINT],
                 input=json.dumps([{"expectedRef": expected,
                                    "candidate": {"providerId": u_doc["provenance"]["extraction_method"], "artifact": u_doc}}],

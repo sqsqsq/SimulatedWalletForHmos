@@ -28,7 +28,7 @@ import shared_state  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXT = DEV_EXT
-IMPORTER = "doc/extensions/skills/story/scripts/core/import_sources.py"
+IMPORTER = "doc/extensions/base/skills/story/scripts/core/import_sources.py"
 FEATURE = "IM90001"
 
 PNG_ONE = b"\x89PNG\r\n\x1a\nsignup"
@@ -45,7 +45,7 @@ def ux(name: str, blob: bytes) -> str:
 SIGNUP = ux("signup-page.png", PNG_ONE)
 
 
-FLOW_SCRIPT = DEV_EXT / "skills/story/scripts/core/story_flow.py"
+FLOW_SCRIPT = DEV_EXT / "base" / "skills/story/scripts/core/story_flow.py"
 
 def ensure_flow_state(root: Path, src: Path) -> None:
     """skeleton 起手预检需要的流程状态：S1–S3 走完并收口（真实脚本生成契约）。"""
@@ -160,7 +160,7 @@ class RegisteringSaysWhatTheImageIs(RegistrationCase):
         登记两次的话，没有说明文件时来源表那边报「不存在」，索引这边什么也不说——同一件事两种说法。
         """
         contract = json.loads(
-            (EXT / "skills/story/contracts/story-chapters.json").read_text(encoding="utf-8"))
+            (EXT / "base" / "skills/story/contracts/story-chapters.json").read_text(encoding="utf-8"))
         self.assertNotIn("UX", contract["sources"], "说明文件在来源表与索引里各算一次")
         (self.incoming / "界面说明.md").write_text("# 界面说明\n\n签约页的交互。\n", encoding="utf-8")
         self.put("界面说明.md", "界面说明.md")
@@ -177,7 +177,7 @@ class EveryRegisteredImageNeedsSomewhereToGoCase(RegistrationCase):
 
     def build(self, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["node", "doc/extensions/skills/story/scripts/core/story-build.mjs", *args,
+            ["node", "doc/extensions/base/skills/story/scripts/core/story-build.mjs", *args,
              "--feature", FEATURE],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=90, cwd=self.root)
@@ -220,7 +220,7 @@ class EveryRegisteredImageNeedsSomewhereToGoCase(RegistrationCase):
     def mark_unused(self, reason: str) -> subprocess.CompletedProcess:
         """登记这张图为什么不用——与作者手上跑的是同一条命令。"""
         return subprocess.run(
-            ["python", "doc/extensions/skills/story/scripts/core/import_sources.py",
+            ["python", "doc/extensions/base/skills/story/scripts/core/import_sources.py",
              "--feature", FEATURE, "--caption-image",
              f"doc/features/{FEATURE}/{SIGNUP}", "--unused", reason],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -262,7 +262,7 @@ class EveryRegisteredImageNeedsSomewhereToGo(EveryRegisteredImageNeedsSomewhereT
         另一张图而且不报错；只说「读不到」的话，作者只能去翻脚本找基准。
         """
         proc = subprocess.run(
-            ["python", "doc/extensions/skills/story/scripts/core/import_sources.py",
+            ["python", "doc/extensions/base/skills/story/scripts/core/import_sources.py",
              "--feature", FEATURE, "--caption-image",
              SIGNUP, "--caption", "签约页"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -293,7 +293,7 @@ class EveryRegisteredImageNeedsSomewhereToGoPart2(EveryRegisteredImageNeedsSomew
         """后来又要用它：撤掉理由，说明留着。"""
         self.assertEqual(0, self.mark_unused("先不用").returncode)
         proc = subprocess.run(
-            ["python", "doc/extensions/skills/story/scripts/core/import_sources.py",
+            ["python", "doc/extensions/base/skills/story/scripts/core/import_sources.py",
              "--feature", FEATURE, "--caption-image",
              f"doc/features/{FEATURE}/{SIGNUP}", "--used"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",

@@ -1,0 +1,9 @@
+schema_version: "1.1"
+version: "2.0.6"
+provides:
+  skills:
+    - story
+  knowledge_entry:
+    path: base/skills/story-knowledge/SKILL.md
+    summary: 动作前知识入口
+    audience: [spec]

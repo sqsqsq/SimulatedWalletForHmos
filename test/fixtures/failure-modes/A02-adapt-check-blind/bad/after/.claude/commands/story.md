@@ -1,1 +1,1 @@
-人改过的宿主入口：Framework 物化出的那份被替换了。
+# manual override without ownership

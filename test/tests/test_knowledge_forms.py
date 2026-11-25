@@ -48,7 +48,7 @@ applies_when: 设计出口核对时：怎样一步步核出口
 def load(root: Path) -> tuple[dict | None, str]:
     """按工作区加载激活知识：成功返回解析结果，失败返回错误文本。"""
     proc = nk.node("--input-type=module", "-e",
-                   f"const k = await import({nk.as_url(root / 'doc/extensions/hooks/shared/knowledge.mjs')});"
+                   f"const k = await import({nk.as_url(root / 'doc/extensions/base/hooks/shared/knowledge.mjs')});"
                    f"try {{ process.stdout.write(JSON.stringify(k.activeKnowledge({json.dumps(root.as_posix())}))); }}"
                    " catch (e) { process.stdout.write('ERR' + e.message); }")
     if proc.returncode != 0:
@@ -184,7 +184,7 @@ class ThePlanTaskPointsAtTheLowerHalf(MethodCase):
 
     def run_hook(self, hook: str, phase: str) -> str:
         proc = nk.node("--input-type=module", "-e",
-                       f"const m = (await import({nk.as_url(self.ext / 'hooks' / hook)})).default;"
+                       f"const m = (await import({nk.as_url(self.ext / 'base' / 'hooks' / hook)})).default;"
                        f"const out = await m({{ phase: '{phase}', feature: {json.dumps(nk.FEATURE)},"
                        f" projectRoot: {json.dumps(self.root.as_posix())} }});"
                        "process.stdout.write(JSON.stringify(out));")
@@ -217,7 +217,7 @@ class TheMechanismCarriesNoKnowledgeStructure(unittest.TestCase):
     REMOVED = ("所在流程", "字段取值", "settle", "角色与登记位置", "每次上报带什么", "以后台数据为分母", "衡量什么")
 
     def mechanism_texts(self):
-        for base in (EXT / "hooks", EXT / "skills", EXT / "rules"):
+        for base in (EXT / "base" / "hooks", EXT / "base" / "skills", EXT / "base" / "rules"):
             for f in base.rglob("*"):
                 if f.is_file() and f.suffix in {".mjs", ".py", ".md", ".yaml", ".json"} and "__pycache__" not in f.parts:
                     yield f, f.read_text(encoding="utf-8", errors="replace")
@@ -225,7 +225,7 @@ class TheMechanismCarriesNoKnowledgeStructure(unittest.TestCase):
     @staticmethod
     def protocol_structure_names() -> set[str]:
         """协议定义的结构名：两个篇名，§一 的 frontmatter 字段与 §六 条目表的列名。"""
-        protocol = (EXT / "skills/story/reference/knowledge/protocol.md").read_text(encoding="utf-8")
+        protocol = (EXT / "base" / "skills/story/reference/knowledge/protocol.md").read_text(encoding="utf-8")
         names = {"上篇", "下篇"}
         for no in ("一", "六"):
             section = protocol.split(f"## {no}、", 1)[1].split("\n## ", 1)[0]
@@ -234,7 +234,7 @@ class TheMechanismCarriesNoKnowledgeStructure(unittest.TestCase):
 
     def test_no_knowledge_word_outside_the_structure_names(self) -> None:
         """词表从知识派生，减去协议的结构名与产物出口名（Story 章节合同）；两个字的通用词不算专名。"""
-        exits = (EXT / "skills/story/contracts/story-chapters.json").read_text(encoding="utf-8")
+        exits = (EXT / "base" / "skills/story/contracts/story-chapters.json").read_text(encoding="utf-8")
         allowed = self.protocol_structure_names()
         words = {w for w in knowledge_words() - self.GENERIC if w not in allowed and w not in exits and len(w) >= 3}
         self.assertTrue(words, "派生词表为空，这条核不到东西")
@@ -271,20 +271,20 @@ class TheProtocolAndMethodPageAgree(unittest.TestCase):
     """AC06：协议列的字段是加载器读的字段；方法页四格各含四要素；作者页与内网指南指向正确。"""
 
     def test_the_protocol_fields_are_what_the_loader_reads(self) -> None:
-        protocol = (EXT / "skills/story/reference/knowledge/protocol.md").read_text(encoding="utf-8")
+        protocol = (EXT / "base" / "skills/story/reference/knowledge/protocol.md").read_text(encoding="utf-8")
         section = protocol.split("## 一、", 1)[1].split("\n## ", 1)[0]
         listed = set(re.findall(r"^\| `(\w+)` \|", section, flags=re.M))
-        loader = (EXT / "hooks/shared/knowledge.mjs").read_text(encoding="utf-8")
+        loader = (EXT / "base" / "hooks/shared/knowledge.mjs").read_text(encoding="utf-8")
         read = set(re.findall(r"\bfm\.(\w+)", loader))
         self.assertEqual({"name", "kind", "form", "applies_when"}, listed)
         self.assertLessEqual(listed, read)
         self.assertEqual([], sorted(f for f in read if f"`{f}`" not in protocol), "加载器读的字段协议里没写")
 
     def test_the_method_page_gives_four_elements_for_four_cells(self) -> None:
-        page = (EXT / "skills/story-adaptation/reference/knowledge-adaptation.md").read_text(encoding="utf-8")
+        page = (EXT / "base" / "skills/story-adaptation/reference/knowledge-adaptation.md").read_text(encoding="utf-8")
         table = page.split("## 四格怎么写", 1)[1].split("\n## ", 1)[0]
         rows = [l for l in table.split("\n") if l.startswith("| ")]
-        self.assertEqual("| 格 | 何时用这个形态 | 到哪取证 | 照哪份 Demo 示例 | 怎样走查 |", rows[0])
+        self.assertEqual("| 格 | 何时用这个形态 | 到哪取证 | 照哪份示例 | 怎样走查 |", rows[0])
         cells = {tuple(re.match(r"\| (\w+) × (\w+) \|", r).groups()) for r in rows[1:]}
         self.assertEqual(FOUR_CELLS, cells)
         for r in rows[1:]:
@@ -292,13 +292,13 @@ class TheProtocolAndMethodPageAgree(unittest.TestCase):
 
     def test_the_coding_page_and_the_upgrade_record_point_right(self) -> None:
         """升级要做的事只在 adapt 的演进记录里：没有另一份指南，extension 里也不描述目标仓内部。"""
-        coding = (EXT / "hooks/coding/author.md").read_text(encoding="utf-8")
+        coding = (EXT / "base" / "hooks/coding/author.md").read_text(encoding="utf-8")
         self.assertIn("reference/knowledge/protocol.md", coding)
         self.assertIn("下篇", coding)
-        adapt = EXT / "skills/story-adaptation"
+        adapt = EXT / "base" / "skills/story-adaptation"
         self.assertIn("reference/knowledge-adaptation.md", (adapt / "reference/upgrade-changes.md").read_text(encoding="utf-8"))
         self.assertEqual([], sorted(p.name for p in (REPO_ROOT / "doc/release").glob("内网适配指南*")))
-        self.assertFalse((EXT / "skills/story/scripts/README.md").exists())
+        self.assertFalse((EXT / "base" / "skills/story/scripts/README.md").exists())
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ from pathlib import Path
 
 from ext_workspace import DEV_EXT
 
-MODULE = DEV_EXT / "hooks" / "shared" / "chapters.mjs"
+MODULE = DEV_EXT / "base" / "hooks" / "shared" / "chapters.mjs"
 
 DRIVER = """
 import { pathToFileURL } from 'node:url';

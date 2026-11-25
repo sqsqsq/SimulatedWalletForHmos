@@ -23,10 +23,10 @@ import design_kit
 import shared_state
 from flow_steps import answer, ensure_framework, write_gaps
 
-STORY_SCRIPTS = DEV_EXT / "skills" / "story" / "scripts" / "core"
+STORY_SCRIPTS = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
 FLOW = STORY_SCRIPTS / "story_flow.py"
 IMPORT = STORY_SCRIPTS / "import_sources.py"
-ACCESS = DEV_EXT / "hooks" / "shared" / "framework-access.mjs"
+ACCESS = DEV_EXT / "base" / "hooks" / "shared" / "framework-access.mjs"
 
 sys.path.insert(0, str(STORY_SCRIPTS))
 from flow.decisions import cmd_decide  # noqa: E402
@@ -1092,7 +1092,7 @@ class ContractSectionsReadTheirAuthority(SourceIndexCase):
         """
         bp = self.with_contract("/operations/sign/operation")
         bp["contracts"][0]["operation"]["source_ref"] = f"{self.base}/blueprint/contracts/../contracts/sign.yaml#/operations/sign/operation"
-        review = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story" / "review-object.mjs"
+        review = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core" / "story" / "review-object.mjs"
         manifest = self.root / "doc" / "extensions" / "manifest.yaml"
         manifest.parent.mkdir(parents=True, exist_ok=True)
         manifest.write_text("provides:\n  knowledge: []\n", encoding="utf-8")   # 审查对象要列激活清单；本例不涉知识

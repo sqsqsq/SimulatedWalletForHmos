@@ -6,12 +6,12 @@ import json
 from pathlib import Path
 
 from design_fixture import *  # noqa: F401,F403
-from ext_workspace import DEV_EXT
+from ext_workspace import DEV_BASE, DEV_EXT
 
 #: 装在临时消费工程里的开发版 framework-access：夹具用它调原生
-ACCESS = DEV_EXT / "hooks" / "shared" / "framework-access.mjs"
+ACCESS = DEV_BASE / "hooks" / "shared" / "framework-access.mjs"
 
-CORE = DEV_EXT / "skills" / "story" / "scripts" / "core"
+CORE = DEV_BASE / "skills" / "story" / "scripts" / "core"
 
 
 def _core_modules():

@@ -28,7 +28,7 @@ class TestTheGateChoicesComeFromTheContract(unittest.TestCase):
     作者拿着一份合法契约去改它，而坏掉的是合同的读取路径。
     """
 
-    EXT = DEV_EXT / "skills" / "story"
+    EXT = DEV_EXT / "base" / "skills" / "story"
 
     def setUp(self) -> None:
         self.node = shutil.which("node")

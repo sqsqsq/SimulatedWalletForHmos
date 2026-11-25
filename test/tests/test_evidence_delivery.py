@@ -39,7 +39,7 @@ class DeliveryCase(kp.ProtocolCase):
 
     def pre_verifier(self, phase: str) -> str:
         proc = nk.node("--input-type=module", "-e",
-                       f"const m = (await import({nk.as_url(self.ext / 'hooks/shared/pre_verifier.mjs')})).default;"
+                       f"const m = (await import({nk.as_url(self.ext / 'base/hooks/shared/pre_verifier.mjs')})).default;"
                        f"const out = await m({{ phase: '{phase}', feature: {json.dumps(nk.FEATURE)},"
                        f" projectRoot: {json.dumps(self.root.as_posix())} }});"
                        "process.stdout.write((out.promptFragments ?? []).join('\\n\\n'));")
@@ -48,7 +48,7 @@ class DeliveryCase(kp.ProtocolCase):
 
     def reader_task(self) -> str:
         proc = nk.node("--input-type=module", "-e",
-                       f"const m = await import({nk.as_url(self.ext / 'hooks/shared/reader-review-task.mjs')});"
+                       f"const m = await import({nk.as_url(self.ext / 'base/hooks/shared/reader-review-task.mjs')});"
                        f"process.stdout.write(m.readerReviewTask({json.dumps(self.root.as_posix())},"
                        f" {json.dumps(nk.FEATURE)}));")
         self.assertEqual(0, proc.returncode, proc.stderr)
@@ -75,7 +75,7 @@ class KnowledgeGuideReachesEveryReader(DeliveryCase):
             with self.subTest(who=who):
                 self.assertIn("`doc/extensions/knowledge/facts/neutral-facts.md`", text)
                 self.assertIn("设计出口与重试时：本工程已有的出口登记与重试入口", text)
-                self.assertIn("doc/extensions/skills/story/reference/knowledge/protocol.md", text)
+                self.assertIn("doc/extensions/base/skills/story/reference/knowledge/protocol.md", text)
 
 
 class NotesReachTheJudgement(DeliveryCase):
@@ -204,7 +204,7 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
             "## 3. 协作\n\n```mermaid\nflowchart TD\n  甲 --> 乙\n  乙 -->|失败| 丙\n```\n\n"
             "## 4. 恢复\n\n```mermaid\nflowchart TD\n  丁 --> 戊\n```\n", encoding="utf-8")
         (inbox / ".classify.json").write_text('{"SR/design.md": "SR"}', encoding="utf-8")
-        proc = subprocess.run([sys.executable, str(self.ext / "skills/story/scripts/core/import_sources.py"),
+        proc = subprocess.run([sys.executable, str(self.ext / "base/skills/story/scripts/core/import_sources.py"),
                                "--feature", nk.FEATURE, "--project-root", str(self.root)],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)

@@ -21,15 +21,17 @@ import unittest
 from pathlib import Path
 
 import yaml
-from ext_workspace import link_harness_yaml, DEV_EXT, DEV_ROOT
+from ext_workspace import link_harness_yaml, DEV_BASE, DEV_EXT, DEV_ROOT
 from flow_steps import ensure_framework
 
 REPO = Path(__file__).resolve().parents[2]
 EXT = DEV_EXT
+BASE = DEV_BASE
 MANIFEST = EXT / "manifest.yaml"
-RULES = EXT / "rules"
-TASK_CLI = "doc/extensions/hooks/shared/knowledge-task.mjs"
-FLOW = EXT / "skills" / "story" / "scripts" / "core" / "story_flow.py"
+PKG_MANIFEST = BASE / "package-manifest.yaml"
+RULES = BASE / "rules"
+TASK_CLI = "doc/extensions/base/hooks/shared/knowledge-task.mjs"
+FLOW = BASE / "skills" / "story" / "scripts" / "core" / "story_flow.py"
 PHASES = ("spec", "plan", "coding", "review", "ut", "testing")
 # context-exploration 门禁只覆盖这五个；testing 没有，如实无留痕。
 GATED_PHASES = ("spec", "plan", "coding", "review", "ut")
@@ -73,14 +75,14 @@ class AuthorRequirementsAreReachable(unittest.TestCase):
     def test_every_phase_has_its_own_principles_page(self):
         for phase in ("blueprint", *PHASES):
             with self.subTest(phase=phase):
-                self.assertTrue((EXT / "hooks" / phase / "author.md").is_file(),
+                self.assertTrue((BASE / "hooks" / phase / "author.md").is_file(),
                                 f"{phase} 没有原则页，作者动笔前无从取要求")
 
     def test_the_task_command_prints_this_round(self):
         proc = self.task
         self.assertEqual(0, proc.returncode, f"知识任务命令挂了：{proc.stderr[-600:]}")
         self.assertIn("demo", proc.stdout, "知识任务没带上本次 feature")
-        self.assertIn("doc/extensions/hooks/spec/author.md", proc.stdout,
+        self.assertIn("doc/extensions/base/hooks/spec/author.md", proc.stdout,
                       "知识任务没指回原则页——那是 key_inputs_read 要逐字引用的坐标")
 
     def test_the_task_carries_its_six_blocks(self):
@@ -106,7 +108,8 @@ class ChannelFailuresAreLoud(unittest.TestCase):
         """
         ws = workspace(self)
         manifest = yaml.safe_load((ws / "doc/extensions/manifest.yaml").read_text(encoding="utf-8"))
-        first = manifest["provides"]["knowledge"][0]
+        first = next(k for k in manifest["provides"]["knowledge"]
+                     if (k if isinstance(k, str) else k.get("path")) != "base/skills/story-knowledge/SKILL.md")
         (ws / "doc" / "extensions" / (first if isinstance(first, str) else first["path"])).unlink()
         proc = task(ws, "--feature", "demo", "--action", "spec", "--audience", "author")
         self.assertNotEqual(0, proc.returncode, "知识读不到却照样返回成功")
@@ -150,26 +153,27 @@ class ThePointersAreWhereTheAuthorLooks(unittest.TestCase):
         self.assertIn("story-knowledge", action, "流程的下一步文本没给设计前取知识的入口")
 
     def test_the_skill_carries_both_entries(self):
-        text = (EXT / "skills" / "story" / "SKILL.md").read_text(encoding="utf-8")
+        text = (BASE / "skills" / "story" / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("story-knowledge", text)
-        self.assertIn("doc/extensions/hooks/<阶段>/author.md", text)
+        self.assertIn("doc/extensions/base/hooks/<阶段>/author.md", text)
 
 
     def test_every_phase_binds_the_knowledge_skill_before_work(self):
-        """每个阶段动笔前，Framework 按 phase_bindings 调 story-knowledge 取当前动作的知识任务。"""
+        """每个阶段动笔前，Framework 按 phase_bindings 指向 story-knowledge，包元数据同时声明 story-knowledge 桥。"""
+        pkg = yaml.safe_load(PKG_MANIFEST.read_text(encoding="utf-8"))
+        self.assertIn("story-knowledge", pkg["provides"]["skills"])
+        self.assertTrue((BASE / "skills" / "story-knowledge" / "SKILL.md").is_file())
         doc = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
-        self.assertIn("story-knowledge", doc["provides"]["skills"])
-        self.assertTrue((EXT / "skills" / "story-knowledge" / "SKILL.md").is_file())
         for phase in PHASES:
             with self.subTest(phase=phase):
                 slot = doc["phase_bindings"][phase]["before_phase_work"]
-                self.assertIn({"kind": "skill", "ref": "story-knowledge"}, slot)
+                self.assertIn({"kind": "knowledge", "ref": "base/skills/story-knowledge/SKILL.md"}, slot)
 
 
 class TheEntryTextMatchesTheCurrentFlow(unittest.TestCase):
     """入口/help 写当前行为：蓝图唯一决定、读者直接交报告；已退场的评审载体不再出现在文案里。"""
 
-    TEXT = (EXT / "skills" / "story" / "SKILL.md").read_text(encoding="utf-8")
+    TEXT = (BASE / "skills" / "story" / "SKILL.md").read_text(encoding="utf-8")
 
     def test_the_retired_review_carrier_is_not_advertised(self):
         self.assertNotIn("评审载体", self.TEXT, "入口/help 还在把已退场的评审载体写成交付物")
@@ -190,7 +194,7 @@ class TheHostChannelIsNotUsed(unittest.TestCase):
                                  "作者要求又登记回宿主的作者事件了——那里到不了动笔之前")
 
     def test_no_delivery_surface_points_at_the_retired_framework_entry(self):
-        surfaces = [MANIFEST, EXT / "skills" / "story" / "SKILL.md"]
+        surfaces = [MANIFEST, PKG_MANIFEST, BASE / "skills" / "story" / "SKILL.md"]
         surfaces += [RULES / f"{p}-rules.overlay.yaml" for p in GATED_PHASES]
         for f in surfaces:
             with self.subTest(file=f.name):
@@ -206,7 +210,7 @@ class ReadingItLeavesExactlyOneTrace(unittest.TestCase):
             with self.subTest(phase=phase):
                 doc = yaml.safe_load((RULES / f"{phase}-rules.overlay.yaml").read_text(encoding="utf-8"))
                 extra = (doc.get("exploration_thresholds") or {}).get("phase_input_snippets_extra") or []
-                self.assertIn(f"doc/extensions/hooks/{phase}/author.md", extra)
+                self.assertIn(f"doc/extensions/base/hooks/{phase}/author.md", extra)
 
     def test_ungated_phase_declares_nothing(self):
         """testing 没有 context-exploration 门禁——如实不声明，不造一个假留痕。"""
@@ -229,16 +233,19 @@ class ManifestKeepsOneSourceOfTruth(unittest.TestCase):
         判据取每份 author.md 的首个非空标题行——它被复制出去就会在别处出现。
         """
         for phase in PHASES:
-            author = EXT / "hooks" / phase / "author.md"
+            author = BASE / "hooks" / phase / "author.md"
             heading = next(l.strip() for l in author.read_text(encoding="utf-8").splitlines()
                            if l.strip().startswith("#"))
-            proc = subprocess.run(
-                ["git", "grep", "-l", "--fixed-strings", heading, "--",
-                 "extensions", "demo/framework", "demo/CLAUDE.md", "demo/AGENTS.md"],
-                cwd=str(REPO), capture_output=True, text=True, encoding="utf-8")
-            hits = [h for h in proc.stdout.splitlines() if h.strip()]
+            hits = []
+            for base_dir in (REPO / "extensions", REPO / "demo" / "framework"):
+                for p in sorted(base_dir.rglob("*.md")):
+                    if heading in p.read_text(encoding="utf-8", errors="replace"):
+                        hits.append(p.relative_to(REPO).as_posix())
+            for entry in (REPO / "demo" / "CLAUDE.md", REPO / "demo" / "AGENTS.md"):
+                if entry.is_file() and heading in entry.read_text(encoding="utf-8", errors="replace"):
+                    hits.append(entry.relative_to(REPO).as_posix())
             with self.subTest(phase=phase):
-                self.assertEqual([f"extensions/hooks/{phase}/author.md"], hits,
+                self.assertEqual([f"extensions/base/hooks/{phase}/author.md"], hits,
                                  f"{phase} 的作者内容出现了第二份：{hits}")
 
 

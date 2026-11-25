@@ -14,12 +14,12 @@ from pathlib import Path
 
 import design_kit
 import shared_state
-from ext_workspace import DEV_EXT, REPO_ROOT, link_framework
+from ext_workspace import DEV_BASE, DEV_EXT, REPO_ROOT, link_framework
 from flow_steps import walk_to_complete
 
 ACCESS = design_kit.ACCESS
-BUILD = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
-FLOW = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story_flow.py"
+BUILD = DEV_BASE / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
+FLOW = DEV_BASE / "skills" / "story" / "scripts" / "core" / "story_flow.py"
 def ensure_flow_state(root: Path, feature: str, src: Path) -> None:
     """skeleton 起手预检需要的流程状态：S1–S3 走完、材料已确认、同根蓝图已准入（真实脚本生成契约）。
 

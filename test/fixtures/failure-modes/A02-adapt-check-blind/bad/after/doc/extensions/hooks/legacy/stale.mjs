@@ -1,1 +1,1 @@
-export default () => ({ ok: false });
+export default {};

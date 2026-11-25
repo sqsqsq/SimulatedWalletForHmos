@@ -24,9 +24,9 @@ import design_kit
 import shared_state
 
 REPO = Path(__file__).resolve().parents[2]
-STORY_BUILD = DEV_EXT / "skills/story/scripts/core/story-build.mjs"
-CONTRACT = DEV_EXT / "skills/story/contracts/story-chapters.json"
-ACCESS = DEV_EXT / "hooks/shared/framework-access.mjs"
+STORY_BUILD = DEV_EXT / "base" / "skills/story/scripts/core/story-build.mjs"
+CONTRACT = DEV_EXT / "base" / "skills/story/contracts/story-chapters.json"
+ACCESS = DEV_EXT / "base" / "hooks/shared/framework-access.mjs"
 FEATURE = "RT90001"
 #: 主执行者核过、本次准备给出的独立读者情况：有可用读者，或没有可用读者及其原因
 READER_TASK = ("--reader", "task")
@@ -58,7 +58,7 @@ class TheStoryIsReviewedRegisteredAndDeliveredCase(unittest.TestCase):
 
     FIXTURE = REPO / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good"
 
-    FLOW = DEV_EXT / "skills/story/scripts/core/story_flow.py"
+    FLOW = DEV_EXT / "base" / "skills/story/scripts/core/story_flow.py"
     reader = READER_TASK
 
     def setUp(self) -> None:
@@ -201,7 +201,7 @@ class TheStoryIsReviewedRegisteredAndDelivered(TheStoryIsReviewedRegisteredAndDe
         kept = original.read_bytes()
         task = (self.flow_path.parent / "review" / "task.md").read_text(encoding="utf-8")
         for need in ("doc/features/REQ-DEMO/AR/story.md",
-                     "doc/extensions/rules/story-reader-rules.yaml"):
+                     "doc/extensions/base/rules/story-reader-rules.yaml"):
             self.assertIn(f"`{need}`", task)
         self.assertIn("`doc/features/REQ-DEMO/.backups/local/RR/prd-直接-v1.md` —— 设计采用的阅读稿", task, "设计采用的材料版本没进审查对象")
         self.assertIn("component-blueprint.yaml", task, "蓝图没进审查对象")
@@ -219,7 +219,7 @@ class TheStoryIsReviewedRegisteredAndDelivered(TheStoryIsReviewedRegisteredAndDe
         self.assertIn("已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择", text, "交付门输出仍是无条件问人")
         self.assertIn("止于 Plan、不进入 Coding", text)
         self.assertIn("phases/design.md「六、交付门之后：施工单位设计准备与 Spec/Plan」", text, "交付选项没指向执行方法")
-        method = (DEV_EXT / "skills/story/phases/design.md").read_text(encoding="utf-8").split("## 六、交付门之后", 1)[1]
+        method = (DEV_EXT / "base" / "skills/story/phases/design.md").read_text(encoding="utf-8").split("## 六、交付门之后", 1)[1]
         self.assertIn("| 实现方案（到 Plan） | 第 1—4 步 | `spec,plan` |", method, "实现方案没把 Plan 上限交给范围准备")
         self.assertNotIn("/story archive", text, "本地单没有送审")
         self.assertEqual(kept, original.read_bytes(), "核对、登记或交付门改了审查者的原回复")
@@ -586,7 +586,7 @@ class AWrittenStoryKeepsFixedChaptersAndNumberingThroughRegistration(TheStoryIsR
 
     def tag_chapters(self) -> None:
         """夹具成稿早于章锚：按现行 skeleton 的写法，在每章标题前补上它的章锚（章 ID 按合同固定十章）。"""
-        ids = [c["id"] for c in json.loads((DEV_EXT / "skills/story/contracts/story-chapters.json").read_text(encoding="utf-8"))["chapters"]]
+        ids = [c["id"] for c in json.loads((DEV_EXT / "base" / "skills/story/contracts/story-chapters.json").read_text(encoding="utf-8"))["chapters"]]
         lines, out, k = self.story.read_text(encoding="utf-8").split("\n"), [], 0
         for line in lines:
             if line.startswith("## "):
@@ -655,7 +655,7 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
     """完整核源：设计未见引用的阅读稿、登记不用的图与会议纠偏留痕也在独立审查的对象里——任务列它、读者可以回查它；
     冻结采用版本仍是设计权威，同字节的当前文件是它的别名，换了内容的当前文件另列对照；二进制原件只核在场与来源摘要。"""
 
-    IMPORT = DEV_EXT / "skills/story/scripts/core/import_sources.py"
+    IMPORT = DEV_EXT / "base" / "skills/story/scripts/core/import_sources.py"
     FEATURE = "doc/features/REQ-DEMO"
     CORRECTIONS = f"{FEATURE}/AR/story-src/meetings/续期会/v1/corrections.json"
 
@@ -987,7 +987,7 @@ class TheDesignReferenceIsTheNativeProjection(TheStoryIsReviewedRegisteredAndDel
 
     def reading(self) -> str:
         """现在这份材料的审查任务里「怎么读」一节。"""
-        module = DEV_EXT / "hooks/shared/reader-review-task.mjs"
+        module = DEV_EXT / "base" / "hooks/shared/reader-review-task.mjs"
         r = subprocess.run(
             ["node", "--input-type=module", "-e",
              "const m = await import(process.argv[1]); process.stdout.write(m.readerReviewTask(process.argv[2], 'REQ-DEMO'));",
@@ -1145,7 +1145,7 @@ def import_fixture(fixture: Path, files: dict[str, tuple[bytes, str]]) -> None:
         (inbox / rel).write_bytes(body)
         classify[rel] = cls
     (inbox / ".classify.json").write_text(json.dumps(classify, ensure_ascii=False), encoding="utf-8")
-    proc = subprocess.run(["python", str(DEV_EXT / "skills/story/scripts/core/import_sources.py"), "--feature", "REQ-DEMO",
+    proc = subprocess.run(["python", str(DEV_EXT / "base" / "skills/story/scripts/core/import_sources.py"), "--feature", "REQ-DEMO",
                            "--project-root", str(fixture)], capture_output=True, text=True, encoding="utf-8",
                           errors="replace", timeout=120)
     assert proc.returncode == 0, proc.stdout + proc.stderr
@@ -1155,8 +1155,8 @@ class ARequirementWithUiReferenceGoesThrough(unittest.TestCase):
     """带界面参考图的需求：界面图是需求根下的材料版本，蓝图在异名的工作区（`bp-<需求>`），
     冻结、蓝图消费、审查准备、登记与交付一路走通（审查者是夹具）。"""
 
-    FLOW = DEV_EXT / "skills/story/scripts/core/story_flow.py"
-    IMPORT = DEV_EXT / "skills/story/scripts/core/import_sources.py"
+    FLOW = DEV_EXT / "base" / "skills/story/scripts/core/story_flow.py"
+    IMPORT = DEV_EXT / "base" / "skills/story/scripts/core/import_sources.py"
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -1205,8 +1205,8 @@ class TheVisualRulingIsTheNativeRouting(unittest.TestCase):
     图面未核是能力缺口，文本审完最高判 WARN；需求写了强保真时 strictness=hard，图没核就是没审完。
     """
 
-    FLOW = DEV_EXT / "skills/story/scripts/core/story_flow.py"
-    IMPORT = DEV_EXT / "skills/story/scripts/core/import_sources.py"
+    FLOW = DEV_EXT / "base" / "skills/story/scripts/core/story_flow.py"
+    IMPORT = DEV_EXT / "base" / "skills/story/scripts/core/import_sources.py"
     IMAGE = f"assets/ux/home.{PICTURE_ID}.png"
 
     def make(self, hard: bool = False) -> None:
@@ -1327,7 +1327,7 @@ process.stdout.write(JSON.stringify(out));
                 "unreviewed": [{"path": rel, "reason": why} for rel, why in unreviewed]}
 
     def judge(self, cases: list[dict]) -> list[list[str]]:
-        module = DEV_EXT / "hooks/shared/review-inputs.mjs"
+        module = DEV_EXT / "base" / "hooks/shared/review-inputs.mjs"
         r = subprocess.run(["node", "--input-type=module", "-e", self.DRIVER, module.resolve().as_uri()],
                            input=json.dumps(cases, ensure_ascii=False), capture_output=True, text=True,
                            encoding="utf-8", errors="replace", timeout=60)
@@ -1389,7 +1389,7 @@ class ReviewTaskReachesTheVerifierCase(unittest.TestCase):
 
     def inject(self, feature: str = FEATURE) -> str:
         """这一次的审查任务（`story-build review --action prepare` 写进审查目录的那一份）。"""
-        module = self.root / "doc/extensions/hooks/shared/reader-review-task.mjs"
+        module = self.root / "doc/extensions/base/hooks/shared/reader-review-task.mjs"
         r = subprocess.run(
             ["node", "--input-type=module", "-e",
              "const m = await import(process.argv[1]); process.stdout.write(m.readerReviewTask(process.argv[2], process.argv[3]));",
@@ -1409,7 +1409,7 @@ class ReviewTaskReachesTheVerifierCase(unittest.TestCase):
         """
         script = self.root / "drive.mjs"
         script.write_text(driver, encoding="utf-8")
-        hook = self.root / "doc/extensions/hooks/shared/pre_verifier.mjs"
+        hook = self.root / "doc/extensions/base/hooks/shared/pre_verifier.mjs"
         r = subprocess.run(
             ["node", str(script), hook.resolve().as_uri(), str(self.root), FEATURE],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
@@ -1418,7 +1418,7 @@ class ReviewTaskReachesTheVerifierCase(unittest.TestCase):
 
     @property
     def rules(self) -> Path:
-        return self.root / "doc" / "extensions" / "rules" / "story-reader-rules.yaml"
+        return self.root / "doc" / "extensions" / "base" / "rules" / "story-reader-rules.yaml"
 
     def overlay_method(self) -> str:
         """判据与结论要求的**唯一维护处**：`rules/story-reader-rules.yaml` 的 `story_reader_review`。"""
@@ -1426,7 +1426,7 @@ class ReviewTaskReachesTheVerifierCase(unittest.TestCase):
         return text[text.index("story_reader_review:"):]
 
     def material_key(self) -> str:
-        module = (DEV_EXT / "skills/story/scripts/core/story/review-object.mjs").resolve().as_uri()
+        module = (DEV_EXT / "base" / "skills/story/scripts/core/story/review-object.mjs").resolve().as_uri()
         r = subprocess.run(
             ["node", "--input-type=module", "-e",
              "const m = await import(process.argv[1]); const {rows} = m.reviewObject(process.argv[2], process.argv[3]);"
@@ -1452,7 +1452,7 @@ class ReviewTaskReachesTheVerifier(ReviewTaskReachesTheVerifierCase):
 
     def test_every_registered_criterion_is_sent(self) -> None:
         """判据文件登记几项，任务就发几项：读的是同一份，不靠「现在只有一条」。"""
-        rules = self.root / "doc/extensions/rules/story-reader-rules.yaml"
+        rules = self.root / "doc/extensions/base/rules/story-reader-rules.yaml"
         rules.write_text(rules.read_text(encoding="utf-8").rstrip("\n") + "\n  neutral_second_criterion:\n"
                          "    description: 第二条中性判据的说明。\n    severity: MAJOR\n"
                          "    ai_prompt_hint: 第二条判据怎么审。\n", encoding="utf-8")
@@ -1511,7 +1511,7 @@ class ReviewTaskReachesTheVerifier(ReviewTaskReachesTheVerifierCase):
         for needle in ("换算要对得回原值与单位", "比例换了分母不算一致", "不同适用条件下的不同值不算冲突",
                        "回查不到的泛称不算来源", "模板残文", "数值换算错误或漂移改变了验收"):
             self.assertEqual(1, task.count(needle), f"审查任务里「{needle}」不是恰好一处")
-        source = (self.root / "doc/extensions/hooks/shared/reader-review-task.mjs").read_text(encoding="utf-8")
+        source = (self.root / "doc/extensions/base/hooks/shared/reader-review-task.mjs").read_text(encoding="utf-8")
         self.assertNotIn("比例换了分母", source, "构造器又复制了一份判据")
 
     def test_the_task_really_carries_the_method(self) -> None:
@@ -1556,10 +1556,10 @@ class ReviewTaskReachesTheVerifierPart2(ReviewTaskReachesTheVerifierCase):
         for needle in ("总览与局部加起来", "端到端过程", "分支去向", "按本稿疑点回查",
                        "跨章对着读", "阻断发现", "**建议**", "空着与没审同形"):
             self.assertIn(needle, method, f"判据里没有「{needle}」")
-        source = (self.root / "doc/extensions/hooks/shared/reader-review-task.mjs").read_text(encoding="utf-8")
+        source = (self.root / "doc/extensions/base/hooks/shared/reader-review-task.mjs").read_text(encoding="utf-8")
         for needle in ("总览与局部加起来", "端到端过程", "跨章对着读"):
             self.assertNotIn(needle, source, f"构造器又复制了一份方法：{needle}")
-        spec = (self.root / "doc/extensions/rules/spec-rules.overlay.yaml").read_text(encoding="utf-8")
+        spec = (self.root / "doc/extensions/base/rules/spec-rules.overlay.yaml").read_text(encoding="utf-8")
         self.assertNotIn("story_reader_review:", spec, "spec overlay 里还有一份 Story 判据")
 
     def test_the_collaboration_order_is_judged_by_relation_not_headcount(self) -> None:
@@ -1691,7 +1691,7 @@ class ReviewTaskReachesTheVerifierPart3(ReviewTaskReachesTheVerifierCase):
             "const key = m.materialKey(process.argv[2], obj.rows);"
             "process.stdout.write(JSON.stringify({ rows: obj.rows, key }));"
         )
-        module = (DEV_EXT / "skills/story/scripts/core/story/review-object.mjs").resolve().as_uri()
+        module = (DEV_EXT / "base" / "skills/story/scripts/core/story/review-object.mjs").resolve().as_uri()
         r1 = subprocess.run(["node", "--input-type=module", "-e", probe, module, str(self.root), FEATURE],
                             capture_output=True, text=True, encoding="utf-8", timeout=60)
         self.assertEqual(0, r1.returncode, r1.stderr)
@@ -1707,7 +1707,7 @@ class ReviewTaskReachesTheVerifierPart3(ReviewTaskReachesTheVerifierCase):
         d2 = json.loads(r2.stdout)
         self.assertNotEqual(d1["key"], d2["key"], "未采用库存阅读稿字节变化必须令 materialKey 失效")
         # 2. dispatch_text 带 S05 关键句（含拼接行归一化校验）
-        ind = re.sub(r"'\s*\n\s*\+\s*'", "", (DEV_EXT / "skills/story/scripts/core/story/independent-review.mjs").read_text(encoding="utf-8"))
+        ind = re.sub(r"'\s*\n\s*\+\s*'", "", (DEV_EXT / "base" / "skills/story/scripts/core/story/independent-review.mjs").read_text(encoding="utf-8"))
         self.assertIn("先说明单凭稿件能读懂的行为，再核它与有效事实、授权和目标的一致性。指出具体错句、影响和修正责任。设计自身的实质冲突给出出处；已审取舍不例行重开。", ind)
 
     def test_s21_unused_image_is_check_on_doubt_while_adopted_or_referenced_stays_mandatory_and_byte_bound(self) -> None:
@@ -1741,8 +1741,8 @@ class ReviewTaskReachesTheVerifierPart3(ReviewTaskReachesTheVerifierCase):
             "const task = t.readerReviewTask(process.argv[3], process.argv[4], obj);"
             "process.stdout.write(JSON.stringify({ rows: obj.rows, alias: [...obj.alias.entries()], key, task }));"
         )
-        obj_mod = (DEV_EXT / "skills/story/scripts/core/story/review-object.mjs").resolve().as_uri()
-        task_mod = (DEV_EXT / "hooks/shared/reader-review-task.mjs").resolve().as_uri()
+        obj_mod = (DEV_EXT / "base" / "skills/story/scripts/core/story/review-object.mjs").resolve().as_uri()
+        task_mod = (DEV_EXT / "base" / "hooks/shared/reader-review-task.mjs").resolve().as_uri()
 
         def run_probe() -> dict:
             p = subprocess.run(["node", "--input-type=module", "-e", probe, obj_mod, task_mod, str(self.root), FEATURE],
@@ -1832,7 +1832,7 @@ class TheAuthorJudgesTheReaderAndAnUnfinishedHandoverIsNotReceived(TheStoryIsRev
     载体与 check 仍把「文件在」与「交接完」分开：未接收的报告不是结论，也不能登记；接收之后照常。
     """
 
-    PAGE = DEV_EXT / "skills" / "story/phases/design.md"
+    PAGE = DEV_EXT / "base" / "skills" / "story/phases/design.md"
 
     def section(self) -> str:
         text = self.PAGE.read_text(encoding="utf-8")

@@ -663,7 +663,7 @@ def reading_facts(feature_root: Path, *, story_required: bool = False) -> dict:
     if not (feature_root / "AR" / "story.md").is_file():
         return ({"state": "unknown", "error": "业务已收口却没有 AR/story.md，本地阅读判不了"} if story_required
                 else {"state": "not_applicable", "why": "还没有 AR/story.md（本轮还没到成文）"})
-    build = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
+    build = REPO_ROOT / "doc" / "extensions" / "base" / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
     try:
         proc = subprocess.run(["node", str(build), "view", "--mode", "status", "--feature", feature_root.name,
                                "--project-root", str(REPO_ROOT)], capture_output=True, text=True,
@@ -2763,7 +2763,7 @@ def cmd_checkpoint(case_id: str, point: str) -> int:
 
 
 #: 工作区里装好的读取入口：依赖从它给出的来源索引取，测试域不另解释 source_ref
-ACCESS_REL = ("doc", "extensions", "hooks", "shared", "framework-access.mjs")
+ACCESS_REL = ("doc", "extensions", "base", "hooks", "shared", "framework-access.mjs")
 
 
 def _source_index(feature: str) -> tuple[dict | None, dict | None, str | None]:

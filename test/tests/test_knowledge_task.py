@@ -75,7 +75,7 @@ import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 const [root, feature, action, basis, REQUIREMENT] = process.argv.slice(1);
-const { loadNative } = await import(pathToFileURL(path.join(root, 'doc/extensions/hooks/shared/framework-access.mjs')).href);
+const { loadNative } = await import(pathToFileURL(path.join(root, 'doc/extensions/base/hooks/shared/framework-access.mjs')).href);
 const native = loadNative(root);
 if (action === 'materialize') {
   native.module('scripts/utils/blueprint-skill-projection.ts').materializeBlueprintSkillInputs(root, feature, native.frameworkRoot);
@@ -178,11 +178,11 @@ class NativeCase(unittest.TestCase):
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
 
     def access(self, *args: str, root: Path | None = None) -> tuple[int, dict]:
-        proc = self.node("hooks/shared/framework-access.mjs", *args, root=root)
+        proc = self.node("base/hooks/shared/framework-access.mjs", *args, root=root)
         return proc.returncode, (json.loads(proc.stdout) if proc.stdout.strip() else {})
 
     def task(self, *args: str) -> subprocess.CompletedProcess:
-        return self.node("hooks/shared/knowledge-task.mjs", *args)
+        return self.node("base/hooks/shared/knowledge-task.mjs", *args)
 
 
 class BlueprintAndUnitIdentity(NativeCase):
@@ -222,7 +222,7 @@ class BlueprintAndUnitIdentity(NativeCase):
         with tempfile.TemporaryDirectory() as tmp:
             bare = Path(tmp) / "bare"
             bare.mkdir()
-            proc = self.node("hooks/shared/framework-access.mjs", "--action", "blueprint", "--blueprint", BLUEPRINT,
+            proc = self.node("base/hooks/shared/framework-access.mjs", "--action", "blueprint", "--blueprint", BLUEPRINT,
                              "--purpose", "draft", root=bare)
             self.assertEqual(2, proc.returncode, proc.stdout)
             self.assertIn(str(bare), proc.stderr)
@@ -230,7 +230,7 @@ class BlueprintAndUnitIdentity(NativeCase):
             broken = Path(tmp) / "broken"
             (broken / "framework/harness").mkdir(parents=True)
             (broken / "framework/harness/package.json").write_text("{}", encoding="utf-8")
-            proc = self.node("hooks/shared/framework-access.mjs", "--action", "blueprint", "--blueprint", BLUEPRINT,
+            proc = self.node("base/hooks/shared/framework-access.mjs", "--action", "blueprint", "--blueprint", BLUEPRINT,
                              "--purpose", "draft", root=broken)
             self.assertEqual(2, proc.returncode, proc.stdout)
             self.assertIn("MODULE_NOT_FOUND", proc.stderr)
@@ -306,7 +306,7 @@ class ACustomFeaturesDirIsFollowed(unittest.TestCase):
         root = make_project("work/features")
         self.addCleanup(shutil.rmtree, root.parent, True)
         self.assertFalse((root / "doc" / "features").exists())
-        script = root / "doc/extensions/hooks/shared/framework-access.mjs"
+        script = root / "doc/extensions/base/hooks/shared/framework-access.mjs"
         run = lambda *a: subprocess.run(["node", str(script), "--project-root", str(root), *a],
                                         capture_output=True, text=True, encoding="utf-8")
         blueprint = json.loads(run("--action", "blueprint", "--blueprint", BLUEPRINT).stdout)
@@ -329,7 +329,7 @@ class FreshProject(unittest.TestCase):
         self.root = prepared_project(steps, requirement)
 
     def run_script(self, script: str, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["node", str(self.root / "doc/extensions/hooks/shared" / script), "--project-root", str(self.root), *args],
+        return subprocess.run(["node", str(self.root / "doc/extensions/base/hooks/shared" / script), "--project-root", str(self.root), *args],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
 
     def feature(self, phase: str) -> tuple[int, dict]:
@@ -413,7 +413,7 @@ class PhaseInputsFromMaterializedContracts(FreshProject):
         probe = ("const m = (await import(process.argv[1])).default;"
                  "const out = await m({ phase: 'review', feature: process.argv[2], projectRoot: process.argv[3] });"
                  "process.stdout.write(out.promptFragments.join('\\n\\n'));")
-        module = (self.root / "doc/extensions/hooks/shared/pre_verifier.mjs").resolve().as_uri()
+        module = (self.root / "doc/extensions/base/hooks/shared/pre_verifier.mjs").resolve().as_uri()
         proc = subprocess.run(["node", "--input-type=module", "-e", probe, module, CU, str(self.root)],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
         self.assertEqual(0, proc.returncode, proc.stderr)
@@ -428,7 +428,7 @@ NATIVE_SPEC = """
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 const [root, feature, explicit] = process.argv.slice(1);
-const { loadNative } = await import(pathToFileURL(path.join(root, 'doc/extensions/hooks/shared/framework-access.mjs')).href);
+const { loadNative } = await import(pathToFileURL(path.join(root, 'doc/extensions/base/hooks/shared/framework-access.mjs')).href);
 const n = loadNative(root);
 const binding = n.module('scripts/utils/feature-track.ts').featureRequirementBinding(root, feature);
 const rel = n.module('scripts/utils/project-relative-path.ts');
@@ -517,7 +517,7 @@ class OnAFrozenScope(UsageStarts, StagePreparation, SpecCase):
 
     def test_the_formal_author_task_begins_once_and_the_rest_do_not(self) -> None:
         self.use("freeze")
-        module = (self.root / "doc/extensions/hooks/shared/knowledge-task.mjs").resolve().as_uri()
+        module = (self.root / "doc/extensions/base/hooks/shared/knowledge-task.mjs").resolve().as_uri()
         imported = subprocess.run(["node", "--input-type=module", "-e",
                                    "await import(process.argv[1]); process.stdout.write('imported');", module],
                                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
@@ -533,7 +533,7 @@ class OnAFrozenScope(UsageStarts, StagePreparation, SpecCase):
         """需求的共同工作记在需求节点；施工单位的阶段按它的原生身份记在自己的节点（身份件在它的原生目录），
         不用完整 run：取正式任务即开始，原生闭环后收尾即结算。需求节点不出这一阶段的行。"""
         self.use("freeze")
-        core = self.root / "doc/extensions/skills/story/scripts/core"
+        core = self.root / "doc/extensions/base/skills/story/scripts/core"
         usage = lambda *a: subprocess.run([sys.executable, str(core / "usage.py"), "--project-root", str(self.root), *a],  # noqa: E731
                                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         begun = usage("--feature", BLUEPRINT, "--begin", "--step", "story")
@@ -553,7 +553,7 @@ class OnAFrozenScope(UsageStarts, StagePreparation, SpecCase):
             "verdict": "PASS", "closure_status": "closed", "gate_fingerprint": "3.1.0:e88e81fec381",
             "closure_commit": {"schema_version": "1.0", "committed_at": datetime.now(timezone.utc).isoformat()}}),
             encoding="utf-8")
-        design_fixture.write_native_evidence(self.root, CU, ["spec"], self.root / "doc/extensions/hooks/shared/framework-access.mjs")
+        design_fixture.write_native_evidence(self.root, CU, ["spec"], self.root / "doc/extensions/base/hooks/shared/framework-access.mjs")
         done = usage("--feature", CU, "--finalize", "--phase", "spec")
         self.assertEqual(0, done.returncode, done.stdout + done.stderr)
         nodes = json.loads((self.root / "doc/usage.json").read_text(encoding="utf-8"))["requirements"]
@@ -615,7 +615,7 @@ class OnAFrozenScope(UsageStarts, StagePreparation, SpecCase):
         probe = ("const m = (await import(process.argv[1])).default;"
                  "const out = await m({ phase: 'spec', feature: process.argv[2], projectRoot: process.argv[3] });"
                  "process.stdout.write(out.promptFragments.join('\\n\\n'));")
-        module = (self.root / "doc/extensions/hooks/shared/pre_verifier.mjs").resolve().as_uri()
+        module = (self.root / "doc/extensions/base/hooks/shared/pre_verifier.mjs").resolve().as_uri()
         proc = subprocess.run(["node", "--input-type=module", "-e", probe, module, CU, str(self.root)],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
         self.assertEqual(0, proc.returncode, proc.stderr)
@@ -663,7 +663,7 @@ class BeforeTheScopeIsFrozen(UsageStarts, StagePreparation, FreshProject):
         task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", "spec", "--audience", "author")
         self.assertEqual(0, task.returncode, task.stderr)
         self.assertIn("预览，执行范围未冻结", task.stdout.splitlines()[0])
-        skill = (self.root / "doc/extensions/skills/story-knowledge/SKILL.md").read_text(encoding="utf-8")
+        skill = (self.root / "doc/extensions/base/skills/story-knowledge/SKILL.md").read_text(encoding="utf-8")
         command = re.search(r"```\s*\n\s*(node -e .+?)\s*\n\s*```", skill, re.S).group(1)
         script = shlex.split(command.replace("<工程根> <Feature id>", ""))[2]
         harness = self.root / "framework" / "harness"
@@ -686,7 +686,13 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
               "## 4. 激活知识：索引与本动作的原文", "## 5. 本次完成条件", "## 6. 缺口与责任")
 
     def registered(self) -> list[str]:
-        return yaml.safe_load((self.ext / "manifest.yaml").read_text(encoding="utf-8"))["provides"]["knowledge"]
+        raw = yaml.safe_load((self.ext / "manifest.yaml").read_text(encoding="utf-8"))["provides"]["knowledge"]
+        out = []
+        for item in raw:
+            p = item if isinstance(item, str) else item.get("path", "")
+            if p and p != "base/skills/story-knowledge/SKILL.md":
+                out.append(p)
+        return out
 
     def test_discovery_before_the_blueprint_exists(self) -> None:
         proc = self.task("--blueprint", "new-thing", "--action", "discovery", "--audience", "author")
@@ -759,12 +765,12 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
         """首读载体只交给首次质询；复核修订沿用同一组原件位置，按阶段页「独立质询」给原读者发复核消息。"""
         import design_kit  # noqa: PLC0415
         draft = self.root / "doc/features" / BLUEPRINT / "blueprint/component-blueprint.review.md"
-        design_kit.render_projection(self.root, BLUEPRINT, self.root / "doc/extensions/hooks/shared/framework-access.mjs")
+        design_kit.render_projection(self.root, BLUEPRINT, self.root / "doc/extensions/base/hooks/shared/framework-access.mjs")
         self.addCleanup(draft.unlink, True)
         out = self.task("--blueprint", BLUEPRINT, "--action", "questioning", "--audience", "reviewer").stdout
         dispatch = out.split("## 7. 派审与留存（主执行者）", 1)[1].split("# 蓝图独立质询 · 派审", 1)[0]
         self.assertIn("只用于首次独立阅读", dispatch)
-        page = "doc/extensions/skills/story/phases/design.md"
+        page = "doc/extensions/base/skills/story/phases/design.md"
         self.assertIn(f"`{page}`「独立质询」", dispatch)
         method = (self.root / page).read_text(encoding="utf-8")
         self.assertIn("**独立质询**", method)
@@ -783,7 +789,7 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
         self.assertIn("还没生成", out.split("## 6. 缺口与责任", 1)[1])
         self.assertIn(f"`{base}/task.md`", out)
         import design_kit  # noqa: PLC0415
-        design_kit.render_projection(self.root, BLUEPRINT, self.root / "doc/extensions/hooks/shared/framework-access.mjs")
+        design_kit.render_projection(self.root, BLUEPRINT, self.root / "doc/extensions/base/hooks/shared/framework-access.mjs")
         self.addCleanup(draft.unlink, True)
         out = self.task("--blueprint", BLUEPRINT, "--action", "questioning", "--audience", "reviewer").stdout
         carrier = out.split("# 蓝图独立质询 · 派审", 1)[1].split("````", 1)[0]
@@ -800,7 +806,7 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
         """首读载体给出的正文行范围取自原生投影本身：末行之后紧接的是原生参考区入口与标题。"""
         import design_kit  # noqa: PLC0415
         draft = self.root / "doc/features" / BLUEPRINT / "blueprint/component-blueprint.review.md"
-        design_kit.render_projection(self.root, BLUEPRINT, self.root / "doc/extensions/hooks/shared/framework-access.mjs")
+        design_kit.render_projection(self.root, BLUEPRINT, self.root / "doc/extensions/base/hooks/shared/framework-access.mjs")
         self.addCleanup(draft.unlink, True)
         out = self.task("--blueprint", BLUEPRINT, "--action", "questioning", "--audience", "reviewer").stdout
         carrier = out.split("# 蓝图独立质询 · 派审", 1)[1].split("````", 1)[0]
@@ -815,7 +821,7 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
 
     def test_a_draft_without_one_reference_entry_has_no_first_read_boundary(self) -> None:
         """参考区入口缺失或不唯一时不猜边界：给出问题，载体照实写首读未成立。"""
-        module = (self.root / "doc/extensions/hooks/shared/questioning.mjs").resolve().as_uri()
+        module = (self.root / "doc/extensions/base/hooks/shared/questioning.mjs").resolve().as_uri()
         probe = ("const m = await import(process.argv[1]);"
                  "const b = m.firstReadBoundary(process.argv[2], process.argv[3]);"
                  "const c = m.firstReadCarrier({ draft: process.argv[3], task: 't.md', reply: 'r.md', questions: ['q'], boundary: b });"
@@ -908,7 +914,7 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
         self.addCleanup(manifest.write_bytes, original)
         text = original.decode("utf-8")
         start = text.index("  knowledge:\n")
-        end = text.index("\n\n", start)
+        end = text.index("\n  hooks:", start)
         manifest.write_bytes((text[:start] + "  knowledge: []" + text[end:]).encode("utf-8"))
         proc = self.task("--blueprint", BLUEPRINT, "--action", "design", "--audience", "author")
         self.assertEqual(0, proc.returncode, proc.stderr)
@@ -927,7 +933,7 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
         self.addCleanup(manifest.write_bytes, original)
         text = original.decode("utf-8")
         start = text.index("  knowledge:\n")
-        end = text.index("\n\n", start)
+        end = text.index("\n  hooks:", start)
         first, second = self.registered()[:2]
         objects = ("  knowledge:\n"
                    f"    - {{path: {first}, summary: 部件是谁, audience: global}}\n"
@@ -973,7 +979,7 @@ class TheBlueprintAuthorGetsTheCommonAcceptanceGap(unittest.TestCase):
 
     def task_proc(self) -> subprocess.CompletedProcess:
         from ext_workspace import DEV_EXT  # noqa: PLC0415
-        return subprocess.run(["node", str(DEV_EXT / "hooks/shared/knowledge-task.mjs"), "--project-root", str(self.root),
+        return subprocess.run(["node", str(DEV_EXT / "base" / "hooks/shared/knowledge-task.mjs"), "--project-root", str(self.root),
                                "--blueprint", self.FEATURE, "--action", "design", "--audience", "author"],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
 
@@ -1016,7 +1022,7 @@ class TheReviewerGetsTheSameLoader(NativeCase):
         probe = ("const m = (await import(process.argv[1])).default;"
                  "const out = await m({ phase: 'plan', feature: process.argv[2], projectRoot: process.argv[3] });"
                  "process.stdout.write(out.promptFragments.join('\\n\\n'));")
-        module = (self.ext / "hooks/shared/pre_verifier.mjs").resolve().as_uri()
+        module = (self.ext / "base/hooks/shared/pre_verifier.mjs").resolve().as_uri()
         proc = subprocess.run(["node", "--input-type=module", "-e", probe, module, CU, str(self.root)],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
         self.assertEqual(0, proc.returncode, proc.stderr)
@@ -1033,7 +1039,7 @@ class ANativeEntryNeedsNoStory(unittest.TestCase):
         self.addCleanup(shutil.rmtree, root.parent, True)
         from ext_workspace import DEV_EXT  # noqa: PLC0415
         proc = subprocess.run(
-            ["node", str(DEV_EXT / "hooks" / "shared" / "knowledge-task.mjs"), "--project-root", str(root),
+            ["node", str(DEV_EXT / "base" / "hooks" / "shared" / "knowledge-task.mjs"), "--project-root", str(root),
              "--action", "spec", "--audience", "author", "--feature", CU],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
         self.assertEqual(0, proc.returncode, proc.stderr[-800:])
@@ -1059,7 +1065,7 @@ def place_unit(root: Path, blueprint: str, ref: dict) -> tuple[Path, str]:
     # 评审投影随施工单位集合变化：放进单位后按原生物化重出，与设计职责的产物一致
     import design_kit  # noqa: PLC0415
     from ext_workspace import DEV_EXT  # noqa: PLC0415
-    design_kit.render_projection(root, blueprint, DEV_EXT / "hooks" / "shared" / "framework-access.mjs")
+    design_kit.render_projection(root, blueprint, DEV_EXT / "base" / "hooks" / "shared" / "framework-access.mjs")
     return unit_dir, cu_id(blueprint, "balance-refresh")
 
 
@@ -1083,11 +1089,11 @@ class RelatedStoryExpressionReachesTheUnit(unittest.TestCase):
         cls.root = Path(cls._tmp.name) / "work"
         designed_copy(cls.STORY_FIXTURE, cls.FEATURE, cls.root)
         cls.ext = DEV_EXT
-        cls.access = DEV_EXT / "hooks" / "shared" / "framework-access.mjs"
+        cls.access = DEV_EXT / "base" / "hooks" / "shared" / "framework-access.mjs"
         ref = cls.node("const r = fa.readBlueprint(root, process.argv[3], 'draft'); out(r.blueprint_ref);", cls.BLUEPRINT)
         cls.unit_dir, cls.unit = place_unit(cls.root, cls.BLUEPRINT, ref)
         # 夹具工程只装了知识与清单：阶段判据 overlay 从本次扩展补进来，审查侧的片段才按真实判据装配
-        shutil.copytree(DEV_EXT / "rules", cls.root / "doc" / "extensions" / "rules", dirs_exist_ok=True)
+        shutil.copytree(DEV_EXT / "base" / "rules", cls.root / "doc" / "extensions" / "base" / "rules", dirs_exist_ok=True)
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -1149,7 +1155,7 @@ class RelatedStoryExpressionReachesTheUnit(unittest.TestCase):
 
     def task(self) -> str:
         proc = subprocess.run(
-            ["node", str(self.ext / "hooks" / "shared" / "knowledge-task.mjs"), "--project-root", str(self.root),
+            ["node", str(self.ext / "base" / "hooks" / "shared" / "knowledge-task.mjs"), "--project-root", str(self.root),
              "--action", "spec", "--audience", "author", "--feature", self.unit],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
         self.assertEqual(0, proc.returncode, proc.stderr[-800:])
@@ -1197,7 +1203,7 @@ class RelatedStoryExpressionReachesTheUnit(unittest.TestCase):
         self.addCleanup(shutil.rmtree, target.parent, True)
         design_kit.render_projection(self.root, self.BLUEPRINT, self.access)
         proc = subprocess.run(
-            ["node", str(self.ext / "hooks" / "shared" / "knowledge-task.mjs"), "--project-root", str(self.root),
+            ["node", str(self.ext / "base" / "hooks" / "shared" / "knowledge-task.mjs"), "--project-root", str(self.root),
              "--action", "spec", "--audience", "author", "--feature", cu_id(self.BLUEPRINT, "balance-runtime")],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
         self.assertEqual(0, proc.returncode, proc.stderr[-800:])
@@ -1240,7 +1246,7 @@ class RelatedStoryExpressionReachesTheUnit(unittest.TestCase):
             "const vm = fa.loadNative(root).module('scripts/utils/verifier-material.ts');"
             "out(vm.buildVerifierMaterialView({ projectRoot: root, feature: process.argv[3], phase: 'spec', gateFingerprint: 'g',"
             " phaseRuleText: '', templateText: '', checks: [], contextFiles: [], lifecycleFragments: r.promptFragments }).material_sha256);",
-            self.unit, (self.ext / "hooks" / "shared" / "pre_verifier.mjs").resolve().as_uri())
+            self.unit, (self.ext / "base" / "hooks" / "shared" / "pre_verifier.mjs").resolve().as_uri())
 
     def test_the_native_material_identity_follows_only_the_selected_fragment(self) -> None:
         """无关段落改动并合法重登记：材料身份不变（审查可复用）；选中节的图变了并重登记：材料身份变（要重审）。"""
@@ -1262,9 +1268,9 @@ class RelatedStoryExpressionReachesTheUnit(unittest.TestCase):
                 fragments = self.node(
                     "const pre = (await import(process.argv[4])).default;"
                     "out((await pre({ phase: process.argv[5], feature: process.argv[3], projectRoot: root })).promptFragments);",
-                    self.unit, (self.ext / "hooks" / "shared" / "pre_verifier.mjs").resolve().as_uri(), phase)
+                    self.unit, (self.ext / "base" / "hooks" / "shared" / "pre_verifier.mjs").resolve().as_uri(), phase)
                 self.assertIn("`design_content_consistency`（BLOCKER）", "\n".join(fragments))
-                rule = yaml.safe_load((self.root / "doc" / "extensions" / "rules" / f"{phase}-rules.overlay.yaml")
+                rule = yaml.safe_load((self.root / "doc" / "extensions" / "base" / "rules" / f"{phase}-rules.overlay.yaml")
                                       .read_text(encoding="utf-8"))["semantic_checks"]["design_content_consistency"]["description"]
                 for words in ("共同设计错了或缺了", "FAIL，回设计负责方", "「错在上游」不降级", "只有 Story 的表达与有效设计矛盾", "人读交付还没同步"):
                     self.assertIn(words, rule)
@@ -1346,7 +1352,7 @@ process.stdout.write(JSON.stringify({
         self.root = Path(self._tmp.name) / "work"
         designed_copy(self.STORY_FIXTURE, self.FEATURE, self.root)
         self.ext = DEV_EXT
-        self.access = DEV_EXT / "hooks" / "shared" / "framework-access.mjs"
+        self.access = DEV_EXT / "base" / "hooks" / "shared" / "framework-access.mjs"
         self.feature_root = self.root / "doc" / "features" / self.FEATURE
         # 夹具的产品需求是直接给的原文 RR/prd.md：设计引的是它这一版的留存
         self.prd = f"doc/features/{self.FEATURE}/.backups/local/RR/prd-直接-v1.md"
@@ -1362,12 +1368,12 @@ process.stdout.write(JSON.stringify({
             capture_output=True, text=True, encoding="utf-8", timeout=120).stdout)
 
     def task(self, action: str = "design", audience: str = "author") -> subprocess.CompletedProcess:
-        return subprocess.run(["node", str(self.ext / "hooks" / "shared" / "knowledge-task.mjs"), "--project-root", str(self.root),
+        return subprocess.run(["node", str(self.ext / "base" / "hooks" / "shared" / "knowledge-task.mjs"), "--project-root", str(self.root),
                                "--blueprint", self.BLUEPRINT, "--action", action, "--audience", audience],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
 
     def readers(self) -> dict:
-        module = (self.ext / "skills" / "story" / "scripts" / "core" / "story" / "design-source.mjs").resolve().as_uri()
+        module = (self.ext / "base" / "skills" / "story" / "scripts" / "core" / "story" / "design-source.mjs").resolve().as_uri()
         proc = subprocess.run(["node", "--input-type=module", "-e", self.PROBE, module, str(self.root), self.unit],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
         self.assertEqual(0, proc.returncode, proc.stderr[-800:])
@@ -1458,7 +1464,7 @@ process.stdout.write(JSON.stringify({
         (inbox / "flow.png").write_bytes(b"\x89PNG\r\n\x1a\nnot-really")
         (inbox / "notes.md").write_bytes("﻿# 备注\n人签过的边界。\n".encode("utf-8"))
         (inbox / ".classify.json").write_text('{"flow.png": "UX", "notes.md": "AR"}', encoding="utf-8")
-        proc = subprocess.run([sys.executable, str(self.ext / "skills/story/scripts/core/import_sources.py"), "--feature",
+        proc = subprocess.run([sys.executable, str(self.ext / "base/skills/story/scripts/core/import_sources.py"), "--feature",
                                self.FEATURE, "--project-root", str(self.root)],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
@@ -1481,7 +1487,7 @@ process.stdout.write(JSON.stringify({
         """候选仍采用 v1、产品需求已取得 v2：蓝图任务交 v1 的文件，不配上新版本。"""
         current = self.feature_root / "RR" / "prd.md"
         current.write_bytes(current.read_bytes() + "新版本补的一句。\n".encode("utf-8"))
-        proc = subprocess.run([sys.executable, str(self.ext / "skills/story/scripts/core/import_sources.py"), "--feature",
+        proc = subprocess.run([sys.executable, str(self.ext / "base/skills/story/scripts/core/import_sources.py"), "--feature",
                                self.FEATURE, "--project-root", str(self.root)],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
@@ -1534,7 +1540,7 @@ class S06AndS08ScopedKnowledgeAndContinuation(unittest.TestCase):
 
     def run_task(self, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["node", str(self.ext / "hooks" / "shared" / "knowledge-task.mjs"), "--project-root", str(self.root), *args],
+            ["node", str(self.ext / "base" / "hooks" / "shared" / "knowledge-task.mjs"), "--project-root", str(self.root), *args],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
         )
 
@@ -1571,7 +1577,7 @@ class S06AndS08ScopedKnowledgeAndContinuation(unittest.TestCase):
             ["node", "--input-type=module", "-e",
              "const fa = await import(process.argv[1]); process.stdout.write(JSON.stringify("
              "fa.readBlueprint(process.argv[2], process.argv[3], 'draft').blueprint_ref));",
-             (self.ext / "hooks/shared/framework-access.mjs").resolve().as_uri(), str(self.root), self.FEATURE],
+             (self.ext / "base/hooks/shared/framework-access.mjs").resolve().as_uri(), str(self.root), self.FEATURE],
             capture_output=True, text=True, encoding="utf-8", timeout=120).stdout)
         _, unit = place_unit(self.root, self.FEATURE, ref)
         # 未冻结预览：携带 S08 接续原则关键句与 S06 阶段作者关键句

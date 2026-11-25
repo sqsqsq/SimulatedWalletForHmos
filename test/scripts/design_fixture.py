@@ -582,11 +582,13 @@ def write_native_evidence(root: Path, feature: str, phases: list[str], access: P
 
 def install_review_mechanism(root: Path, extension: Path) -> None:
     """审查对象里的章节合同与判据取工程里装的那份扩展：只装了部分扩展的测试工程从 `extension` 补这两份。"""
+    src_base = extension / "base" if (extension / "base" / "package-manifest.yaml").is_file() else extension
+    dst_base = root / "doc" / "extensions" / ("base" if src_base != extension else "")
     for rel in ("skills/story/contracts/story-chapters.json", "rules/story-reader-rules.yaml"):
-        target = root / "doc" / "extensions" / rel
+        target = dst_base / rel
         if not target.is_file():
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(extension / rel, target)
+            shutil.copy2(src_base / rel, target)
 
 
 #: 夹具审查者的发现：每种结论一份（编号、严重程度、问题与依据、修正责任），结论按严重程度定

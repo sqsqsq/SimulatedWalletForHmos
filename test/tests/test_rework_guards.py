@@ -9,14 +9,14 @@ from pathlib import Path
 from ext_workspace import DEV_EXT
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(DEV_EXT / "skills/story/scripts/core"))
+sys.path.insert(0, str(DEV_EXT / "base" / "skills/story/scripts/core"))
 from flow import asks, state  # noqa: E402
 
 OPTIONS = [{"no": 1, "key": "plan", "label": "材料够了，往下走"},
            {"no": 2, "key": "more", "label": "还要补料"},
            {"no": 3, "key": "wait", "label": "保持待定"}]
 
-FLOW_CLI = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story_flow.py"
+FLOW_CLI = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core" / "story_flow.py"
 
 
 class AReplyPointsOnlyByNumberFormOrLabel(unittest.TestCase):
@@ -83,7 +83,7 @@ class AReplyPointsOnlyByNumberFormOrLabel(unittest.TestCase):
         """旧的分句比对器退场：不再有先丢标点、拆句、忽略不认识分句的词表实现。"""
         for gone in ("NEGATION", "_negated", "_affirmed", "CLAUSE", "PUNCT"):
             self.assertFalse(hasattr(asks, gone), f"asks 里还留着旧比对器 {gone}")
-        body = (DEV_EXT / "skills/story/scripts/core/flow/asks.py").read_text(encoding="utf-8")
+        body = (DEV_EXT / "base" / "skills/story/scripts/core/flow/asks.py").read_text(encoding="utf-8")
         self.assertNotIn("NEGATION", body)
         self.assertNotIn("finditer", body)
 

@@ -41,7 +41,7 @@ import design_kit  # noqa: E402
 import shared_state  # noqa: E402
 from ext_workspace import DEV_EXT, link_framework
 
-FLOW = (DEV_EXT / "skills" / "story" / "scripts"
+FLOW = (DEV_EXT / "base" / "skills" / "story" / "scripts"
         / "core" / "story_flow.py")
 
 
@@ -318,7 +318,7 @@ class UnreadableIsAGapNotADeletion(UpdateCase):
         self.close_latest()
 
     def prepare_with_broken_read(self, broken: str) -> dict:
-        core = (DEV_EXT / "skills" / "story" / "scripts" / "core")
+        core = (DEV_EXT / "base" / "skills" / "story" / "scripts" / "core")
         sys.path.insert(0, str(core))
         try:
             from flow import update as update_mod  # noqa: PLC0415
@@ -383,7 +383,7 @@ class StatusReportsFactsNotJudgement(StatusReportsFactsNotJudgementCase):
 
     def test_a_system_requirement_without_a_fetch_stops(self) -> None:
         """AC15：系统需求这一轮没取过上游就不报输入，指明取材那一步。"""
-        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        core = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
         ar = self.feature_root.parent / "AR90008"
         shutil.copytree(self.feature_root, ar)
         sys.path.insert(0, str(core))
@@ -398,7 +398,7 @@ class StatusReportsFactsNotJudgement(StatusReportsFactsNotJudgementCase):
 
     def test_a_receipt_time_without_a_zone_stops(self) -> None:
         """回执的取材时刻按合同带时区；不带的报流程错误并指明重跑取材，不在比较时刻时崩出类型错误。"""
-        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        core = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
         ar = self.feature_root.parent / "AR90010"
         shutil.copytree(self.feature_root, ar)
         receipt = {"mode": "fetch", "reqNo": "AR90010", "fetchedAt": "2026-09-23T10:00:00", "items": []}
@@ -422,7 +422,7 @@ class StatusReportsFactsNotJudgement(StatusReportsFactsNotJudgementCase):
 class StatusReportsFactsNotJudgementPart2(StatusReportsFactsNotJudgementCase):
     def test_a_system_requirement_reads_its_receipt(self) -> None:
         """AR 需求按来源展示最近一次取材回执；有没有回执不决定来源。"""
-        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        core = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
         ar = self.feature_root.parent / "AR90009"
         shutil.copytree(self.feature_root, ar)
         receipt = {"mode": "fetch", "reqNo": "AR90009", "fetchedAt": "2026-09-23T10:00:00Z", "items": []}
@@ -509,7 +509,7 @@ class RestoreFollowsTheTruthTable(UpdateCase):
 
     def complete_point(self) -> None:
         """本轮完成点（story 登记或收口）记下的指纹：真实流程里由 `story` 登记与 `close` 写。"""
-        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        core = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
         sys.path.insert(0, str(core))
         try:
             from flow.update import record_owned_after  # noqa: PLC0415
@@ -602,7 +602,7 @@ class RestoreFollowsTheTruthTable(UpdateCase):
     def test_the_flow_contract_keeps_its_other_fields(self) -> None:
         """流程契约只动开着的这一轮的指针：轮次、人签、设计关联这些字段不随恢复回退。"""
         path = self.src / "story-flow.json"
-        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        core = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
         sys.path.insert(0, str(core))
         try:
             from flow.state import load, save  # noqa: PLC0415
@@ -875,7 +875,7 @@ class ConstructionFactsComeFromTheUnits(unittest.TestCase):
         feature_root = cls.root / "doc" / "features" / BLUEPRINT
         (feature_root / "AR" / "story-src").mkdir(parents=True)
         cls.feature = BLUEPRINT
-        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        core = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
         sys.path.insert(0, str(core))
         try:
             from flow.state import save  # noqa: PLC0415
@@ -959,7 +959,7 @@ class ConstructionFactsComeFromTheUnits(unittest.TestCase):
         watched = [self.root / "doc" / "features", self.root / "framework" / "harness" / "state"]
         snapshot = lambda: {p: p.read_bytes() for d in watched if d.is_dir() for p in d.rglob("*") if p.is_file()}  # noqa: E731
         before = snapshot()
-        proc = subprocess.run(["node", str(self.root / "doc/extensions/hooks/shared/framework-access.mjs"), "--project-root",
+        proc = subprocess.run(["node", str(self.root / "doc/extensions/base/hooks/shared/framework-access.mjs"), "--project-root",
                                str(self.root), "--action", "disposition", "--feature", self.status()["units"][0]["feature_id"],
                                "--phases", "spec"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
         self.assertIn(proc.returncode, (0, 1), proc.stderr)
@@ -967,7 +967,7 @@ class ConstructionFactsComeFromTheUnits(unittest.TestCase):
         self.assertEqual(before, snapshot(), "查当前处置写了盘")
 
     def test_the_disclosure_names_units_phases_and_who_takes_over(self) -> None:
-        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        core = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
         sys.path.insert(0, str(core))
         try:
             from flow.update import stale_text, stale_units  # noqa: PLC0415
@@ -990,7 +990,7 @@ class ConstructionFactsComeFromTheUnits(unittest.TestCase):
 
     def test_unit_level_dispositions_are_disclosed_apart_from_phases(self) -> None:
         """阶段都闭环且新鲜，原生处置还有单位级的事：完成阻断、只限发布、可披露、读不出各有输出，不编造从哪个阶段重做。"""
-        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        core = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
         sys.path.insert(0, str(core))
         try:
             from flow.update import stale_text, stale_units  # noqa: PLC0415
@@ -1036,7 +1036,7 @@ class ConstructionFactsComeFromTheUnits(unittest.TestCase):
         self.assertEqual([], stale_units([unit(ok())]), "没有要交代的事却被列出")
 
     def test_a_directory_the_framework_cannot_resolve_is_unreadable(self) -> None:
-        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        core = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
         sys.path.insert(0, str(core))
         try:
             from flow.update import _phase_facts  # noqa: PLC0415
@@ -1199,7 +1199,7 @@ process.stdout.write(JSON.stringify({ rows: o.rows.map(r => [r.path, r.label]), 
 """
 
     def review_object(self) -> dict:
-        mod = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story" / "review-object.mjs"
+        mod = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core" / "story" / "review-object.mjs"
         proc = subprocess.run(["node", "--input-type=module", "-e", self.OBJECT, str(mod), str(self.root), FEATURE],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         self.assertEqual(0, proc.returncode, proc.stderr[-800:])
@@ -1440,7 +1440,7 @@ class TheStoryRegistrationLeavesTheFirstBaseline(UpdateCase):
     """成文登记即留基准：第一次 update 也比得出「原来怎么写」，不再永远是 incomplete。"""
 
     def test_the_first_update_compares_against_the_registered_story(self) -> None:
-        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        core = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
         sys.path.insert(0, str(core))
         try:
             from flow.update import record_baseline  # noqa: PLC0415
@@ -1471,7 +1471,7 @@ def _registered(base: Path) -> None:
     shared_state.copy_tree(shared_state.shared_tree("update-walked", WALKED, UpdateCase()._walk), base)
     link_framework(base)
     design_kit.install_review_mechanism(base, DEV_EXT)
-    build = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
+    build = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
 
     def run(*args: str) -> subprocess.CompletedProcess:
         proc = subprocess.run(list(args), capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -1497,7 +1497,7 @@ class StoryIsRegisteredAgainAfterChangesCase(UpdateCase):
     09-26 实跑里 update 段卡在 reopen → complete → story 的死路上，模型手改了四次契约。
     """
 
-    BUILD = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
+    BUILD = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
     #: 起手就是登记好的工作区：整轮只造一次（shared_state），本用例第一次 register() 交出造它时那次真实登记的原样结果
     START_REGISTERED = False
 
@@ -1576,7 +1576,7 @@ class TheRegistrationSaysWhatRan(StoryIsRegisteredAgainAfterChangesCase):
 
     START_REGISTERED = True
 
-    CORE = DEV_EXT / "skills" / "story" / "scripts" / "core"
+    CORE = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
 
     def modules(self):
         sys.path.insert(0, str(self.CORE))
@@ -1724,7 +1724,7 @@ class TheRegistrationSaysWhatRan(StoryIsRegisteredAgainAfterChangesCase):
             with self.subTest(name):
                 error = self.archived_with(outcome, node=node)
                 self.assertIn(why, error)
-                self.assertIn("只补登记：`python doc/extensions/skills/story/scripts/core/story_flow.py archived", error)
+                self.assertIn("只补登记：`python doc/extensions/base/skills/story/scripts/core/story_flow.py archived", error)
                 self.assertIn("不要重新上传", error)
                 self.assertNotIn("重新归档", error)
                 self.assertNotIn("不合格", error)
@@ -2004,7 +2004,7 @@ class PublishChecksTheExternalVersion(RegisteredCase):
     GATE: tuple[bool, dict] | None = (True, {"ok": True, "notes": [], "problems": []})
 
     def call(self, name: str, *args, system: bool = True):
-        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        core = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
         sys.path.insert(0, str(core))
         try:
             from flow import publish  # noqa: PLC0415
@@ -2069,7 +2069,7 @@ class PublishChecksTheExternalVersion(RegisteredCase):
         return {r["item"]: r["action"] for r in out["items"]}
 
     def error(self, fn, *args) -> str:
-        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        core = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
         sys.path.insert(0, str(core))
         try:
             from flow.state import FlowError  # noqa: PLC0415
@@ -2340,7 +2340,7 @@ class TheDeliveryChainRunsThroughTheAdapter(RegisteredCase):
         PublishChecksTheExternalVersion.call, PublishChecksTheExternalVersion.local,
         PublishChecksTheExternalVersion.system_body, PublishChecksTheExternalVersion.publish,
         PublishChecksTheExternalVersion.actions, PublishChecksTheExternalVersion.contract)
-    ADAPTERS = DEV_EXT / "skills" / "story" / "scripts" / "adapters"
+    ADAPTERS = DEV_EXT / "adapters"
     CALL = """
 const [dir, fn, reqNo, out] = process.argv.slice(1, 5);
 const mod = require(require('path').join(dir, fn === 'fetchUpstream' ? 'fetch.js' : fn === 'archiveOne' ? 'archive.js' : 'restore.js'));
@@ -2584,7 +2584,7 @@ class ReviewInputFailuresAndMissingOriginalsAreReported(RegisteredCase):
         self.assertIn("不符", out["action"])
 
     def review_inputs(self) -> list[dict]:
-        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        core = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
         sys.path.insert(0, str(core))
         try:
             from flow import update as update_mod  # noqa: PLC0415
@@ -3501,7 +3501,7 @@ class ReviewLifecycleCase(RegisteredCase):
 
     def input_gaps(self) -> dict:
         """阶段审查这一侧对同一份比较依据的结论（`reviewInputs` 的 gaps 与本轮 update）。"""
-        mod = DEV_EXT / "hooks" / "shared" / "review-inputs.mjs"
+        mod = DEV_EXT / "base" / "hooks" / "shared" / "review-inputs.mjs"
         proc = subprocess.run(["node", "--input-type=module", "-e", REVIEW_INPUT_FACTS,
                                str(mod), str(self.root), FEATURE, "plan"],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
@@ -3509,7 +3509,7 @@ class ReviewLifecycleCase(RegisteredCase):
         return json.loads(proc.stdout)
 
     def object_facts(self) -> dict:
-        mod = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story" / "review-object.mjs"
+        mod = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core" / "story" / "review-object.mjs"
         proc = subprocess.run(["node", "--input-type=module", "-e", REVIEW_OBJECT_FACTS,
                                str(mod), str(self.root), FEATURE],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)

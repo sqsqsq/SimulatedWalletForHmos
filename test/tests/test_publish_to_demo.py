@@ -85,22 +85,23 @@ class PublishCase(unittest.TestCase):
 
 class TheSourceSetIsWhatIsOnDisk(PublishCase):
     def test_untracked_and_modified_files_are_installed_and_runtime_state_is_not(self) -> None:
-        (self.source / "hooks" / "shared" / "new-probe.mjs").write_text("export const x = 1;\n", encoding="utf-8")
-        skill = self.source / "skills" / "story" / "SKILL.md"
+        (self.source / "base" / "hooks" / "shared" / "new-probe.mjs").write_text("export const x = 1;\n", encoding="utf-8")
+        skill = self.source / "base" / "skills" / "story" / "SKILL.md"
         skill.write_text(skill.read_text(encoding="utf-8") + "\n还没提交的一行。\n", encoding="utf-8")
-        for rel in ("node_modules/pkg/i.js", ".adapt-1.9.8/plan.json", "adapt/old.md",
-                    "skills/story/scripts/core/__pycache__/m.cpython-313.pyc", "hooks/stale.pyc"):
+        for rel in ("base/node_modules/pkg/i.js", "base/.adapt-1.9.8/plan.json", "adapt/old.md",
+                    "base/skills/story/scripts/core/__pycache__/m.cpython-313.pyc", "base/hooks/stale.pyc"):
             (self.source / rel).parent.mkdir(parents=True, exist_ok=True)
             (self.source / rel).write_text("runtime", encoding="utf-8")
-        (self.source / "rules" / ".keep").write_text("", encoding="utf-8")
+        (self.source / "base" / "rules" / ".keep").write_text("", encoding="utf-8")
 
         result = self.install()
         self.assertEqual("installed", result.status, result.problems)
         ext = self.target / "doc" / "extensions"
-        self.assertTrue((ext / "hooks" / "shared" / "new-probe.mjs").is_file(), "未跟踪的新文件没进来")
-        self.assertIn("还没提交的一行", (ext / "skills" / "story" / "SKILL.md").read_text(encoding="utf-8"))
-        self.assertTrue((ext / "rules" / ".keep").is_file(), "普通隐藏文件被当成运行态丢了")
-        for rel in ("node_modules", ".adapt-1.9.8", "adapt", "skills/story/scripts/core/__pycache__", "hooks/stale.pyc"):
+        self.assertTrue((ext / "base" / "hooks" / "shared" / "new-probe.mjs").is_file(), "未跟踪的新文件没进来")
+        self.assertIn("还没提交的一行", (ext / "base" / "skills" / "story" / "SKILL.md").read_text(encoding="utf-8"))
+        self.assertTrue((ext / "base" / "rules" / ".keep").is_file(), "普通隐藏文件被当成运行态丢了")
+        self.assertTrue((ext / "base" / ".gitignore").is_file(), "base/.gitignore 没进来")
+        for rel in ("base/node_modules", "base/.adapt-1.9.8", "adapt", "base/skills/story/scripts/core/__pycache__", "base/hooks/stale.pyc"):
             self.assertFalse((ext / rel).exists(), f"运行态 {rel} 进了目标")
 
     def test_everything_in_the_source_lands_and_every_skill_gets_its_host_entries(self) -> None:
@@ -109,13 +110,13 @@ class TheSourceSetIsWhatIsOnDisk(PublishCase):
         ext = self.target / "doc" / "extensions"
         for rel in pub.enumerate_source(self.source):
             self.assertEqual((self.source / rel).read_bytes(), (ext / rel).read_bytes(), rel)
-        for skill in ("story", "story-adaptation"):
+        for skill in ("story", "story-adaptation", "story-knowledge", "story-stats"):
             for rel in (f".claude/commands/{skill}.md", f".opencode/skill/{skill}/SKILL.md"):
                 text = (self.target / rel).read_text(encoding="utf-8")
                 self.assertIn("agent-maison:instance-extension-bridge", text, rel)
-                self.assertIn(f"doc/extensions/skills/{skill}/SKILL.md", text, rel)
+                self.assertIn(f"doc/extensions/base/skills/{skill}/SKILL.md", text, rel)
         for name in ENTRY_FILES:
-            self.assertIn("doc/extensions/skills/story/SKILL.md", (self.target / name).read_text(encoding="utf-8"))
+            self.assertIn("base/skills/story-knowledge/SKILL.md", (self.target / name).read_text(encoding="utf-8"))
 
 
 class BadInputWritesNothing(PublishCase):
@@ -141,22 +142,30 @@ class BadInputWritesNothing(PublishCase):
 
     def test_a_source_whose_manifest_framework_rejects(self) -> None:
         """源包登记了不存在的知识、或把绑定挂在不存在的阶段：替换之前按目标 Framework 核出来，dry-run 同样报。"""
-        manifest = self.source / "manifest.yaml"
-        original = manifest.read_text(encoding="utf-8")
-        cases = {
-            "knowledge_missing": original.replace("  knowledge:\n", "  knowledge:\n    - knowledge/not-present.md\n", 1),
-            "phase_binding": original.replace("  plan: *author_knowledge\n", "  plan: *author_knowledge\n  nope: *author_knowledge\n", 1),
-        }
-        for needle, text in cases.items():
-            with self.subTest(needle):
-                manifest.write_text(text, encoding="utf-8")
-                before = self.snapshot()
-                for dry in (True, False):
-                    result = self.install(dry_run=dry)
-                    self.assertEqual("preflight_failed", result.status, result)
-                    self.assertTrue(any(needle in p for p in result.problems), result.problems)
-                self.assertEqual(before, self.snapshot(), "源包不合规却写了目标")
-        manifest.write_text(original, encoding="utf-8")
+        pkg = self.source / "base" / "package-manifest.yaml"
+        original_pkg = pkg.read_text(encoding="utf-8")
+        # 场景 1：根 manifest 引用不存在的知识
+        bad_root = pub.compose_root_manifest(original_pkg, name="c", description="d",
+                                             knowledge_items=["knowledge/not-present.md"])
+        (self.source / "manifest.yaml").write_text(bad_root, encoding="utf-8")
+        before = self.snapshot()
+        for dry in (True, False):
+            result = self.install(dry_run=dry)
+            self.assertEqual("preflight_failed", result.status, result)
+            self.assertTrue(any("knowledge_missing" in p for p in result.problems), result.problems)
+        self.assertEqual(before, self.snapshot(), "源包不合规却写了目标")
+        (self.source / "manifest.yaml").unlink()
+
+        # 场景 2：package-manifest 把绑定挂在不存在的阶段
+        pkg.write_text(original_pkg.replace("  plan: *author_knowledge\n",
+                                            "  plan: *author_knowledge\n  nope: *author_knowledge\n", 1), encoding="utf-8")
+        before = self.snapshot()
+        for dry in (True, False):
+            result = self.install(dry_run=dry)
+            self.assertEqual("preflight_failed", result.status, result)
+            self.assertTrue(any("phase_binding" in p for p in result.problems), result.problems)
+        self.assertEqual(before, self.snapshot(), "源包不合规却写了目标")
+        pkg.write_text(original_pkg, encoding="utf-8")
 
     def test_a_stray_story_ext_zone_without_an_installed_section(self) -> None:
         """目标上没装旧版扩展，却有 story-ext 标记：认不出是谁的东西，不当作旧扩展段撤掉。"""
@@ -176,28 +185,27 @@ class TheWriteFaceIsExact(PublishCase):
         """源里没有的旧文件、旧运行态都退出；同名的文件与目录两个方向互换都装得上。"""
         self.assertEqual("installed", self.install().status)
         ext = self.target / "doc" / "extensions"
-        (ext / "hooks" / "retired").mkdir(parents=True)
-        (ext / "hooks" / "retired" / "old.mjs").write_text("gone", encoding="utf-8")
+        (ext / "base" / "hooks" / "retired").mkdir(parents=True)
+        (ext / "base" / "hooks" / "retired" / "old.mjs").write_text("gone", encoding="utf-8")
         (ext / "adapt").mkdir()
         (ext / "adapt" / "old.json").write_text("{}", encoding="utf-8")
-        (ext / "asset").write_text("旧版是文件", encoding="utf-8")
-        (ext / "sheet" / "inner").mkdir(parents=True)
-        (ext / "sheet" / "inner" / "old.md").write_text("旧版是目录", encoding="utf-8")
-        (self.source / "asset").mkdir()
-        (self.source / "asset" / "new.md").write_text("新版是目录", encoding="utf-8")
-        (self.source / "sheet").write_text("新版是文件", encoding="utf-8")
+        (ext / "base" / "asset").write_text("旧版是文件", encoding="utf-8")
+        (ext / "base" / "sheet" / "inner").mkdir(parents=True)
+        (ext / "base" / "sheet" / "inner" / "old.md").write_text("旧版是目录", encoding="utf-8")
+        (self.source / "base" / "asset").mkdir()
+        (self.source / "base" / "asset" / "new.md").write_text("新版是目录", encoding="utf-8")
+        (self.source / "base" / "sheet").write_text("新版是文件", encoding="utf-8")
 
         result = self.install()
         self.assertEqual("installed", result.status, result.problems)
-        for gone in ("hooks/retired", "adapt"):
+        for gone in ("base/hooks/retired", "adapt"):
             self.assertFalse((ext / gone).exists(), f"{gone} 没随整体替换退出")
-        self.assertEqual("新版是目录", (ext / "asset" / "new.md").read_text(encoding="utf-8"))
-        self.assertEqual("新版是文件", (ext / "sheet").read_text(encoding="utf-8"))
-        self.assertEqual(sorted(pub.enumerate_source(self.source)), sorted(pub.enumerate_source(ext)))
+        self.assertEqual("新版是目录", (ext / "base" / "asset" / "new.md").read_text(encoding="utf-8"))
+        self.assertEqual("新版是文件", (ext / "base" / "sheet").read_text(encoding="utf-8"))
+        self.assertEqual(sorted(pub.enumerate_source(self.source / "base")), sorted(pub.enumerate_source(ext / "base")))
 
     def test_the_entries_match_what_the_installed_adapt_materializes(self) -> None:
-        """同一份扩展、同一个 Framework：维护安装与装好的 adapt 物化出的技能入口逐字节相同；AGENTS/CLAUDE 带各自清单的
-        知识路由（维护安装换整份清单，adapt 保留目标的知识清单），两边都与原生按自己清单渲染的一致。"""
+        """同一份扩展、同一个 Framework：维护安装与就地 adapt 物化出的技能入口逐字节相同，两边均过 entries check。"""
         other = self.root / "by-adapt"
         shutil.copytree(self.target, other, ignore=shutil.ignore_patterns("framework"))
         link_framework(other)
@@ -205,13 +213,15 @@ class TheWriteFaceIsExact(PublishCase):
         git_init_excluding_framework(other)
         for cmd in (["add", "-A"], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "b"]):
             subprocess.run(["git", "-C", str(other), *cmd], check=True, capture_output=True)
-        scan = self.target / "doc/extensions/skills/story-adaptation/scripts/adapt-scan.mjs"
-        proc = subprocess.run(["node", str(scan), "--apply", "--target", str(other)],
+        # 解包外部 base/ 到 other，然后就地跑 adapt-scan.mjs --apply
+        pub.pack_external_base(self.source, other / "doc" / "extensions")
+        scan = other / "doc/extensions/base/skills/story-adaptation/scripts/adapt-scan.mjs"
+        proc = subprocess.run(["node", str(scan), "--apply"], cwd=str(other),
                               capture_output=True, text=True, encoding="utf-8")
-        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         for rel in (".claude/commands/story.md", ".codex/skills/story-adaptation/SKILL.md"):
             self.assertEqual((other / rel).read_bytes(), (self.target / rel).read_bytes(), rel)
-        entries = self.target / "doc/extensions/skills/story-adaptation/scripts/entries.mjs"
+        entries = self.target / "doc/extensions/base/skills/story-adaptation/scripts/entries.mjs"
         for root in (self.target, other):
             check = subprocess.run(["node", str(entries), "--project-root", str(root), "--action", "check"],
                                    capture_output=True, text=True, encoding="utf-8")
@@ -219,10 +229,10 @@ class TheWriteFaceIsExact(PublishCase):
 
     def test_a_write_failure_reports_what_was_actually_done(self) -> None:
         """物化中途写不进去：报失败并保留原始错误，此前真实写出或删掉的宿主入口一个不漏，不留安装日志。"""
-        extra = self.source / "skills" / "extra" / "SKILL.md"
+        extra = self.source / "base" / "skills" / "extra" / "SKILL.md"
         extra.parent.mkdir(parents=True)
         extra.write_text("---\nname: extra\ndescription: 多一个 Skill\n---\n\n# extra\n", encoding="utf-8")
-        manifest = self.source / "manifest.yaml"
+        manifest = self.source / "base" / "package-manifest.yaml"
         manifest.write_text(manifest.read_text(encoding="utf-8").replace(
             "    - story-knowledge\n", "    - story-knowledge\n    - extra\n", 1), encoding="utf-8")
         claude = self.target / "CLAUDE.md"

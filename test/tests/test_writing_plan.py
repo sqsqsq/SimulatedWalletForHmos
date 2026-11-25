@@ -29,8 +29,8 @@ from designed_fixture import skeleton_copy  # noqa: E402
 from ext_workspace import DEV_EXT, project_root_of  # noqa: E402
 import design_kit  # noqa: E402
 
-CONTRACT_PATH = DEV_EXT / "skills" / "story" / "contracts" / "story-chapters.json"
-PLAN_MODULE = (DEV_EXT / "skills" / "story" / "scripts" / "core"
+CONTRACT_PATH = DEV_EXT / "base" / "skills" / "story" / "contracts" / "story-chapters.json"
+PLAN_MODULE = (DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
                / "story" / "writing-plan.mjs")
 BASE = PLAN_FIXTURE.read_text(encoding="utf-8")
 
@@ -998,7 +998,7 @@ class S21InapplicableDraftReasonAndHeadingChapterName(PlanCase):
     3) 正常多级（### / ####）通过，跳级报错顺带标明所属章名。"""
 
     def test_three_groups_from_skeleton_to_deliver_and_heading_jump_names_chapter(self) -> None:
-        for rel in ("skills/story/contracts/story-chapters.json", "rules/story-reader-rules.yaml"):
+        for rel in ("base/skills/story/contracts/story-chapters.json", "base/rules/story-reader-rules.yaml"):
             dst = self.root / "doc" / "extensions" / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(DEV_EXT / rel, dst)

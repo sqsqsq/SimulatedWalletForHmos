@@ -20,8 +20,8 @@ from designed_fixture import designed_copy
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXT = DEV_EXT
-DOCUMENT = EXT / "skills" / "story" / "scripts" / "core" / "story" / "document.mjs"
-BUILD = EXT / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
+DOCUMENT = EXT / "base" / "skills" / "story" / "scripts" / "core" / "story" / "document.mjs"
+BUILD = EXT / "base" / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
 FIXTURE = (REPO_ROOT / "test" / "fixtures" / "failure-modes"
            / "R01-verdict-echo" / "good")
 FEATURE = "REQ-DEMO"
@@ -155,7 +155,7 @@ class OneParsePerChapterPerRun(unittest.TestCase):
         shutil.copytree(EXT, self.mech)          # 机制侧：副本按相对位置自己找模块
         link_harness_yaml(self.mech.parents[1])
         self.log = Path(self._tmp.name) / "parse.log"
-        doc = (self.mech / "skills" / "story" / "scripts"
+        doc = (self.mech / "base" / "skills" / "story" / "scripts"
                / "core" / "story" / "document.mjs")
         text = doc.read_text(encoding="utf-8")
         text = text.replace(
@@ -166,7 +166,7 @@ class OneParsePerChapterPerRun(unittest.TestCase):
         doc.write_text(text, encoding="utf-8")
 
     def test_each_chapter_is_parsed_once(self) -> None:
-        build = self.mech / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
+        build = self.mech / "base" / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
         env = dict(**{k: v for k, v in __import__("os").environ.items()},
                    PARSE_LOG=str(self.log))
         proc = subprocess.run(
@@ -286,7 +286,7 @@ class SectionShapesAreChecked(ViewCase):
             "process.stdout.write(JSON.stringify("
             "  m.chapterProblems(ctx, {title: '功能说明'}, process.argv[2])));",
             str(chapter), text, str(DEV_ROOT / "AR" / "story.md"),
-            str(EXT / "skills" / "story" / "contracts" / "story-chapters.json"), str(DEV_ROOT))
+            str(EXT / "base" / "skills" / "story" / "contracts" / "story-chapters.json"), str(DEV_ROOT))
 
     def test_a_repeated_and_an_empty_section_are_named(self) -> None:
         got = self.problems(self.CHAPTER)
@@ -395,7 +395,7 @@ class OneFenceScannerForEveryConsumer(unittest.TestCase):
           fenced: [...fencedLines(body)].length,
         }}));
         """
-        contract = (EXT / "skills" / "story" / "contracts" / "story-chapters.json"
+        contract = (EXT / "base" / "skills" / "story" / "contracts" / "story-chapters.json"
                     ).read_text(encoding="utf-8")
         proc = subprocess.run(["node", "--input-type=module", "-e", src, "x",
                                chapter_body, contract],

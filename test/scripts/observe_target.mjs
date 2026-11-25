@@ -21,7 +21,9 @@ import * as path from 'node:path';
 const [root, blueprintId, phaseList = '', flag] = process.argv.slice(2);
 const settle = flag === '--settle';
 const phases = phaseList.split(',').map(s => s.trim()).filter(Boolean);
-const access = await import(pathToFileURL(path.join(root, 'doc', 'extensions', 'hooks', 'shared', 'framework-access.mjs')).href);
+const baseAccess = path.join(root, 'doc', 'extensions', 'base', 'hooks', 'shared', 'framework-access.mjs');
+const accessPath = fs.existsSync(baseAccess) ? baseAccess : path.join(root, 'doc', 'extensions', 'hooks', 'shared', 'framework-access.mjs');
+const access = await import(pathToFileURL(accessPath).href);
 
 const issueText = (issues) => (issues ?? []).map(i => `${i.code ?? i.id ?? '问题'}：${i.message ?? ''}`);
 const out = { blueprint_id: blueprintId, blueprint: null, units: [], problems: [] };

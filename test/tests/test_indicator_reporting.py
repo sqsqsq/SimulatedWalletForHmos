@@ -15,7 +15,7 @@ import unittest
 
 import test_neutral_knowledge as nk
 
-SHAPE = nk.EXT / "hooks" / "shared" / "stat-points.mjs"
+SHAPE = nk.EXT / "base" / "hooks" / "shared" / "stat-points.mjs"
 TABLE = "| 统计点 | 结果 |\n|---|---|\n| 提交 | 成功 |"
 
 

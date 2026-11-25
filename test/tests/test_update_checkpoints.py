@@ -579,7 +579,7 @@ class StoryGatesTellNotRunFromFailed(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        entry = self.tmp / "doc" / "extensions" / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
+        entry = self.tmp / "doc" / "extensions" / "base" / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
         entry.parent.mkdir(parents=True)
         entry.write_text("// 替身\n", encoding="utf-8")
         self.feature = self.tmp / "doc" / "features" / "AR1"
@@ -639,7 +639,7 @@ class StoryGatesTellNotRunFromFailed(unittest.TestCase):
         """正文、侧车、检查器实现、与需求同根的蓝图变了都重跑——旧 PASS 不沿用。"""
         (self.feature / "blueprint").mkdir(parents=True, exist_ok=True)
         for rel in ("doc/features/AR1/AR/story.md", "doc/features/AR1/AR/story-src/story-template.md",
-                    "doc/extensions/skills/story/scripts/core/story-build.mjs",
+                    "doc/extensions/base/skills/story/scripts/core/story-build.mjs",
                     "doc/features/AR1/blueprint/component-blueprint.yaml"):
             with self.subTest(rel=rel):
                 self.run_gates()

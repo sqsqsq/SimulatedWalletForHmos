@@ -17,8 +17,8 @@ from pathlib import Path
 from ext_workspace import DEV_EXT
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CORE = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story"
-CONTRACT = DEV_EXT / "skills" / "story" / "contracts" / "story-chapters.json"
+CORE = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core" / "story"
+CONTRACT = DEV_EXT / "base" / "skills" / "story" / "contracts" / "story-chapters.json"
 PLAN_FIXTURE = (REPO_ROOT / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo"
                 / "good" / "doc" / "features" / "REQ-DEMO" / "AR" / "story-src" / "story-template.md")
 

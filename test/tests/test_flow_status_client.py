@@ -21,7 +21,7 @@ from pathlib import Path
 from ext_workspace import DEV_EXT
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CORE = DEV_EXT / "skills" / "story" / "scripts" / "core"
+CORE = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
 CLIENT = CORE / "flow" / "client.mjs"
 FEATURE = "AR90001"
 
@@ -120,7 +120,7 @@ class BadAnswersAreNamed(ClientCase):
         (ext / "hooks" / "shared").mkdir(parents=True, exist_ok=True)
         # paths 认施工单位身份时走原生桥；原生桥读 Markdown 链接用 story 的链接读法
         for name in ("paths.mjs", "yaml.mjs", "framework-access.mjs"):
-            shutil.copy2(DEV_EXT / "hooks" / "shared" / name, ext / "hooks" / "shared" / name)
+            shutil.copy2(DEV_EXT / "base" / "hooks" / "shared" / name, ext / "hooks" / "shared" / name)
         (stub_root / "story").mkdir(parents=True, exist_ok=True)
         shutil.copy2(CORE / "story" / "markdown-links.mjs", stub_root / "story" / "markdown-links.mjs")
         shutil.copy2(CLIENT, stub_root / "flow" / "client.mjs")

@@ -21,8 +21,8 @@ from pathlib import Path
 from ext_workspace import DEV_EXT, link_framework
 import design_kit  # noqa: E402
 
-CORE = DEV_EXT / "skills" / "story" / "scripts" / "core"
-ACCESS = DEV_EXT / "hooks" / "shared" / "framework-access.mjs"
+CORE = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
+ACCESS = DEV_EXT / "base" / "hooks" / "shared" / "framework-access.mjs"
 PHASES = ("spec", "plan", "coding", "review", "ut", "testing")
 USAGE = CORE / "usage.py"
 FLOW = CORE / "story_flow.py"

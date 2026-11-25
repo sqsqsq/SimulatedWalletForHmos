@@ -30,8 +30,8 @@ from ext_workspace import link_harness_yaml, DEV_EXT
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXT = DEV_EXT
-CONTRACT = EXT / "skills" / "story" / "contracts" / "story-chapters.json"
-FLOW_SCRIPT = EXT / "skills" / "story" / "scripts" / "core" / "story_flow.py"
+CONTRACT = EXT / "base" / "skills" / "story" / "contracts" / "story-chapters.json"
+FLOW_SCRIPT = EXT / "base" / "skills" / "story" / "scripts" / "core" / "story_flow.py"
 FEATURE = "TP90001"
 #: 协议齐全的最小写作设计：章提交要读得了设计，测章文件处理的用例起手前放它。
 PLAN_FIXTURE = (REPO_ROOT / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo"
@@ -64,7 +64,7 @@ def as_url(path: Path) -> str:
     return json.dumps(path.resolve().as_uri())
 
 
-FLOW_SCRIPT = DEV_EXT / "skills/story/scripts/core/story_flow.py"
+FLOW_SCRIPT = DEV_EXT / "base" / "skills/story/scripts/core/story_flow.py"
 
 def ensure_flow_state(root: Path, feature: str, src: Path) -> None:
     """skeleton 起手预检需要的流程状态：S1–S3 走完并收口（真实脚本生成契约）。"""
@@ -103,7 +103,7 @@ class WorkspaceCase(unittest.TestCase):
             (inbox / rel).write_bytes(body)
         (inbox / ".classify.json").write_text(
             json.dumps({rel: cls for rel, (_, cls) in files.items()}, ensure_ascii=False), encoding="utf-8")
-        proc = run(sys.executable, "doc/extensions/skills/story/scripts/core/import_sources.py",
+        proc = run(sys.executable, "doc/extensions/base/skills/story/scripts/core/import_sources.py",
                    "--feature", FEATURE, cwd=self.root)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
 
@@ -118,7 +118,7 @@ class WorkspaceCase(unittest.TestCase):
 
     def inputs(self, feature: str = FEATURE) -> str:
         """`story-build skeleton` 打印的成文输入：同一个函数、同一份来源状态，不必先把骨架的前置条件全摆齐。"""
-        core = self.root / "doc" / "extensions" / "skills" / "story" / "scripts" / "core" / "story"
+        core = self.root / "doc" / "extensions" / "base" / "skills" / "story" / "scripts" / "core" / "story"
         proc = run("node", "--input-type=module", "-e",
                    f"const c = await import({as_url(core / 'context.mjs')});"
                    f"const i = await import({as_url(core / 'story-inputs.mjs')});"
@@ -253,7 +253,7 @@ class MaterialImagesAreOneTaskEach(WorkspaceCase):
         # **方法在作业书，数据与命令在成文输入**：把「怎么引、怎么登记」也抄进来，
         # 同一条规则就有两份会各自漂的写法。这里只核指路在、方法在它该在的地方。
         self.assertIn("story-write.md", package, "输入没指出方法在哪")
-        guide = (DEV_EXT / "skills/story/phases/story-write.md"
+        guide = (DEV_EXT / "base" / "skills/story/phases/story-write.md"
                  ).read_text(encoding="utf-8")
         self.assertIn("不属于本需求的", guide, "单向规则要在作业书里")
         self.assertIn("写明为什么不用", guide)
@@ -391,7 +391,7 @@ class MaterialImagesAreOneTaskEach(WorkspaceCase):
     def seed_two_images(self) -> None:
         """两张图：带空格的那张写了说明、还要用，另一张已登记不用。"""
         one, spaced = self.put_two_images()
-        proc = run(sys.executable, "doc/extensions/skills/story/scripts/core/import_sources.py",
+        proc = run(sys.executable, "doc/extensions/base/skills/story/scripts/core/import_sources.py",
                    "--feature", FEATURE, "--caption-image", f"doc/features/{FEATURE}/{spaced}",
                    "--caption", "签约页", cwd=self.root)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
@@ -437,7 +437,7 @@ class MaterialImagesAreOneTaskEach(WorkspaceCase):
     def register_unused(self, rel: str, reason: str) -> None:
         """按真脚本登记「本需求不用这张图」——状态由它写，测试不手改台账。"""
         proc = run(sys.executable,
-                   "doc/extensions/skills/story/scripts/core/import_sources.py",
+                   "doc/extensions/base/skills/story/scripts/core/import_sources.py",
                    "--feature", FEATURE, "--caption-image",
                    f"doc/features/{FEATURE}/{rel}", "--unused", reason, cwd=self.root)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
@@ -516,7 +516,7 @@ class TheAcceptanceExampleIsRealShape(unittest.TestCase):
     """
 
     def example(self) -> str:
-        page = (EXT / "hooks" / "spec" / "author.md").read_text(encoding="utf-8")
+        page = (EXT / "base" / "hooks" / "spec" / "author.md").read_text(encoding="utf-8")
         return page.split("```yaml\n", 1)[1].split("```", 1)[0]
 
     def test_the_bridge_sits_inside_a_criteria_item(self) -> None:
@@ -547,7 +547,7 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
     """位置与文件形状由 `status` 回答，一处真源。"""
 
     def status(self) -> dict:
-        proc = run(sys.executable, "doc/extensions/skills/story/scripts/core/story_flow.py",
+        proc = run(sys.executable, "doc/extensions/base/skills/story/scripts/core/story_flow.py",
                    "status", "--feature", FEATURE, cwd=self.root)
         self.assertEqual(0, proc.returncode, proc.stderr)
         return json.loads(proc.stdout)
@@ -615,7 +615,7 @@ class ChapterFileCarriesOnlyBody(WorkspaceCase):
     """章文件带了本章标题时命令自己剥掉——两跑都为标题重复重建过骨架。"""
 
     def build(self, *args: str) -> subprocess.CompletedProcess:
-        return run("node", "doc/extensions/skills/story/scripts/core/story-build.mjs",
+        return run("node", "doc/extensions/base/skills/story/scripts/core/story-build.mjs",
                    *args, "--feature", FEATURE, cwd=self.root)
 
     def setUp(self) -> None:

@@ -10,6 +10,7 @@
  * 用法：node test/scripts/run_self_check.mjs <projectRoot> <执行器扩展目录>
  * 输出：stdout 每行一个问题。退出码：0 无问题；1 有问题；2 知识派生失败（清单/文件/kind 出错）。
  */
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -18,7 +19,9 @@ if (process.argv.length < 4) {
   process.exit(2);
 }
 const projectRoot = path.resolve(process.argv[2]);
-const modulePath = path.join(path.resolve(process.argv[3]), 'hooks', 'shared', 'knowledge.mjs');
+const extArg = path.resolve(process.argv[3]);
+const baseCandidate = path.join(extArg, 'base', 'hooks', 'shared', 'knowledge.mjs');
+const modulePath = fs.existsSync(baseCandidate) ? baseCandidate : path.join(extArg, 'hooks', 'shared', 'knowledge.mjs');
 
 const { activeKnowledge, selfCheck } = await import(pathToFileURL(modulePath).href);
 

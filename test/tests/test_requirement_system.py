@@ -18,7 +18,7 @@ from pathlib import Path
 from ext_workspace import DEV_EXT
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPTS = DEV_EXT / "skills" / "story" / "scripts" / "adapters"
+SCRIPTS = DEV_EXT / "adapters"
 STORY_JS = SCRIPTS / "story.js"
 
 AR = "AR70001"
@@ -476,8 +476,7 @@ class TestNoStaleDataSource(unittest.TestCase):
 class TheDefaultEntryFindsTheProjectRoot(SystemCase):
     """不传 `--project-root` 时，脚本自己上溯到实例根。
 
-    SKILL 正文给的取材命令就是这个形态：`node doc/extensions/skills/story/scripts/
-    adapters/story.js fetch <AR> <token> --out <取材批次>`。上溯的级数错一级，回执落到 `doc/` 底下
+    SKILL 正文给的取材命令就是这个形态：`node doc/extensions/adapters/story.js fetch <AR> <token> --out <取材批次>`。上溯的级数错一级，回执落到 `doc/` 底下
     再开一层 `doc/features/`，消费模型得改扩展源码才跑得下去。
 
     别的用例都显式传根（它们要的是隔离的工作区），所以这一条单独走默认入口。
@@ -485,8 +484,7 @@ class TheDefaultEntryFindsTheProjectRoot(SystemCase):
 
     def setUp(self) -> None:
         super().setUp()
-        installed = (self.project / "doc" / "extensions" / "skills" / "story"
-                     / "scripts" / "adapters")
+        installed = self.project / "doc" / "extensions" / "adapters"
         installed.mkdir(parents=True)
         for source in SCRIPTS.glob("*.js"):
             (installed / source.name).write_bytes(source.read_bytes())
@@ -759,7 +757,7 @@ class TestPublishIdentityAndReceiptRecovery(SystemCase):
         self.assertFalse(backups_root.exists())
 
     def test_upgrade_changes_carries_fetch_write_before_contract(self) -> None:
-        text = (DEV_EXT / "skills" / "story-adaptation" / "reference" / "upgrade-changes.md").read_text(encoding="utf-8")
+        text = (DEV_EXT / "base" / "skills" / "story-adaptation" / "reference" / "upgrade-changes.md").read_text(encoding="utf-8")
         for token in ("body_write", ".backups/published/story.md", "story-flow.json", "fetched.json"):
             self.assertIn(token, text)
 

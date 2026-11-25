@@ -29,14 +29,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from flow_steps import walk_to_complete
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-IMAGES = (DEV_EXT / "skills/story/scripts/core/story/images.mjs")
-BUILD = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
-ACCESS = DEV_EXT / "hooks" / "shared" / "framework-access.mjs"
+IMAGES = (DEV_EXT / "base" / "skills/story/scripts/core/story/images.mjs")
+BUILD = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
+ACCESS = DEV_EXT / "base" / "hooks" / "shared" / "framework-access.mjs"
 FIXTURE = (REPO_ROOT / "test" / "fixtures" / "failure-modes"
            / "R01-verdict-echo" / "good")
 FEATURE = "REQ-DEMO"
-FLOW = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story_flow.py"
-IMPORT = DEV_EXT / "skills" / "story" / "scripts" / "core" / "import_sources.py"
+FLOW = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core" / "story_flow.py"
+IMPORT = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core" / "import_sources.py"
 #: 一份协议齐全的最小写作设计（十章各一段、结构选择为空）——测正文路径的用例起手前放它。
 PLAN_FIXTURE = FIXTURE / "doc" / "features" / FEATURE / "AR" / "story-src" / "story-template.md"
 
@@ -136,7 +136,7 @@ def _chapter_quote(body: str) -> str:
 
 def _appendix_title() -> str:
     """附录那一章的标题从合同取——用例不写死章名，合同改了它跟着变。"""
-    contract = json.loads((DEV_EXT / "skills/story/contracts"
+    contract = json.loads((DEV_EXT / "base" / "skills/story/contracts"
                            / "story-chapters.json").read_text(encoding="utf-8"))
     hit = next((c for c in contract.get("chapters") or [] if c.get("appendix")), None)
     return (hit or {}).get("title", "")
@@ -243,7 +243,7 @@ class TestErrorWordingPointsAtForm(StoryBuildCase):
 
     def test_the_bare_token_list_style_is_gone_from_the_source(self) -> None:
         """禁止样式在源码里也不该留——留着下一轮就会有人接回去。"""
-        source = (DEV_EXT / "skills/story/scripts/core/story-build.mjs"
+        source = (DEV_EXT / "base" / "skills/story/scripts/core/story-build.mjs"
                   ).read_text(encoding="utf-8")
         self.assertNotIn("但那一章里找不到", source)
 
@@ -517,8 +517,8 @@ class TheReadersRenderTheNativeObjects(unittest.TestCase):
     接口、数据与规约由作者按蓝图写业务摘要（完整契约在设计参考），没有读取器；这里核仍由脚本投影的几区。
     """
 
-    READERS = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story" / "appendix-readers.mjs"
-    CONTRACT = DEV_EXT / "skills" / "story" / "contracts" / "story-chapters.json"
+    READERS = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core" / "story" / "appendix-readers.mjs"
+    CONTRACT = DEV_EXT / "base" / "skills" / "story" / "contracts" / "story-chapters.json"
 
     def rows(self, zone: str, blueprint: dict) -> list[str]:
         """按合同里这一区登记的读取器，对一份蓝图记录算出机器区的行。"""
@@ -708,11 +708,11 @@ class TestAuthorWrittenNumbersAreStripped(unittest.TestCase):
         doc = "# X\n\n## 背景\n\n" + body
         script = (
             "import { renumberStory } from "
-            + json.dumps((DEV_EXT / "skills/story/scripts/core/story/document.mjs")
+            + json.dumps((DEV_EXT / "base" / "skills/story/scripts/core/story/document.mjs")
                          .resolve().as_uri())
             + ";import { readFileSync } from 'node:fs';"
             + "const c = JSON.parse(readFileSync("
-            + json.dumps(str(DEV_EXT / "skills/story/contracts/story-chapters.json"))
+            + json.dumps(str(DEV_EXT / "base" / "skills/story/contracts/story-chapters.json"))
             + ", 'utf-8'));"
             + "process.stdout.write(renumberStory(process.argv[1], c.chapters, c.heading_counters));")
         proc = subprocess.run(["node", "--input-type=module", "-e", script, "--", doc],
@@ -760,7 +760,7 @@ class TestAuthorWrittenNumbersAreStripped(unittest.TestCase):
     def test_normalize_heading_does_not_strip_bare_numbers(self) -> None:
         """`normalizeHeading` 被十几处标题匹配共用，它不碰裸序号。"""
         script = ("import { normalizeHeading } from "
-                  + json.dumps((DEV_EXT / "skills/story/scripts/core/story/document.mjs")
+                  + json.dumps((DEV_EXT / "base" / "skills/story/scripts/core/story/document.mjs")
                                .resolve().as_uri())
                   + ";process.stdout.write(normalizeHeading(process.argv[1]));")
         for title, want in (("1 闸机前的窘境", "1 闸机前的窘境"),   # 不剥
@@ -863,9 +863,9 @@ class TestNumberingIsAFixedPoint(unittest.TestCase):
     def renumber(self, text: str) -> str:
         script = (
             "import * as fs from 'node:fs';"
-            "import { renumberStory } from './doc/extensions/skills/story/scripts/core/story/document.mjs';"
+            "import { renumberStory } from './doc/extensions/base/skills/story/scripts/core/story/document.mjs';"
             "const c = JSON.parse(fs.readFileSync("
-            "'doc/extensions/skills/story/contracts/story-chapters.json','utf-8'));"
+            "'doc/extensions/base/skills/story/contracts/story-chapters.json','utf-8'));"
             "let s=''; process.stdin.on('data',d=>s+=d).on('end',()=>"
             "process.stdout.write(renumberStory(s, c.chapters)));"
         )
@@ -919,7 +919,7 @@ class TestRetiredThings(unittest.TestCase):
         for gone in ("3.0.0", "MaisonPrimaryButton"):
             self.assertNotIn(gone, text, f"「{gone}」还留在扩展包里")
         adapt = "\n".join(p.read_text(encoding="utf-8", errors="replace")
-                          for p in (self.EXT / "skills/story-adaptation").rglob("*") if p.is_file())
+                          for p in (self.EXT / "base" / "skills/story-adaptation").rglob("*") if p.is_file())
         self.assertNotIn("capability-resolution", adapt, "adapt 又在检查 framework 的热修")
 
     def test_adapt_leaves_no_work_files_behind(self) -> None:
@@ -928,7 +928,7 @@ class TestRetiredThings(unittest.TestCase):
         写快照的做法要求「先扫一遍建基线、再核对」两步，而基线本身会过期——
         目标在两步之间被动过，核对拿的就是一份说谎的底。git 的索引已经是那份底。
         """
-        scan = (self.EXT / "skills/story-adaptation/scripts/adapt-scan.mjs").read_text(
+        scan = (self.EXT / "base" / "skills/story-adaptation/scripts/adapt-scan.mjs").read_text(
             encoding="utf-8")
         for gone in ("before.json", "--scan", "mkdirSync(WORK"):
             self.assertNotIn(gone, scan, f"adapt 还在落工作件：{gone}")
@@ -936,7 +936,7 @@ class TestRetiredThings(unittest.TestCase):
     def test_host_entries_are_left_to_the_framework(self) -> None:
         """宿主入口由 Framework 按 manifest 1.1 的 skills 物化：包里不再自带跳板与入口段，也不登记它们。"""
         self.assertFalse((self.EXT / "bridges").exists(), "包里还带着自己的宿主跳板")
-        self.assertFalse((self.EXT / "skills/story/AGENTS.section.md").exists(), "包里还带着入口文件的扩展段")
+        self.assertFalse((self.EXT / "base" / "skills/story/AGENTS.section.md").exists(), "包里还带着入口文件的扩展段")
         manifest = (self.EXT / "manifest.yaml").read_text(encoding="utf-8")
         self.assertIn('schema_version: "1.1"', manifest)
         self.assertNotIn("bridges:", manifest)
@@ -1250,7 +1250,7 @@ def minimal_body(title: str, text: str) -> str:
     这里按合同派生，不抄一份结构清单——合同改了，夹具跟着改。
     """
     contract = json.loads(
-        (DEV_EXT / "skills/story/contracts/story-chapters.json")
+        (DEV_EXT / "base" / "skills/story/contracts/story-chapters.json")
         .read_text(encoding="utf-8"))
     ch = next((c for c in contract["chapters"] if c["title"] == title), None)
     st = (ch or {}).get("structure") or {}
@@ -1295,17 +1295,17 @@ class AWriteThatLandedIsNeverReportedAsFailed(unittest.TestCase):
         (self.feature_root / "AR" / "story-src").mkdir(parents=True)
         self.story_path = self.feature_root / "AR" / "story.md"
         titles = [c["title"] for c in json.loads(
-            (DEV_EXT / "skills/story/contracts/story-chapters.json")
+            (DEV_EXT / "base" / "skills/story/contracts/story-chapters.json")
             .read_text(encoding="utf-8"))["chapters"]]
         rows = ["# " + FEATURE + " 夹具", ""]
         for t in titles:
             rows += ["## " + t, "", "<!-- 待写：" + t + " -->", ""]
         self.story_path.write_text("\n".join(rows), encoding="utf-8")
         shutil.copy2(PLAN_FIXTURE, self.feature_root / "AR" / "story-src" / "story-template.md")
-        self.build = self.mech / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
+        self.build = self.mech / "base" / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
 
     def break_next_steps(self) -> None:
-        f = self.mech / "skills" / "story" / "scripts" / "core" / "story" / "chapter.mjs"
+        f = self.mech / "base" / "skills" / "story" / "scripts" / "core" / "story" / "chapter.mjs"
         text = f.read_text(encoding="utf-8")
         hit = ("export function nextSteps(ctx, storyText, result,"
                " { warnings = [], plan = null, docs = null } = {}) {")
@@ -1354,9 +1354,9 @@ class ABrokenIdShapeIsObservable(unittest.TestCase):
         self.mech = Path(self._tmp.name) / "doc" / "extensions"
         shutil.copytree(DEV_EXT, self.mech)
         link_harness_yaml(self.mech.parents[1])
-        self.contract = (self.mech / "skills" / "story" / "contracts"
+        self.contract = (self.mech / "base" / "skills" / "story" / "contracts"
                          / "story-chapters.json")
-        self.build = (self.mech / "skills" / "story" / "scripts" / "core"
+        self.build = (self.mech / "base" / "skills" / "story" / "scripts" / "core"
                       / "story-build.mjs")
         # 专项夹具：交给设计、蓝图已准入的 REQ-DEMO 工作区，用副本机制的入口跑 check
         self.ws = Path(self._tmp.name) / "work"
@@ -1390,7 +1390,7 @@ class ABrokenIdShapeIsObservable(unittest.TestCase):
         self.contract.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         out = self.check()
         self.assertEqual(1, out.count(self.BAD.format("drop", "S(\\d+")), "同一条坏配置报了不止一次")
-        core = self.mech / "skills" / "story" / "scripts" / "core" / "story"
+        core = self.mech / "base" / "skills" / "story" / "scripts" / "core" / "story"
         compiled = [f.name for f in sorted(core.glob("*.mjs"))
                     if "new RegExp(shape" in f.read_text(encoding="utf-8")]
         self.assertEqual(["context.mjs"], compiled,
@@ -1712,7 +1712,7 @@ class ChaptersLandOneAtATime(Step8Case):
 
     def titles(self) -> list[str]:
         return [c["title"] for c in json.loads(
-            (DEV_EXT / "skills/story/contracts/story-chapters.json")
+            (DEV_EXT / "base" / "skills/story/contracts/story-chapters.json")
             .read_text(encoding="utf-8"))["chapters"]]
 
     def put_chapter(self, title: str, body: str) -> subprocess.CompletedProcess:
@@ -2112,7 +2112,7 @@ class DraftsCarryTheDeterministicWork(RealRunCase):
         self.build("skeleton")
         draft = self.draft("04-业务方案.md").read_text(encoding="utf-8")
         self.assertIn("<!-- story-draft:guide 读完这一章，读者要能回答：", draft)
-        contract = json.loads((DEV_EXT / "skills/story/contracts"
+        contract = json.loads((DEV_EXT / "base" / "skills/story/contracts"
                                / "story-chapters.json").read_text(encoding="utf-8"))
         ch = next(c for c in contract["chapters"] if c["title"] == "业务方案")
         self.assertIn(ch["questions"][0], draft, "章头没从合同渲染读者问题")
@@ -2450,7 +2450,7 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
         zones = [z.split("story-build:end", 1)[0].split("\n", 1)[-1]
                  for z in story.split("story-build:begin")[1:] if not z.startswith(" 材料清单 ")]
         self.assertTrue(zones, "一节机器区都没有，这条守卫在空跑")
-        lint = self.EXTENSION / "skills" / "story" / "scripts" / "core" / "story" / "language.mjs"
+        lint = self.EXTENSION / "base" / "skills" / "story" / "scripts" / "core" / "story" / "language.mjs"
         for i, zone in enumerate(zones):
             proc = subprocess.run(
                 ["node", "--input-type=module", "-e",
@@ -3303,7 +3303,7 @@ class UpstreamDiagramsAreCarriedWhereTheDesignSays(StoryBuildCase):
         plan = with_carry(self.plan.read_text(encoding="utf-8"), ["SR §9.1 #1", "SR §9.2 #1"])
         last = "- 承接上游图：SR §9.2 #1\n"
         self.design(plan.replace(last, last + "#### 甲\n- 答：x\n- 承接上游图：SR §9.1 #1\n", 1))
-        mark = json.loads((DEV_EXT / "skills/story/contracts/story-chapters.json").read_text(encoding="utf-8"))["pending_mark"]
+        mark = json.loads((DEV_EXT / "base" / "skills/story/contracts/story-chapters.json").read_text(encoding="utf-8"))["pending_mark"]
         text = self.story()
         head, rest = text.split("## 业务流程\n", 1)
         body, tail = rest.split("\n## ", 1)

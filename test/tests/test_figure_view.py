@@ -19,7 +19,7 @@ from pathlib import Path
 
 from ext_workspace import DEV_EXT, link_harness_yaml
 
-CORE = DEV_EXT / "skills" / "story" / "scripts" / "core"
+CORE = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
 BUILD = CORE / "story-build.mjs"
 CHECK = CORE / "story" / "figure-check.py"
 FLOW = CORE / "story_flow.py"
@@ -482,7 +482,7 @@ class TheFormalFormIsMermaid(FigureViewCase):
     def test_hooks_and_preflight_bring_back_mermaid(self) -> None:
         self.ready()
         self.ok("svg")
-        hook = DEV_EXT / "hooks" / "shared" / "story-view.mjs"
+        hook = DEV_EXT / "base" / "hooks" / "shared" / "story-view.mjs"
         driver = ("const h = (await import(process.argv[1])).default;"
                   "process.stdout.write(JSON.stringify(await h({phase:'spec', feature: process.argv[2], projectRoot: process.argv[3]})));")
         got = json.loads(subprocess.run(["node", "--input-type=module", "-e", driver, hook.as_uri(), FEATURE, str(self.root)],
@@ -491,7 +491,7 @@ class TheFormalFormIsMermaid(FigureViewCase):
         self.assertFalse(self.shown(), "阶段钩子没有收回 Mermaid")
         self.assertNotIn("figures/", self.text())
         self.ok("svg")
-        pre = DEV_EXT / "hooks" / "shared" / "pre_verifier.mjs"
+        pre = DEV_EXT / "base" / "hooks" / "shared" / "pre_verifier.mjs"
         driver = ("const h = (await import(process.argv[1])).default;"
                   "process.stdout.write(JSON.stringify(await h({feature: process.argv[2], projectRoot: process.argv[3]})));")
         proc = subprocess.run(["node", "--input-type=module", "-e", driver, pre.as_uri(), FEATURE, str(self.root)],
@@ -754,7 +754,7 @@ class TheCheckCommandRunsAsPrinted(unittest.TestCase):
         ext = project / (ext_dir or "doc/extensions")
         shutil.copytree(DEV_EXT, ext, ignore=shutil.ignore_patterns("__pycache__"))
         (fr / "AR" / "story.md").write_text(STORY, encoding="utf-8")
-        build = ext / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
+        build = ext / "base" / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
         run = lambda *a: subprocess.run(["node", str(build), "view", *a, "--feature", FEATURE, "--project-root", str(project)],  # noqa: E731
                                         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         self.assertEqual(0, run("--mode", "prepare").returncode)
@@ -806,7 +806,7 @@ class TheOneClickEntry(FigureViewCase):
         shutil.copytree(DEV_EXT, moved / "doc" / "extensions")
         shutil.copytree(self.fr, moved / "doc" / "features" / FEATURE)
         link_harness_yaml(moved)
-        build = moved / "doc/extensions/skills/story/scripts/core/story-build.mjs"
+        build = moved / "doc/extensions/base/skills/story/scripts/core/story-build.mjs"
         subprocess.run(["node", str(build), "view", "--mode", "prepare", "--feature", FEATURE, "--project-root", str(moved)],
                        capture_output=True, timeout=120)
         entry = moved / "doc" / "features" / FEATURE / "AR" / self.NAME
@@ -824,7 +824,7 @@ class TheCoreArchiveEntry(FigureViewCase):
 
     def fake_adapter(self) -> Path:
         """站在合同登记的对接入口位置：被调用就留一个标记文件，回一份成功回执。"""
-        adapter = self.root / "doc" / "extensions" / "skills" / "story" / "scripts" / "adapters" / "story.js"
+        adapter = self.root / "doc" / "extensions" / "adapters" / "story.js"
         adapter.parent.mkdir(parents=True, exist_ok=True)
         marker = self.root / "adapter-called"
         adapter.write_text(

@@ -24,9 +24,9 @@ from pathlib import Path
 from ext_workspace import DEV_EXT
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-BUILD = (DEV_EXT / "skills" / "story"
+BUILD = (DEV_EXT / "base" / "skills" / "story"
          / "scripts" / "core" / "story-build.mjs")
-FLOW = (DEV_EXT / "skills" / "story"
+FLOW = (DEV_EXT / "base" / "skills" / "story"
         / "scripts" / "core" / "story_flow.py")
 FEATURE = "B01FEAT"
 LEDGERS = ("story-template.md",)

@@ -81,22 +81,26 @@ def git_init_excluding_framework(root: Path) -> None:
 
 
 def _install_dev_source() -> Path:
-    """开发源暂存进临时消费工程的 `doc/extensions`：文件集合用正式安装的源枚举规则，运行态不带。
+    """开发源（extensions/base + test/fixtures/demo-extension + 合成根 manifest）暂存进临时消费工程的 `doc/extensions`。
 
-    只做单测暂存：不装入口、不写扩展段、不合成 manifest，也不证明安装正确——那些归 publish_to_demo。
+    只做单测暂存：不装宿主入口，也不证明安装正确——那些归 publish_to_demo 与 S11 端到端测试。
     """
     root = Path(tempfile.mkdtemp(prefix="story-dev-ext-")) / "consumer"
     atexit.register(shutil.rmtree, root.parent, True)
     ext = root / "doc" / "extensions"
-    for rel in publish_to_demo.enumerate_source(DEV_SOURCE):
-        (ext / rel).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(DEV_SOURCE / rel, ext / rel)
+    mapped, _, _, _ = publish_to_demo.compose_extension_files(DEV_SOURCE)
+    for rel, data in mapped.items():
+        dst = ext / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(data)
     link_harness_yaml(root)
     return ext
 
 
-#: 开发源装在临时消费工程 `doc/extensions` 下的那一份：执行扩展脚本的套件用它
+#: 开发源装在临时消费工程 `doc/extensions` 下的那一份（含 manifest/knowledge/adapters/base）
 DEV_EXT = _install_dev_source()
+#: 开发源机制包目录（`<DEV_EXT>/base`）
+DEV_BASE = DEV_EXT / "base"
 #: 那个临时消费工程的根：按消费相对路径（`doc/extensions/...`）起脚本、读文件时的工作目录
 DEV_ROOT = DEV_EXT.parents[1]
 
@@ -131,7 +135,10 @@ def change_versions(ext: Path, block: str) -> list[str]:
     判「从最早一节列起」要拿记录本身作答案，不在测试里写死版本号——记录加一节、改一节，断言照样成立。
     """
     version, seen = None, []
-    text = (ext / "skills" / "story-adaptation" / "reference" / "upgrade-changes.md").read_text(encoding="utf-8")
+    cand = ext / "base" / "skills" / "story-adaptation" / "reference" / "upgrade-changes.md"
+    if not cand.is_file():
+        cand = ext / "skills" / "story-adaptation" / "reference" / "upgrade-changes.md"
+    text = cand.read_text(encoding="utf-8")
     for line in text.splitlines():
         head = re.match(r"^##\s+(\d+(?:\.\d+)+)\s*$", line)
         if head:
@@ -155,7 +162,7 @@ def required_inputs(root: Path, feature: str, purpose: str = "story") -> list[st
     root = Path(root)
     driver = root / "required-inputs.mjs"
     driver.write_text(_REQUIRED_INPUTS, encoding="utf-8")
-    mod = DEV_EXT / "hooks" / "shared" / "review-inputs.mjs"
+    mod = DEV_BASE / "hooks" / "shared" / "review-inputs.mjs"
     proc = subprocess.run(["node", str(driver), mod.resolve().as_uri(), str(root), feature, purpose],
                           capture_output=True, text=True, encoding="utf-8", timeout=60)
     driver.unlink()

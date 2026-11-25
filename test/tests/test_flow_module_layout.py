@@ -21,7 +21,7 @@ from pathlib import Path
 from ext_workspace import DEV_EXT
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CORE = DEV_EXT / "skills" / "story" / "scripts" / "core"
+CORE = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
 FLOW = CORE / "flow"
 FLOW_CLI = CORE / "story_flow.py"
 IMPORT_CLI = CORE / "import_sources.py"

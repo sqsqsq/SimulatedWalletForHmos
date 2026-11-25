@@ -2,11 +2,9 @@
 name: beta-facts
 kind: facts
 form: facets
-applies_when: 夹具知识 beta-facts
+applies_when: 需要查询示例能力位置时。
 ---
 
-# 乙工程事实
+## 示例能力
 
-| 面 | 位置 |
-|---|---|
-| 记录 | 乙模块出口 |
+- 能力 A 位于 src/a.ts。

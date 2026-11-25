@@ -174,12 +174,11 @@ class AssembledFromTheFixedInputs:
 
     def test_the_dev_source_is_installed_byte_for_byte(self) -> None:
         publish = self.runner.publish_to_demo
-        files = publish.enumerate_source(self.runner.DEV_SOURCE)
-        self.assertEqual(files, publish.enumerate_source(self.template / "doc/extensions"))
-        for rel in files:
+        expected, _, _, _ = publish.compose_extension_files(self.runner.DEV_SOURCE)
+        self.assertEqual(sorted(expected), sorted(publish.enumerate_source(self.template / "doc/extensions")))
+        for rel, body in expected.items():
             with self.subTest(rel):
-                self.assertEqual((self.runner.DEV_SOURCE / rel).read_bytes(),
-                                 (self.template / "doc/extensions" / rel).read_bytes())
+                self.assertEqual(body, (self.template / "doc/extensions" / rel).read_bytes())
 
     def test_the_assembly_leaves_demo_untouched_and_records_its_inputs(self) -> None:
         self.assertEqual(self.demo_before, self.demo_after, "装配前后 demo 的提交或工作区变了")
@@ -329,7 +328,7 @@ class TheWorkspaceCarriesTheVerifierChain(AssembledFromTheFixedInputs, unittest.
         const render = loadNative(root).module('scripts/utils/codex-agent-toml.ts').renderCodexAgentToml;
         process.stdout.write(render(fs.readFileSync(file, 'utf-8')));
         """
-        access = self.template / "doc/extensions/hooks/shared/framework-access.mjs"
+        access = self.template / "doc/extensions/base/hooks/shared/framework-access.mjs"
         proc = subprocess.run(["node", "--input-type=module", "-e", probe, access.resolve().as_uri(), str(self.template),
                                str(self.template / "framework/agents/claude/templates/agents/verifier.md")],
                               capture_output=True, encoding="utf-8", errors="replace", timeout=120)
@@ -388,7 +387,7 @@ class TheWorkspaceCarriesTheVerifierChain(AssembledFromTheFixedInputs, unittest.
             with self.subTest(template=skill):
                 text = (self.template / f".agents/skills/{skill}/SKILL.md").read_text(encoding="utf-8")
                 self.assertIn("agent-maison:instance-extension-bridge", text)
-                self.assertIn(f"doc/extensions/skills/{skill}/SKILL.md", text)
+                self.assertIn(f"doc/extensions/base/skills/{skill}/SKILL.md", text)
 
     def test_hook_configs_live_in_the_consumer_and_resolve_from_its_root(self) -> None:
         """四份钩子配置只在消费工程里；其中每条命令都从消费根（含带空格的 workspace）找得到脚本。

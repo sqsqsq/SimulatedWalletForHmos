@@ -245,7 +245,7 @@ class StatusCreatesNothing(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "doc" / "features" / "AR7").mkdir(parents=True)
-            subprocess.run([sys.executable, str(DEV_EXT / "skills/story/scripts/core/story_flow.py"), "status",
+            subprocess.run([sys.executable, str(DEV_EXT / "base" / "skills/story/scripts/core/story_flow.py"), "status",
                             "--feature", "AR7", "--project-root", str(root)],
                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
             self.assertEqual([], [p.name for p in (root / "doc").iterdir() if p.name != "features"])

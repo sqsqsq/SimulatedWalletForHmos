@@ -21,8 +21,8 @@ from pathlib import Path
 from ext_workspace import DEV_EXT
 
 REPO = Path(__file__).resolve().parents[2]
-STORY = DEV_EXT / "skills" / "story"
-STORY_JS = STORY / "scripts" / "adapters" / "story.js"
+STORY = DEV_EXT / "base" / "skills" / "story"
+STORY_JS = DEV_EXT / "adapters" / "story.js"
 CORE = STORY / "scripts" / "core"
 CONTEXT = CORE / "story" / "context.mjs"
 

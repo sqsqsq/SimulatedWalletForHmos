@@ -21,7 +21,7 @@ from pathlib import Path
 from ext_workspace import DEV_EXT
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-READER = DEV_EXT / "hooks" / "shared" / "yaml.mjs"
+READER = DEV_EXT / "base" / "hooks" / "shared" / "yaml.mjs"
 HARNESS_PKG = REPO_ROOT / "demo" / "framework" / "harness" / "package.json"
 
 #: 写法 → 期望读出的值。前七条是同一个值的合法写法，后面几条各锁一件别的事。

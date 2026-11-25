@@ -168,8 +168,8 @@ class TheMethodPageSaysHowToGetItRight(unittest.TestCase):
     """方法页要把上面这几条错路写给模型——判据在框架那边，做对与否在提示这边。"""
 
     def test_it_names_the_wrong_paths(self) -> None:
-        phases = DEV_EXT / "skills" / "story" / "phases"
-        closure = (DEV_EXT / "skills" / "story" / "reference" / "phase-closure.md").read_text(encoding="utf-8").split("## 闭环", 1)[1]
+        phases = DEV_EXT / "base" / "skills" / "story" / "phases"
+        closure = (DEV_EXT / "base" / "skills" / "story" / "reference" / "phase-closure.md").read_text(encoding="utf-8").split("## 闭环", 1)[1]
         for needle in ("verifier_request", "原样全文", "sync-closure",
                        "semantic_not_reverified", "report_missing", "不要自己拼 subject"):
             self.assertIn(needle, closure, f"闭环一节没说「{needle}」")

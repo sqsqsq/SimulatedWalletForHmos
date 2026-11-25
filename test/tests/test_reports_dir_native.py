@@ -13,7 +13,7 @@ from pathlib import Path
 from ext_workspace import DEV_EXT
 from design_fixture import _link_dir, framework_under_test
 
-CORE = DEV_EXT / "skills" / "story" / "scripts" / "core"
+CORE = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
 JS = ("const m = await import(process.argv[1]); const out = process.argv.slice(2).map(r => m.phaseReportsDir(r, 'F1', 'spec'));"
       " process.stdout.write(JSON.stringify(out));")
 
@@ -48,7 +48,7 @@ class ReportsDirMatchesTheFramework(unittest.TestCase):
                     (root / "framework.config.json").write_text(config, encoding="utf-8")
                 roots[name] = root
             js = subprocess.run(["node", "--input-type=module", "-e", JS,
-                                 (DEV_EXT / "hooks" / "shared" / "framework-access.mjs").as_uri(), *map(str, roots.values())],
+                                 (DEV_EXT / "base" / "hooks" / "shared" / "framework-access.mjs").as_uri(), *map(str, roots.values())],
                                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
             self.assertEqual(0, js.returncode, js.stderr)
             sys.path.insert(0, str(CORE))

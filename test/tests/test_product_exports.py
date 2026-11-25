@@ -28,7 +28,7 @@ class EveryExportHasAProductConsumer(unittest.TestCase):
         self.assertEqual([], orphans)
 
     def test_story_build_has_no_offline_mode(self) -> None:
-        core = EXT / "skills" / "story" / "scripts" / "core"
+        core = EXT / "base" / "skills" / "story" / "scripts" / "core"
         hits = [p.relative_to(EXT).as_posix() for p in core.rglob("*.mjs")
                 if re.search(r"\boffline\b", p.read_text(encoding="utf-8"))]
         self.assertEqual([], hits)

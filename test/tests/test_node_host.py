@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import node_host_bridge as bridge  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
-FLOW = REPO / "extensions" / "skills" / "story" / "scripts" / "core" / "story_flow.py"
+FLOW = REPO / "extensions" / "base" / "skills" / "story" / "scripts" / "core" / "story_flow.py"
 
 
 def write(root: Path, name: str, body: str) -> Path:

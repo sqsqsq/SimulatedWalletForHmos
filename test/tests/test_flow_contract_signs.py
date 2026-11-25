@@ -17,7 +17,7 @@ from pathlib import Path
 from ext_workspace import DEV_EXT
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SKILL = DEV_EXT / "skills" / "story"
+SKILL = DEV_EXT / "base" / "skills" / "story"
 FLOW = SKILL / "scripts" / "core" / "story_flow.py"
 FEATURE = "AR90001"
 

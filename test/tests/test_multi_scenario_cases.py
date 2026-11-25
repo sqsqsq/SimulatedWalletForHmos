@@ -223,7 +223,7 @@ class CompositeCoverageTest(unittest.TestCase):
         谁在发言、哪一段是议题由被测模型自己判断，这里不替它断言。
         """
         import sys  # noqa: PLC0415
-        sys.path.insert(0, str(DEV_EXT / "skills/story/scripts/core"))
+        sys.path.insert(0, str(DEV_EXT / "base" / "skills/story/scripts/core"))
         from materials import importer  # noqa: PLC0415
 
         declared = [item for item in definition("auto-topup")["supplements"] if item.get("kind") == "meeting"]

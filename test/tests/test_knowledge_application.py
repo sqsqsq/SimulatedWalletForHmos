@@ -18,8 +18,8 @@ import design_kit
 from designed_fixture import designed_copy
 
 FIXTURE = REPO_ROOT / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good"
-MODULE = (DEV_EXT / "hooks" / "shared" / "knowledge-application.mjs").resolve().as_uri()
-ACCESS = (DEV_EXT / "hooks" / "shared" / "framework-access.mjs").resolve().as_uri()
+MODULE = (DEV_EXT / "base" / "hooks" / "shared" / "knowledge-application.mjs").resolve().as_uri()
+ACCESS = (DEV_EXT / "base" / "hooks" / "shared" / "framework-access.mjs").resolve().as_uri()
 #: 读准入蓝图，按 argv 里的 JS 片段改它（变量 bp、rules：样例规约域的事实、node：夹具的设计对象），再核
 SCRIPT = """
 const [module, access, root, blueprintId, mutate] = process.argv.slice(1);

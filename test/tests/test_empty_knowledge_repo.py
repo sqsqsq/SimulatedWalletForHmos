@@ -51,10 +51,11 @@ class EmptyKnowledgeRepo(unittest.TestCase):
         (self.root / "framework.config.json").write_text(
             json.dumps({"paths": {"extension_dir": "doc/extensions"}}), encoding="utf-8")
 
-        # 清单清空：`knowledge:` 那一节的条目全删，键留着——首次安装建的就是这个形态
+        # 清单清空：只去掉业务 knowledge/* 条目（保留 base/skills/story-knowledge/SKILL.md 入口）或置空
         manifest = self.ext / "manifest.yaml"
         text = manifest.read_text(encoding="utf-8")
-        text = re.sub(r"(?m)^    - knowledge/.*\n", "", text)
+        text = re.sub(r"(?m)^    - (?:path: )?knowledge/.*\n(?:      .*\n)*", "", text)
+        text = re.sub(r"(?m)^    - path: base/skills/story-knowledge/SKILL\.md\n(?:      .*\n)*", "", text)
         text = text.replace("  knowledge:\n", "  knowledge: []\n")
         manifest.write_text(text, encoding="utf-8")
         self.manifest = manifest
@@ -65,7 +66,7 @@ class EmptyKnowledgeRepo(unittest.TestCase):
     # ---- 驱动 ----
 
     def module(self, name: str) -> Path:
-        return self.ext / "hooks" / "shared" / name
+        return self.ext / "base" / "hooks" / "shared" / name
 
     def derive(self, expr: str) -> subprocess.CompletedProcess:
         """在这个仓上跑一段用知识派生的表达式，回传 stdout / stderr / 退出码。"""
@@ -117,7 +118,7 @@ class EmptyKnowledgeRepo(unittest.TestCase):
         """没有激活规约就没有要判的条目：契约里一条判断都不写，spec 门禁不报漏判。"""
         (self.feature_root / "contracts.yaml").write_text("interfaces: []\n", encoding="utf-8")
         proc = node("--input-type=module", "-e",
-                    f"const hook = (await import({as_url(self.ext / 'hooks' / 'spec' / 'post_check.mjs')})).default;"
+                    f"const hook = (await import({as_url(self.ext / 'base' / 'hooks' / 'spec' / 'post_check.mjs')})).default;"
                     f"const out = await hook({{ phase: 'spec', feature: {json.dumps(FEATURE)},"
                     f" projectRoot: {json.dumps(self.root.as_posix())} }});"
                     "process.stdout.write(JSON.stringify(out));")
