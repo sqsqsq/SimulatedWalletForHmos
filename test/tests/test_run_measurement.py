@@ -24,7 +24,7 @@ from ext_workspace import DEV_EXT
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO / "test" / "scripts"
-STORY_SCRIPTS = DEV_EXT / "skills" / "story" / "scripts" / "core"
+STORY_SCRIPTS = DEV_EXT / "base" / "skills" / "story" / "scripts" / "core"
 
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(STORY_SCRIPTS))
@@ -1625,9 +1625,9 @@ class KnowledgeDeliveriesAreReadFromTheTaskOutput(unittest.TestCase):
         cls._tmp = tempfile.TemporaryDirectory()
         cls.root = kt.make_project(root=Path(cls._tmp.name) / "p")
         (cls.root / "doc" / "features" / "flat-start").mkdir(parents=True)
-        cls.cmd = (f"node doc/extensions/hooks/shared/knowledge-task.mjs --project-root {cls.root.as_posix()} "
+        cls.cmd = (f"node doc/extensions/base/hooks/shared/knowledge-task.mjs --project-root {cls.root.as_posix()} "
                    "--feature flat-start --action plan --audience reviewer")
-        proc = subprocess.run(["node", str(cls.root / "doc/extensions/hooks/shared/knowledge-task.mjs"), "--project-root",
+        proc = subprocess.run(["node", str(cls.root / "doc/extensions/base/hooks/shared/knowledge-task.mjs"), "--project-root",
                                str(cls.root), "--feature", "flat-start", "--action", "plan", "--audience", "reviewer"],
                               capture_output=True, timeout=300)
         assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")[-600:]
@@ -1653,7 +1653,8 @@ class KnowledgeDeliveriesAreReadFromTheTaskOutput(unittest.TestCase):
         def entry(k):
             path = k["path"] if isinstance(k, dict) else k
             return path
-        files = [f"doc/extensions/{entry(k)}" for k in self.registered]
+        files = [f"doc/extensions/{entry(k)}" for k in self.registered
+                 if entry(k) != "base/skills/story-knowledge/SKILL.md"]
         self.assertEqual(sorted(files), sorted(b["file"] for b in got["bodies"]))
         halves = {b["file"]: b["part"] for b in got["bodies"]}
         for f in files:
@@ -2307,16 +2308,25 @@ class S16IsolationVerdictAndRoundReportAttribution(unittest.TestCase):
         cmd_abbr = "Select-String -Inp '../sibling/notes.md' -Pattern 'sibling'"
         cmd_path = "Select-String -Path '../sibling/notes.md' -Pattern 'external-secret'"
         cmd_pos = "Select-String 'external-secret' '../sibling/notes.md'"
+        cmd_named_pat_pos_path = "Select-String -Pattern 'external-secret' '../sibling/notes.md'"
+        cmd_pat_mentions_sib = "Select-String -Pattern '../sibling/notes.md' -Path 'local.md'"
+        cmd_missing_sib = "Select-String -Path '../sibling/missing.md' -Pattern 'external-secret'"
         cmd_amb = "Select-String -In '../sibling/notes.md' -Pattern 'sibling'"
+        (ws / "local.md").write_text("local ref to ../sibling/notes.md\n", encoding="utf-8")
 
         out_full = run_ps(cmd_full)
         out_abbr = run_ps(cmd_abbr)
         out_path = run_ps(cmd_path)
         out_pos = run_ps(cmd_pos)
+        out_named_pat_pos_path = run_ps(cmd_named_pat_pos_path)
+        out_pat_mentions_sib = run_ps(cmd_pat_mentions_sib)
+        out_missing_sib = run_ps(cmd_missing_sib)
         self.assertIn("../sibling/notes.md", out_full)
         self.assertEqual(out_full.strip(), out_abbr.strip())
         self.assertIn("external-secret-line", out_path)
         self.assertIn("external-secret-line", out_pos)
+        self.assertIn("external-secret-line", out_named_pat_pos_path)
+        self.assertIn("local.md", out_pat_mentions_sib)
 
         got_full, obs_full = self._measure_case("s20_full_inputobj", cmd_full, out_full)
         self.assertFalse(got_full["isolation_boundary"]["contaminated"])
@@ -2339,6 +2349,26 @@ class S16IsolationVerdictAndRoundReportAttribution(unittest.TestCase):
         self.assertTrue(got_pos["isolation_boundary"]["contaminated"])
         self.assertEqual(1, len(got_pos["isolation_boundary"]["confirmed_findings"]))
         self.assertIn("已确认外部访问", obs_pos)
+
+        # S23：命名 -Pattern 后的余下位置实参绑定到 -Path（实际读出旁案文件 -> confirmed_access / 受污染）
+        got_np, obs_np = self._measure_case("s23_named_pat_pos_path", cmd_named_pat_pos_path, out_named_pat_pos_path)
+        self.assertTrue(got_np["isolation_boundary"]["contaminated"])
+        self.assertEqual(1, len(got_np["isolation_boundary"]["confirmed_findings"]))
+        self.assertIn("已确认外部访问", obs_np)
+
+        # S23：模式中仅提到旁案字面串、显式 -Path 读本案 local.md -> 仅文字提及，不污染
+        got_pm, obs_pm = self._measure_case("s23_pat_mentions_sib", cmd_pat_mentions_sib, out_pat_mentions_sib)
+        self.assertFalse(got_pm["isolation_boundary"]["contaminated"])
+        self.assertEqual(0, len(got_pm["isolation_boundary"]["confirmed_findings"]))
+        self.assertEqual(1, len(got_pm["isolation_boundary"]["mentions_only"]))
+        self.assertIn("未检出外部访问", obs_pm)
+
+        # S23：路径指向旁案但读取失败 -> failed_access，不触发污染
+        got_fail, obs_fail = self._measure_case("s23_missing_sib", cmd_missing_sib, out_missing_sib)
+        self.assertFalse(got_fail["isolation_boundary"]["contaminated"])
+        self.assertEqual(0, len(got_fail["isolation_boundary"]["confirmed_findings"]))
+        self.assertEqual(1, len(got_fail["isolation_boundary"]["failed_attempts"]))
+        self.assertIn("失败尝试", obs_fail)
 
         got_amb, obs_amb = self._measure_case("s20_ambiguous_flag", cmd_amb, "some output")
         self.assertFalse(got_amb["isolation_boundary"]["contaminated"])

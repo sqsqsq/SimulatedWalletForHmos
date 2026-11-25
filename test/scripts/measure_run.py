@@ -1226,7 +1226,8 @@ def _select_string_token_bindings(stage: str, stage_idx: int) -> list[tuple[str,
         return []
     args = tokens[1:]
     has_input_object = stage_idx > 0
-    positional_idx = 0
+    bound_pattern = False
+    bound_path = False
     pending_role: str | None = None
     saw_ambiguous = False
     bound: list[tuple[str, str]] = []
@@ -1244,6 +1245,10 @@ def _select_string_token_bindings(stage: str, stage_idx: int) -> list[tuple[str,
                 is_switch, role = resolved
                 if role == "input_object":
                     has_input_object = True
+                elif role == "pattern":
+                    bound_pattern = True
+                elif role == "file_path":
+                    bound_path = True
                 if not is_switch:
                     if sep:
                         bound.append((val_part, role))
@@ -1256,12 +1261,14 @@ def _select_string_token_bindings(stage: str, stage_idx: int) -> list[tuple[str,
             continue
         if saw_ambiguous or tok.startswith(("@", "$")):
             bound.append((tok, "ambiguous"))
-        elif positional_idx == 0:
+        elif not bound_pattern:
             bound.append((tok, "pattern"))
-            positional_idx += 1
+            bound_pattern = True
+        elif not has_input_object and not bound_path:
+            bound.append((tok, "file_path"))
+            bound_path = True
         else:
-            bound.append((tok, "input_object" if has_input_object else "file_path"))
-            positional_idx += 1
+            bound.append((tok, "ambiguous"))
     return bound
 
 
