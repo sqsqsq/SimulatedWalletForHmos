@@ -191,6 +191,54 @@ class KnowledgeApplicationsAreCheckedAgainstTheRealObjects(unittest.TestCase):
         self.assertTrue(any("authority_target_provenance_missing" in p and "view:development/node:wallet-main-module" in p
                             for p in unapproved), unapproved)
 
+    def test_s06_q3_group_exclusion_units_schema_and_expansion(self) -> None:
+        """S06 Q3：组排除 units（省略或空 target_refs、固定 not_applicable）展开为原单项身份；
+        混合 unit+units、非空 target_refs、空组、重复项、非 not_applicable、跨组重判与未知条目均拒收。"""
+        # 1) 合法组排除（省略 target_refs 与显式 [] 均通过）
+        for extra in ("", ", target_refs: []"):
+            with self.subTest(extra=extra):
+                ok = ("rules.value.items = ["
+                      "rules.value.items[0],"
+                      f"{{units: ['SMP-02'], outcome: 'not_applicable', rationale: '本需求无上报动作'{extra}}}"
+                      "];")
+                self.assertEqual([], self.problems(ok))
+
+        # 2) 混合 unit + units 必须拒收（oneOf 互斥）
+        mixed = ("rules.value.items = ["
+                 "rules.value.items[0],"
+                 "{unit: 'SMP-02', units: ['SMP-02'], outcome: 'not_applicable', rationale: '混写', target_refs: []}"
+                 "];")
+        self.assertTrue(any("形态不合" in p for p in self.problems(mixed)))
+
+        # 3) 组排除带非空 target_refs 必须拒收
+        non_empty_refs = ("rules.value.items = ["
+                          "rules.value.items[0],"
+                          f"{{units: ['SMP-02'], outcome: 'not_applicable', rationale: '无上报', target_refs: ['{NODE}']}}"
+                          "];")
+        self.assertTrue(any("形态不合" in p for p in self.problems(non_empty_refs)))
+
+        # 4) 组排除用 applied、空数组、组内重复均必须拒收
+        for name, item in (
+            ("applied", "{units: ['SMP-02'], outcome: 'applied', rationale: '错用'}"),
+            ("empty", "{units: [], outcome: 'not_applicable', rationale: '空组'}"),
+            ("dup_in_group", "{units: ['SMP-02', 'SMP-02'], outcome: 'not_applicable', rationale: '组内重复'}"),
+        ):
+            with self.subTest(bad=name):
+                mut = f"rules.value.items = [rules.value.items[0], {item}];"
+                self.assertTrue(any("形态不合" in p for p in self.problems(mut)), name)
+
+        # 5) 组排除与单项重判同一条目、组排除含未知条目，均按真实域逐条报错
+        overlap = ("rules.value.items = ["
+                   "rules.value.items[0],"
+                   "{units: ['SMP-01', 'SMP-02'], outcome: 'not_applicable', rationale: '覆盖适用项'}"
+                   "];")
+        self.assertTrue(any("SMP-01 写了两次" in p for p in self.problems(overlap)))
+        unknown_u = ("rules.value.items = ["
+                     "rules.value.items[0],"
+                     "{units: ['SMP-02', 'SMP-99'], outcome: 'not_applicable', rationale: '含未知项'}"
+                     "];")
+        self.assertTrue(any("SMP-99 不在" in p for p in self.problems(unknown_u)))
+
 
 if __name__ == "__main__":
     unittest.main()

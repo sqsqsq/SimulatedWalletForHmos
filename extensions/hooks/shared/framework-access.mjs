@@ -1114,7 +1114,7 @@ function resolveFeature(projectRoot, feature, phase, supplied) {
       ? new SpecLoader(native.root, undefined, undefined, native.frameworkRoot).loadFeatureSpec(feature, resolution.inputs) : null;
     // 原生选中的输入：值是这次选中的那一份，绑定原样交出（来源、依赖、source_refs、内容指纹），不截短、不重算
     for (const [name, value] of Object.entries(resolution.inputs?.values ?? {})) {
-      if (!['acceptance', 'contracts'].includes(name)) continue;
+      if (!['acceptance', 'contracts', 'use_cases'].includes(name)) continue;
       out.inputs[name] = value.state === 'resolved'
         ? { state: 'resolved', binding: value.binding ?? null, value: value.value }
         : { state: value.state, ...(value.detail !== undefined ? { detail: value.detail } : {}),

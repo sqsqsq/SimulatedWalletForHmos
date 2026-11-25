@@ -986,6 +986,38 @@ class TheMaterializedContractIsReused(ChainCase):
         self.assertTrue(out["roles"])
         self.assertNotIn("没有实体扛着", out["gate"], out["gate"])
 
+    def test_s07_production_plan_gate_and_pre_verifier_accept_annotated_header_and_diagnose_mixed_column(self) -> None:
+        """S07 生产 Plan 门禁与独审装配：合法附注列（含另一职责词或示例）取到原行，单格混合列报精确行号与实际表头。"""
+        # 1) 附注含「统计点」的「责任方法（该统计点的归属）」在生产门禁与独审并列表均正确识别
+        self.variant(
+            "plan/plan.md",
+            "# Plan\n\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n| 编号 | 落点 |\n|---|---|\n| OBS-02 | HomeRepository.refreshBalance |\n\n"
+            "### 设计模式选型与角色\n\n决策树节点表落在 HomeRepository。\n\n"
+            "### 埋点\n\n| 责任方法（该统计点的归属） | 结果 | 统计点（示例：余额刷新） |\n|---|---|---|\n"
+            "| HomeRepository.refreshBalance | 成功 | 余额刷新 / 保存结果 |\n"
+            "| HomeRepository.refreshBalance | 拒绝 | 余额刷新 / 保存结果 |\n",
+        )
+        ok_out = self.probe(fresh=True)
+        self.assertNotIn("逐点表里没有行", ok_out["gate"], ok_out["gate"])
+        self.assertNotIn("结构歧义", ok_out["gate"], ok_out["gate"])
+        self.assertIn("余额刷新 / 保存结果", ok_out["review"])
+        self.assertNotIn("（plan 没有这个统计点）", ok_out["review"])
+
+        # 2) 单格混合两职责（统计点/责任方法）：门禁与独审均报出结构歧义、精确行号与实际表头，不误报单纯缺行
+        self.variant(
+            "plan/plan.md",
+            "# Plan\n\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n| 编号 | 落点 |\n|---|---|\n| OBS-02 | HomeRepository.refreshBalance |\n\n"
+            "### 设计模式选型与角色\n\n决策树节点表落在 HomeRepository。\n\n"
+            "### 埋点\n\n| 统计点/责任方法 | 结果 |\n|---|---|\n"
+            "| 余额刷新 / 保存结果 HomeRepository.refreshBalance | 成功 |\n",
+        )
+        bad_out = self.probe(fresh=True)
+        self.assertIn("结构歧义", bad_out["gate"], bad_out["gate"])
+        self.assertIn("| 统计点/责任方法 | 结果 |", bad_out["gate"], bad_out["gate"])
+        self.assertNotIn("逐点表里没有行", bad_out["gate"], bad_out["gate"])
+        self.assertIn("表头结构歧义", bad_out["review"], bad_out["review"])
+        self.assertIn("| 统计点/责任方法 | 结果 |", bad_out["review"], bad_out["review"])
+
 
 if __name__ == "__main__":
     unittest.main()

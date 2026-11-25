@@ -14,7 +14,7 @@ node doc/extensions/hooks/shared/knowledge-task.mjs --project-root <工程根> -
 - **目标与规则**：业务目标（量化指标、配额、时限）与关键规则写进承担它的设计对象或原生决定，读者不翻原件也读得到数值与条件；来源指针只说明出处。
 - **身份与状态**：每个业务对象用什么身份标识、状态由谁维护、以哪一方为准。状态会被另一端或时间改变的，界面与后续操作按取得的当前状态决定去向。
 - **数据的生产与消费**：页面或下游用到的每个字段，写清谁产生、经哪个接口或事件到达、谁消费；入口 → 身份 → 列表或详情 → 字段这条链在哪里接不上，就在哪里登记缺口。接口或字段的名字存在，不等于这条链成立。
-- **失败、未知与恢复**：明确失败、结果未知（超时、没有有效回包）与过期状态分开设计。重试、新建与撤销写出真实合同支持的前提与请求身份：重发同一请求带原请求的身份，丢了身份的新请求是一次新请求；结果未知时按查询结果定去向。恢复路径写清谁发起、按什么身份查询、查的是哪个对象、状态以谁为准、结果给谁用，挂在承担它的那一方。
+- **失败、未知与恢复**：明确失败、结果未知（超时、没有有效回包）与过期状态分开设计。重试、新建与撤销写出真实合同支持的前提与请求身份：重发同一请求带原请求的身份，丢了身份的新请求是一次新请求；结果未知时按已有端口说明确认责任、合法请求身份及可继续条件；没有确认能力，保留未知。查询、回调与原请求幂等重送只在真实合同支持时使用，不编造端口，也不把示例流程号或模拟显示串登记成项目事实。恢复路径写清谁发起、按什么身份确认、查或等哪个对象、状态以谁为准、结果给谁用，挂在承担它的那一方。
 - **未定与冲突**：逐项以原话和当前授权裁决本期行为；临时准许的部分落到本期验收，仍未决定的部分保留条件与责任。已有明确答复时沿用，变更已定承诺时指出新依据。有效人答要求等结论的动作保持等待，各选项共有的功能照常设计，原材料之间的真实冲突登记成原生决定并写明各方来源。
 - **工程现状与外部依赖**：材料承诺的能力与工程现状逐项核，按「查证工程 → 定本期承担对象与改动边界 → 写可观察的验收」推进。本次要新写的代码、页面、内部登记与取号是工程落实，写进设计对象与改动边界；工程里没有现成页面或封装时，由本部件设计新写的部分并给出验收，工程方案是设计职责，业务方提供的是业务要求。查证后外部能力确实不足、依赖方缺席，或只能模拟而影响验收的，登记为承载缺口交人定，写明负责方、受影响的路径与解除条件；平台能力没有依据的照实写未证实。外部动作由别的部件执行时，本部件受它影响的状态、展示与恢复仍写进设计。恢复能力按材料与工程里真实存在的接口设计。
 - **统计设计**：统计是共同设计的一部分，在蓝图里写成。有统计需求时每个业务指标一项埋点明细（写法见下文「原生字段放不下的精确内容」），讲清指标定义、分子与分母、取数责任方、结果何时由谁获知、在哪个动作上取证，以及工程里已有覆盖还是新增；施工单位的 plan 只落实具体事件编号、登记文件与上报方法。
@@ -49,7 +49,7 @@ node doc/extensions/hooks/shared/knowledge-task.mjs --project-root <工程根> -
     knowledge_kind: constraints
     items:
       - {unit: RET-01, outcome: applied, rationale: 本需求在处理过程中保存临时记录，处理完成后清除, target_refs: [view:logical/node:record-store]}
-      - {unit: RET-02, outcome: not_applicable, rationale: 本需求不导出记录, target_refs: []}
+      - {units: [RET-02, RET-04], outcome: not_applicable, rationale: 本需求不导出也不跨端同步记录}
       - {unit: RET-03, outcome: pending, rationale: 保留期限等运营定, target_refs: [view:logical/node:record-store, decision:retention-period]}
   provenance: {source_kind: knowledge, source_ref: doc/extensions/knowledge/constraints/<规约文件>.md, observed_at: 2026-10-30T08:00:00Z, evidence_strength: inferred, extraction_method: read_and_apply}
 - fact_id: knowledge-export
@@ -62,7 +62,7 @@ node doc/extensions/hooks/shared/knowledge-task.mjs --project-root <工程根> -
   provenance: {source_kind: knowledge, source_ref: doc/extensions/knowledge/design-patterns/<模式文件>.md, observed_at: 2026-10-30T08:00:00Z, evidence_strength: inferred, extraction_method: read_and_apply}
 ```
 
-- 相关域的 `items` 覆盖这份规约的每条：`applied` 的 `target_refs` 列承担它的设计对象地址；`not_applicable` 的理由写本需求哪个条件不成立；`pending` 指向登记它的原生决定或缺口，已知受影响的设计对象一并列上——施工单位按设计对象接收它；只列决定或缺口表示承担对象还没定，每个施工单位都收到它去核。`rationale` 写本需求的具体事实，不抄规约原文。
+- 相关域的 `items` 覆盖这份规约的每条：`applied` 的 `target_refs` 列承担它的设计对象地址；`not_applicable` 的理由写本需求哪个条件不成立，同一域内多条因同一事实不适用时可用互斥组项 `{units: [...], outcome: not_applicable, rationale: ...}`（省略 `target_refs` 或写 `[]`，不可与单项 `unit` 混写、不可重复或遮蔽例外）；`pending` 指向登记它的原生决定或缺口，已知受影响的设计对象一并列上——施工单位按设计对象接收它；只列决定或缺口表示承担对象还没定，每个施工单位都收到它去核。`rationale` 写本需求的具体事实，不抄规约原文。
 - 用到的项目事实照常写成事实，`provenance.source_ref` 指事实文件（用到某一面或某一篇写 `#<面名>`）。
 
 **义务与角色写在承担它的设计对象上**：

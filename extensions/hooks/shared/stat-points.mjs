@@ -15,10 +15,43 @@ const METHOD_REF = /[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*/g;
 /** 统计点名比较用的形态：去空白与标记。 */
 export const pointKey = (name) => clean(name).replace(/\s+/g, '');
 
-/** 表头各职责列的独立下标：每词须命中独立列且列名本身就是该职责（可带合法附注，不含示例与其他职责词）。 */
+/** 提取列头主列名（去掉全角/半角括号、冒号、破折号及空格短横后的附注），保留附注而不以整格黑名单误拒。 */
+const mainHeaderLabel = (h) => clean(h).split(/\s*(?:[（(：:—]|\s+-)/)[0].trim();
+
+/** 表头各职责列的独立下标：按主列名精确匹配且每项职责唯一命中一列，单格混合两职责或重复同职责列返回 null。 */
 export function statTableCols(header, words) {
-  const at = words.map(w => (header ?? []).findIndex(h => { const t = clean(h); return new RegExp(`^${w}(?:$|\\s*[（(：:\\-/—])`).test(t) && !/示例/.test(t) && words.every(o => o === w || !t.includes(o)); }));
+  const labels = (header ?? []).map(mainHeaderLabel);
+  const at = words.map((w) => {
+    const hits = labels.reduce((acc, l, idx) => (l === w ? [...acc, idx] : acc), []);
+    return hits.length === 1 ? hits[0] : -1;
+  });
   return at.some(i => i < 0) || new Set(at).size !== words.length ? null : at;
+}
+
+/** 扫描 plan.md「埋点」直接所属段中存在结构歧义的表头（单格混合两职责或同职责重复列），报精确行号与实际表头。 */
+export function planStatTableIssues(planText) {
+  const doc = parseDocument(String(planText ?? ''));
+  const sec = planEventSection(doc);
+  if (!sec) return [];
+  const words = ['统计点', '责任方法'];
+  const issues = [];
+  for (const t of parseDocument(doc.lines.slice(sec.from, sec.to).join('\n')).tables) {
+    const lineNo = sec.from + t.line + 1;
+    const rawHeader = `| ${t.header.join(' | ')} |`;
+    const labels = t.header.map(mainHeaderLabel);
+    const mixed = labels.filter(l => words.every(w => l.includes(w)));
+    if (mixed.length) {
+      issues.push(`plan.md 第 ${lineNo} 行表头「${rawHeader}」将「统计点」与「责任方法」合并在同一列（结构歧义）——两者须拆成独立列，单格混合两职责不能算两列`);
+      continue;
+    }
+    for (const w of words) {
+      const hits = labels.filter(l => l === w);
+      if (hits.length > 1) {
+        issues.push(`plan.md 第 ${lineNo} 行表头「${rawHeader}」出现 ${hits.length} 个「${w}」列（结构歧义）——每项职责保留唯一一列`);
+      }
+    }
+  }
+  return issues;
 }
 
 /** 一段 Markdown 里表头含 `words` 全部独立职责列的表：逐行 `{ cells, at }`，`at` 是各列名所在的列。 */

@@ -18,17 +18,33 @@
       }
     },
     "constraintItem": {
-      "type": "object",
-      "required": ["unit", "outcome", "rationale", "target_refs"],
-      "properties": {
-        "unit": {"$ref": "#/$defs/text"},
-        "outcome": {"enum": ["applied", "not_applicable", "pending"]},
-        "rationale": {"$ref": "#/$defs/text"},
-        "target_refs": {"$ref": "#/$defs/refs"}
-      },
-      "allOf": [
-        {"if": {"properties": {"outcome": {"enum": ["applied", "pending"]}}},
-         "then": {"properties": {"target_refs": {"minItems": 1}}}}
+      "oneOf": [
+        {
+          "type": "object",
+          "not": {"required": ["units"]},
+          "required": ["unit", "outcome", "rationale", "target_refs"],
+          "properties": {
+            "unit": {"$ref": "#/$defs/text"},
+            "outcome": {"enum": ["applied", "not_applicable", "pending"]},
+            "rationale": {"$ref": "#/$defs/text"},
+            "target_refs": {"$ref": "#/$defs/refs"}
+          },
+          "allOf": [
+            {"if": {"properties": {"outcome": {"enum": ["applied", "pending"]}}},
+             "then": {"properties": {"target_refs": {"minItems": 1}}}}
+          ]
+        },
+        {
+          "type": "object",
+          "not": {"required": ["unit"]},
+          "required": ["units", "outcome", "rationale"],
+          "properties": {
+            "units": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/text"}},
+            "outcome": {"const": "not_applicable"},
+            "rationale": {"$ref": "#/$defs/text"},
+            "target_refs": {"type": "array", "maxItems": 0}
+          }
+        }
       ]
     },
     "constraintsFact": {

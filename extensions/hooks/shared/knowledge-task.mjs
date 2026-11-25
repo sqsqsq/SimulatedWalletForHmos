@@ -60,8 +60,44 @@ function loadKnowledge(root) {
 }
 
 /**
+ * 蓝图 `design` 动作需要展开全文的知识文件：当蓝图已有有效的 discovery 知识判断且 knowledge_context 在场时，
+ * 只展开新增/变更、未判规约域、适用/待定/选中、已被事实引用或存在判断缺口的知识正文，其余整域不适用或已拒绝项留在索引按需回查；
+ * 蓝图尚未建立、尚无判断或尚无有效输入身份时返回 null（全量展开供起步判断）。
+ * `discovery` 与首次 `questioning` 始终返回 null（按 Q3 选 A 保留全部适用原文）。
+ */
+function designRelatedFiles(root, bp, checked, knowledge) {
+  if (!bp || !checked || (!checked.rows.length && !checked.facts.length)) return null;
+  const declared = bp.blueprint?.discovery?.inputs?.knowledge_context;
+  if (!declared || !Array.isArray(declared.entries)) return null;
+  const active = activation(root, knowledge);
+  const was = new Map(declared.entries.map(e => [e.source_ref, e.sha256]));
+  const files = new Set();
+  for (const [ref, s] of active) {
+    if (!was.has(ref) || was.get(ref) !== s.sha256) files.add(s.file);
+  }
+  const judgedConstraintFiles = new Set(checked.rows.filter(r => r.kind === 'constraints').map(r => r.file));
+  for (const c of knowledge.constraints) {
+    if (!judgedConstraintFiles.has(c.file)) files.add(c.file);
+  }
+  for (const r of checked.rows) {
+    if (['applied', 'pending', 'selected'].includes(r.outcome)) files.add(r.file);
+  }
+  for (const f of checked.facts) {
+    const src = knowledgeSource(active, f.provenance?.source_ref);
+    if (src) files.add(src.file);
+  }
+  if (checked.problems.length) {
+    const joined = checked.problems.join('\n');
+    for (const [ref, s] of active) {
+      if (joined.includes(s.file) || joined.includes(ref)) files.add(s.file);
+    }
+  }
+  return files;
+}
+
+/**
  * Feature 本动作直接送正文的知识文件（扩展根相对路径）：本单位承担或判过的规约与模式、本单位设计引用的事实、
- * 需求级的评审动作与归属未定的判断，以及本阶段契约与验收实际引用的知识。蓝图动作返回 null（全部送）。
+ * 需求级的评审动作与归属未定的判断，以及本阶段契约与验收实际引用的知识。蓝图动作由 `designRelatedFiles` 按动作定。
  * 平铺维护 Feature 没有承接范围，送它判过的全部；它还一条判断都没有时由作者起步判断，同样返回 null。
  */
 function relatedFiles(root, action, judged, spec, kind) {
@@ -127,7 +163,9 @@ function knowledgeBlock(root, action, knowledge, related, starter = false) {
   }
   rows.push('');
   if (related !== null && !sent.length && !gaps.length) {
-    rows.push('本施工单位没有承接或判过的知识，契约与验收也没有引用知识：正文不送；按索引核有没有设计漏判的，漏判交设计负责方。', '');
+    rows.push(DESIGN_SIDE.has(action)
+      ? '已有有效的 discovery 知识判断且当前无新增、变更、争议或待落实项：正文按索引位置按需回查。'
+      : '本施工单位没有承接或判过的知识，契约与验收也没有引用知识：正文不送；按索引核有没有设计漏判的，漏判交设计负责方。', '');
   }
   const documents = [];
   for (const k of sent) {
@@ -154,11 +192,30 @@ function judgedOf(checked) {
   return [...checked.rows.map(judgedLine), ...checked.facts.map(factLine)];
 }
 
+/** 将同一知识文件、同理由的不适用/拒绝条目合并为一行，避免逐条重复铺陈无关排除项。 */
+function compactBasisLines(basis) {
+  const groups = [];
+  const index = new Map();
+  for (const d of basis) {
+    const key = `${d.ref}\0${d.fact_id}\0${d.outcome}\0${d.rationale ?? ''}`;
+    if (!d.domain && d.unit && index.has(key)) {
+      index.get(key).units.push(d.unit);
+    } else {
+      const entry = { row: d, units: d.unit ? [d.unit] : [] };
+      groups.push(entry);
+      if (!d.domain && d.unit) index.set(key, entry);
+    }
+  }
+  return groups.map(({ row: d, units }) => (units.length > 1
+    ? `- ${units.map(u => `\`${d.ref}#${u}\``).join('、')}（事实 ${d.fact_id}） → ${d.outcome}：${d.rationale ?? ''}`
+    : judgedLine(d)));
+}
+
 /**
- * spec / plan 第 2 块：本单位相关而不产生义务的判断、需求级公共依据与本单位引用的事实，宿主扩展章写不适用、不选与复用时
- * 引用其理由。作用域未确定的判断与指不到的引用另进缺口，交设计负责方，不当成已成立的全局要求。
+ * 施工单位第 2 块：spec / plan 给出本单位相关判断、同因合并后的需求级公共依据与本单位引用的事实；
+ * coding / review / ut / testing 只保留本单位义务与待核缺口，退出无关排除清单重复铺陈。
  */
-function unitLines(judged) {
+function unitLines(judged, action) {
   const context = unitContext(judged);
   const { applied, selected } = unitDuties(judged);
   const own = context.mine.filter(d => !applied.includes(d) && !selected.includes(d));
@@ -166,11 +223,15 @@ function unitLines(judged) {
   const basis = context.common.filter(d => ['not_applicable', 'rejected'].includes(d.outcome));
   const other = context.common.filter(d => d.outcome !== 'pending' && !reviews.includes(d) && !basis.includes(d));
   const unowned = context.common.filter(d => d.outcome === 'pending');
+  const designPhase = ['spec', 'plan'].includes(action);
   const lines = [
-    ...(own.length ? ['本单位相关、不产生义务的判断（宿主扩展章引用其理由，不重判）：', ...own.map(judgedLine)] : []),
+    ...(designPhase && own.length ? ['本单位相关、不产生义务的判断（宿主扩展章引用其理由，不重判）：', ...own.map(judgedLine)] : []),
     ...(reviews.length ? ['需求级评审动作（适用，指向原生决定或需求级对象，由评审承接执行；不产生代码 must 或验收条目，'
       + '本阶段核它要的评审材料与执行是否齐备）：', ...reviews.map(judgedLine)] : []),
-    ...(basis.length ? ['需求级公共依据（不适用或拒绝，没有落点，不产生本单位义务）：', ...basis.map(judgedLine)] : []),
+    ...(designPhase && basis.length
+      ? ['需求级公共依据（不适用或拒绝，没有落点，不产生本单位义务）：', ...compactBasisLines(basis)]
+      : (!designPhase && basis.length
+        ? [`其余 ${basis.length} 项已判不适用或拒绝的知识留在蓝图适用性事实，本阶段沿用已定决定、不重判。`] : [])),
     ...(other.length ? ['需求级判断（没有落点，按各行的判定读）：', ...other.map(judgedLine)] : []),
     ...(unowned.length ? ['归属待核的公共知识缺口（待定，只登记了原生决定或缺口，还没定由哪个设计对象承担）：核它是否落在本单位；'
       + '落在本单位的按决定此刻的效力处理，未决的照原生决定或缺口的负责方等待或回报，不当作已生效的义务，也不当作豁免：',
@@ -234,7 +295,7 @@ function sourceIndex(root, id, bp) {
     ...answerRows(root, id)];
 }
 
-function blueprintTask(root, id, action) {
+function blueprintTask(root, id, action, knowledge) {
   let bp = readBlueprint(root, id, 'draft');
   const gaps = [];
   if (bp.status === 'missing') {
@@ -272,6 +333,7 @@ function blueprintTask(root, id, action) {
       + '责任方、验证去向，以及未决项与处置建议。',
     '首次质询逐项对照有效需求、人答、最终设计与验收，以及工程里现有的页面与入口证据核源；设计拟删除或收窄材料明示的行为时，'
       + '先引原句或裁决，写出影响与兼顾做法，依据不足的保持未决。',
+    '结果未知的恢复须核真实外部端口说明：无查询能力时不强加查询，查询、回调与原请求幂等重送只在合同成立时使用，不把示例流程号或模拟显示串登记成项目事实。',
     '共同验收逐条核：验收是不是可观察、是否能判断，覆盖这项义务的全部实际承担者没有；共享验收写明它覆盖谁，'
       + '不能只凭全蓝图任意处出现同一 knowledge_ref 就判对象已落实；缺验收、不可观察或来源对不上的，写进对应的原生质询项与责任方，不改写蓝图。',
     '同一读者复核修订时，按复核消息给的当前正文、原问题与受影响的依据回查；未受影响项确认原结论与证据仍适用，结果照样逐项覆盖上面的范围。');
@@ -299,6 +361,7 @@ function blueprintTask(root, id, action) {
     duties,
     dispatch,
     gaps,
+    related: action === 'design' ? designRelatedFiles(root, bp, checked, knowledge) : null,
     page: `hooks/blueprint/${action === 'questioning' ? 'reviewer' : 'author'}.md`,
   };
 }
@@ -414,9 +477,10 @@ function featureTask(root, feature, action, supplied, knowledge) {
     stop(`Feature ${feature}（${action} 阶段）`, f.issues.map(i => `${i.code} ${i.message}`).join('；'),
       f.status === 'stale' ? '设计负责方重新准备该施工单位（蓝图已变）'
         : f.status === 'missing' ? '调用方按原生身份给出存在的 Feature'
-          : f.issues.some(i => i.code === 'requirement_text_needed') ? '调用方用 --requirement-file 或 --requirement 给出与范围候选同一份的原始需求正文后重取'
-            : f.issues.some(i => i.code === 'requirement_stale') ? '需求来源在范围冻结后变了：范围负责方按原生修订路径处理，不换一份需求顶上'
-              : '产出这份输入的阶段或设计负责方按原生报错修正');
+          : f.issues.some(i => i.code === 'use_cases_invalid') ? '原生权威要求 use-cases.yaml 但投影缺失或无效：交设计负责方补齐并重新准备，不解释为“已复用”'
+            : f.issues.some(i => i.code === 'requirement_text_needed') ? '调用方用 --requirement-file 或 --requirement 给出与范围候选同一份的原始需求正文后重取'
+              : f.issues.some(i => i.code === 'requirement_stale') ? '需求来源在范围冻结后变了：范围负责方按原生修订路径处理，不换一份需求顶上'
+                : '产出这份输入的阶段或设计负责方按原生报错修正');
   }
   const gaps = [];
   const kind = f.identity.kind === 'cu'
@@ -426,10 +490,10 @@ function featureTask(root, feature, action, supplied, knowledge) {
   if (f.identity.kind === 'cu') {
     // 本命令只读一次蓝图、算一次判断：设计对象、承接义务、埋点与关联 Story 都用这一份
     judged = featureKnowledge(root, feature, f.spec?.contracts ?? null);
-    // spec / plan 在第 3 块逐条拿到本单位承接的判断；这里给本单位作用域里其余的判断、需求级公共依据与本单位引用的事实，
-    // 其余阶段同样只列本单位的，别的施工单位的义务不作为本阶段任务
+    // spec / plan 在第 3 块逐条拿到本单位承接的判断；这里给本单位作用域里其余的判断、同因合并后的公共依据与本单位引用的事实，
+    // 其余阶段只留本单位义务与待核缺口，不再铺陈无关排除清单
     if (judged.blueprint) {
-      const own = unitLines(judged);
+      const own = unitLines(judged, action);
       facts = own.lines;
       gaps.push(...own.gaps);
       if (!['spec', 'plan'].includes(action)) {
@@ -460,7 +524,8 @@ function featureTask(root, feature, action, supplied, knowledge) {
   // 本单位相关知识按本阶段实际要落实的契约与验收取：产物写出了取产物，还没写出取原生选中的输入
   let stageView = f.spec;
   if (f.scope === 'not_frozen') {
-    duties.push('本阶段的原生输入还没有确定（执行范围未冻结），本任务只是预览，不作为动笔依据。');
+    duties.push('沿本次请求获准的终点工作。只到 Plan 时，把组件缺陷及验法写入方案；原生输入缺失或已变，先回负责方取得同一需求的有效输入。没有合法接续身份，保住原件并停在写入前。',
+      '本阶段的原生输入还没有确定（执行范围未冻结），本任务只是预览，不作为动笔依据。');
     gaps.push(`执行范围未冻结：已获准开始本阶段的主模型按 story-knowledge Skill 的「范围未冻结时」${stagePreparation(f, feature, action) ?? ''}先准备范围`
       + '（没有候选先走原生 prepare-scope，再由原生 ensureFeatureExecutionScopeFrozen 冻结），返回 frozen 或 reused 后重取本任务再动笔；原生失败按它的报错交回责任方。');
   } else {
@@ -515,17 +580,17 @@ export function knowledgeTask(root, args) {
 export function knowledgeTaskData(root, { action, audience, blueprint, feature, requirement, requirementFile }) {
   // 激活知识先读：读不出按知识维护者的缺口报，后面核判断时不再撞同一处；本动作送哪些正文按同一次取得的判断定
   const knowledge = loadKnowledge(root);
-  const task = blueprint ? blueprintTask(root, blueprint, action)
+  const task = blueprint ? blueprintTask(root, blueprint, action, knowledge)
     : featureTask(root, feature, action, { requirement, requirementFile }, knowledge);
-  const { rows, gaps: routing, documents } = knowledgeBlock(root, action, knowledge, blueprint ? null : task.related, task.starter === true);
+  const { rows, gaps: routing, documents } = knowledgeBlock(root, action, knowledge, task.related ?? null, task.starter === true);
   task.gaps.push(...routing);
   const problems = selfCheck(root, knowledge);
   const page = relDisplay(root, path.join(extensionRoot(root), ...task.page.split('/')));
   const done = audience !== 'author' ? null : blueprint
     ? [`按 \`${page}\` 做本动作；知识方面：按第 4 块原文判与本需求相关的每份知识：相关的规约域逐条写适用性，`
       + '适用的把要求落到承担它的设计对象上，不适用写明本需求里使它不适用的条件；出现候选信号的模式写选与不选；已成立的判断直接承接，不重判。']
-    : [`按 \`${page}\` 做本动作；知识方面：履行第 2、3 块已成立的判断与本单位承接的义务，先读第 4 块送来的原文再动笔，用它理解方法与语义，`
-      + '不重判适用性；要别的知识或另一篇时按第 4 块索引的位置读原文。本单位的设计对象碰到了设计里没判过的知识，交设计负责方补判，不在本阶段自定。']
+    : [`按 \`${page}\` 做本动作；先取本单位已定决定、承担对象和共同验收。执行已有决定时沿用；只有条款解释、选型、例外或输入换版影响本动作时，回查对应原文。`
+      + '本单位的设计对象碰到了设计里没判过的知识，交设计负责方补判，不在本阶段自定。'];
   const review = [`对照第 4 块原文核被审对象：相关知识有没有被判断、判断有没有依据、落点是不是真的承担这件事；`
     + '索引里没送正文的知识也可能被漏判，有疑点按位置读原文，漏判交设计负责方。'
     + `${blueprint ? `审查要求见 \`${page}\`。` : '判据按本阶段审查清单。'}`];

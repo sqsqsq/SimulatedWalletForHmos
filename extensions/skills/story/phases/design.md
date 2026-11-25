@@ -174,6 +174,8 @@
 
 只在授权覆盖施工单位设计、Spec 或 Plan 时做；只要 Story 的不建施工单位。命令都在 `framework/harness` 下执行，`<根>` 是消费工程根。
 
+**接续原则**：沿本次请求获准的终点工作。只到 Plan 时，把组件缺陷及验法写入方案；原生输入缺失或已变，先回负责方取得同一需求的有效输入。没有合法接续身份，保住原件并停在写入前。
+
 | 已有授权 | 做哪几步 | 第 2 步的 `--requested-phases` |
 |---|---|---|
 | 完整设计交接 | 第 1、4 步，不声明阶段请求 | — |
@@ -193,23 +195,23 @@
    停在选择施工单位之前，不启动 Goal Mode。
 2. **一次声明本次请求**：对 `ready_ids` 里获准的每个施工单位跑一次
    `npx ts-node scripts/goal-mode-entry.ts --project-root <根> --framework-root <根>/framework --feature <FID> --prepare-scope --completion-target request --requested-results '<本次获准的设计结果>' --requested-phases <按上表> --requirement-file <需求文件>`。
-   `<需求文件>` 是蓝图需求条目里 `kind` 为 requirement 的来源文件（去掉 `#片段`），之后各阶段都用这一份。
+   `--completion-target` 固定 `request`（不写 `feature`）；`<需求文件>` 是蓝图需求条目里 `kind` 为 requirement 的同一份来源文件（去掉 `#片段`），之后各阶段都用它，不另造临时需求文件顶替未绑定原文。
    请求里要了可读的 Plan 或 Spec 正文时，另加一项 `--requested-results plan.md`（Spec 是 `spec.md`）：原生只在某一项恰好是这个文件名时
    把正文列为本阶段要交的产物；只要原生阶段结果时不加。
    要执行哪些阶段、哪些由已有依据复用，照它返回的 `phase_chain` 与 `obligations`：不先单做 Spec 再换范围，不补跑复用的阶段，也不删链上的阶段。
    原生要求的阶段超出本次授权时，停下照实说明，不自行扩大请求。
 3. **按 `phase_chain` 逐阶段做完**：每个阶段 P 依次
-   - `npx ts-node scripts/prepare-blueprint-design.ts --feature <FID> --phase P --project-root <根> --framework-root <根>/framework`：Spec 只准备 `acceptance.yaml`，Plan 只准备 `contracts.yaml` 与 `use-cases.yaml`；
-   - 按原生 Spec / Plan Skill 与 `hooks/<阶段>/author.md` 完成本阶段产物（动笔前取知识任务）。准备结果标为 absent 的由本阶段写；标为 invalid 或与共同设计冲突的交回设计负责方（第 5 步），本阶段不改共同设计；
+   - `npx ts-node scripts/prepare-blueprint-design.ts --feature <FID> --phase P --project-root <根> --framework-root <根>/framework`（仅查看预览不冻结范围）：Spec 只准备 `acceptance.yaml`，Plan 只准备 `contracts.yaml` 与 `use-cases.yaml`；原生权威要求 `use-cases.yaml` 或 `contracts.yaml` 而投影缺失时不得解释成“已复用”或外称 Framework 缺陷，先回设计负责方补齐再准备；
+   - 按原生 Spec / Plan Skill 与 `hooks/<阶段>/author.md` 完成本阶段产物（动笔前取知识任务）。准备结果标为 absent 的由本阶段写；标为 invalid 或与共同设计冲突的交回设计负责方（第 5 步），本阶段不改共同设计；**只到 Plan 时不得修改业务源码**，组件缺陷与验证方案写入 Plan；
    - `npx ts-node harness-runner.ts --project-root <根> --phase P --feature <FID>`：首次正式运行冻结执行范围，之后复用；
      审查与收口照它末尾的 `NEXT:`，按 [`reference/phase-closure.md`](../reference/phase-closure.md)「闭环」那张 `next_action` 表做。
    本阶段收口了才进下一阶段；NEXT 要求回到前一阶段时先回去做。
 4. **最后交接**：授权范围内的施工单位都做完后再跑一次 `story-build check --deliver`，通过才交回结果；报依据变了按第 5 步处理。
-5. **共同设计在这一段变了**：先分清受影响施工单位的冻结状态——**未冻结**时直接由设计负责方修订并走原生准入、`change-unit-revise` 与 `--readiness`，再按第 2—4 步普通接续；
+5. **共同设计在这一段变了**（失败处置顺序）：先取 `feature.yaml`、原需求、scope、CU 投影与当前报告对齐同一逻辑身份，再分清受影响施工单位的冻结状态——**未冻结**且已授权时由设计负责方修订并走原生准入、`change-unit-revise`、`--readiness` 与本阶段原生准备，再按第 2—4 步普通接续；
    **已冻结且旧来源仍可验证**且原请求仍有 Plan 义务时，**先在改权威来源前**用 `goal-mode-entry --feature <FID> --prepare-run --adapter <已核可用宿主> --run-mode attended --requirement-file <需求文件>` 转交并记下 `source run ID`（已在合法 attended 请求中则沿用原身份），再由设计负责方修订、交原质询者复核、重新准入并更新同一施工单位；
    随后保全旧阶段输入、按新权威重新准备，原授权仍有真实未完项时以同命令加 `--supersede <source run ID>` 取得 `continuation=successor`（核原文、`requested_results`、必需义务与终点相同），沿其 `--next` 完成契约/回执并消费一次 `scope_revised`，仅止原请求（中断后按原后继 ID 用 `--next` 接回，不重发请求、不写 Feature 完成）；
-   **仅上述成功修订后**，同步 Story 里受影响的章节，`story-build review --action prepare` 交原读者按改动影响复核（只是确定性准备、无业务变化时不另派审查），`story_flow.py story` 重新登记并回到第 4 步；未获施工扩权的文档更新只报告施工影响。
-   **已失效且无可用转交**（改权威后才事后转交被旧 binding 拒绝）、宿主不支持 attended 或原生返回空链时，保留失败与原产物、如实报告缺口并**结束此次接续**，不进入上述同步或第 4 步，不造缺口开 run、不改授权、不代换宿主或转 headless。
+   **仅上述成功修订后**（含人答改变原承诺后的有效修订），同步 Story 里受影响的章节，`story-build review --action prepare` 交原读者按改动影响复核（已定事实未变的纯结构读或确定性准备、无业务变化时不另派审查），`story_flow.py story` 重新登记并回到第 4 步；未获施工扩权的文档更新只报告施工影响。
+   **已失效且无可用转交**（改权威后才事后转交被旧 binding 拒绝）、宿主不支持 attended 或原生返回空链时，保留失败与原产物、如实报告缺口并**结束此次接续**，不进入上述同步或第 4 步，不造缺口开 run、不改授权、不手写 `PASS` / 批量改 provenance / 复制旧材料门、不代换宿主或转 headless。若正常输入仍在原生公开入口重现同一错误，交出最小同对象输入、原生错误与正式所有者，不手改内部 scope、feature 或审查状态。
 
 原生报候选 `differs`、要求修订权威或 Goal 权威时，保留原失败与已有产物，把具体请求与报错交设计负责方定合法路径：不加 `--overwrite`、不手改冻结记录，不为绕过报错换运行方式。
 原生因当前真实 blocker 拒绝施工时，按它点名的问题回设计负责方；问题解决后形成设计或决定，原缺口留作历史，缺口状态只取原生的 `open_decision`、`blocker`、`not_applicable`。

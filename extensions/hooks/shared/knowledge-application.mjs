@@ -162,6 +162,16 @@ function checkFacts(projectRoot, native, active, { facts: list, context, real, l
     }
     const seen = new Set();
     for (const it of f.value.items) {
+      if (Array.isArray(it.units)) {
+        for (const u of it.units) {
+          if (!source.units.includes(u)) { say(id, `条目 ${u} 不在 ${source.file} 里`); continue; }
+          if (seen.has(u)) { say(id, `条目 ${u} 写了两次——一条一判`); continue; }
+          seen.add(u);
+          rows.push({ kind: 'constraints', file: source.file, ref, unit: u, source_ref: `${ref}#${u}`, outcome: 'not_applicable',
+            rationale: it.rationale, target_refs: [], fact_id: id, reviewAction: source.reviewActions.has(u) });
+        }
+        continue;
+      }
       if (!source.units.includes(it.unit)) { say(id, `条目 ${it.unit} 不在 ${source.file} 里`); continue; }
       if (seen.has(it.unit)) { say(id, `条目 ${it.unit} 写了两次——一条一判`); continue; }
       seen.add(it.unit);

@@ -1513,5 +1513,82 @@ class ANativeSourceKeepsItsFragment(NativeCase):
         self.assertIn("NO-SUCH-PART", proc.stderr)
 
 
+class S06AndS08ScopedKnowledgeAndContinuation(unittest.TestCase):
+    """S06/S08：design 承接有效 discovery 判断仅展开新增/变化/争议/适用原文，首次 questioning 保全量（Q3 选 A）；
+    阶段作者收到 S06/S08 关键句，非规划阶段不重复铺陈无关排除清单。"""
+
+    FEATURE = "REQ-DEMO"
+    FIXTURE = REPO_ROOT / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good"
+
+    def setUp(self) -> None:
+        from designed_fixture import designed_copy  # noqa: PLC0415
+        from ext_workspace import DEV_EXT  # noqa: PLC0415
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name) / "work"
+        designed_copy(self.FIXTURE, self.FEATURE, self.root)
+        self.ext = DEV_EXT
+
+    def run_task(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["node", str(self.ext / "hooks" / "shared" / "knowledge-task.mjs"), "--project-root", str(self.root), *args],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
+        )
+
+    def test_design_narrows_to_needed_and_changed_while_questioning_keeps_full(self) -> None:
+        # 夹具蓝图已登记 knowledge_context 与 sample-domain.md 的判断（SMP-01 applied, SMP-02 not_applicable），
+        # 未涉及 sample-pattern.md（未选中）与未引用 facts（已引用 sample-facts? 仅 sample-domain）
+        disc = self.run_task("--blueprint", self.FEATURE, "--action", "discovery", "--audience", "author")
+        des = self.run_task("--blueprint", self.FEATURE, "--action", "design", "--audience", "author")
+        ques = self.run_task("--blueprint", self.FEATURE, "--action", "questioning", "--audience", "reviewer")
+        for p in (disc, des, ques):
+            self.assertEqual(0, p.returncode, p.stderr)
+
+        # discovery 与首次 questioning（Q3 选 A）都全量展开 3 份知识正文
+        self.assertEqual(3, disc.stdout.count("- 位置：`doc/extensions/knowledge/"))
+        self.assertEqual(3, ques.stdout.count("- 位置：`doc/extensions/knowledge/"))
+        # questioning 任务带入 S07 真实恢复合同核验句
+        self.assertIn("无查询能力时不强加查询", ques.stdout)
+
+        # design 承接有效 discovery 判断：索引仍在，但只展开适用/引用的 sample-domain.md（未选中的 sample-pattern.md 与未引用的 sample-facts.md 不重复展正文）
+        self.assertIn("`doc/extensions/knowledge/design-patterns/sample-pattern.md`", des.stdout)
+        self.assertIn("- 位置：`doc/extensions/knowledge/constraints/sample-domain.md`", des.stdout)
+        self.assertNotIn("- 位置：`doc/extensions/knowledge/design-patterns/sample-pattern.md`", des.stdout)
+        self.assertNotIn("- 位置：`doc/extensions/knowledge/facts/sample-facts.md`", des.stdout)
+
+        # 知识原文发生变更后，design 自动重新展开变更那份知识的正文
+        facts_file = self.root / "doc/extensions/knowledge/facts/sample-facts.md"
+        facts_file.write_text(facts_file.read_text(encoding="utf-8") + "\n补充变更事实。\n", encoding="utf-8")
+        des_changed = self.run_task("--blueprint", self.FEATURE, "--action", "design", "--audience", "author")
+        self.assertEqual(0, des_changed.returncode, des_changed.stderr)
+        self.assertIn("- 位置：`doc/extensions/knowledge/facts/sample-facts.md`", des_changed.stdout)
+
+    def test_feature_author_receives_s06_and_s08_key_sentences(self) -> None:
+        ref = json.loads(subprocess.run(
+            ["node", "--input-type=module", "-e",
+             "const fa = await import(process.argv[1]); process.stdout.write(JSON.stringify("
+             "fa.readBlueprint(process.argv[2], process.argv[3], 'draft').blueprint_ref));",
+             (self.ext / "hooks/shared/framework-access.mjs").resolve().as_uri(), str(self.root), self.FEATURE],
+            capture_output=True, text=True, encoding="utf-8", timeout=120).stdout)
+        _, unit = place_unit(self.root, self.FEATURE, ref)
+        # 未冻结预览：携带 S08 接续原则关键句与 S06 阶段作者关键句
+        plan_task = self.run_task("--feature", unit, "--action", "plan", "--audience", "author")
+        self.assertEqual(0, plan_task.returncode, plan_task.stderr)
+        self.assertIn(
+            "沿本次请求获准的终点工作。只到 Plan 时，把组件缺陷及验法写入方案；"
+            "原生输入缺失或已变，先回负责方取得同一需求的有效输入。没有合法接续身份，保住原件并停在写入前。",
+            plan_task.stdout,
+        )
+        self.assertIn(
+            "先取本单位已定决定、承担对象和共同验收。执行已有决定时沿用；"
+            "只有条款解释、选型、例外或输入换版影响本动作时，回查对应原文。",
+            plan_task.stdout,
+        )
+        # 非规划阶段（coding）：不重复铺陈无关的“需求级公共依据”排除清单
+        coding_task = self.run_task("--feature", unit, "--action", "coding", "--audience", "author")
+        self.assertEqual(0, coding_task.returncode, coding_task.stderr)
+        self.assertNotIn("需求级公共依据（不适用或拒绝", coding_task.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

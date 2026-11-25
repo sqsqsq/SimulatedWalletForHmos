@@ -25,7 +25,7 @@ import { hostChapterProblems } from '../shared/host-chapter.mjs';
 import { obligationsFromContracts, misplacedMust, patternRolesFromContracts, unidentifiedCarriers, verifyProblem }
   from '../shared/obligations.mjs';
 import { readTextOrNull } from '../shared/paths.mjs';
-import { designStatPoints, planStatRows, pointKey } from '../shared/stat-points.mjs';
+import { designStatPoints, planStatRows, planStatTableIssues, pointKey } from '../shared/stat-points.mjs';
 import { acceptanceIds, entityId, phaseArtifacts, resourceEntries } from '../shared/contracts.mjs';
 import { reportProblems } from '../shared/verifier-report.mjs';
 
@@ -73,11 +73,13 @@ function statProblems(inputs, design, contracts, group) {
     group.skipped.push({ what: 'plan.md 逐点表一致性', why: '这一次没有 plan.md；统计点由契约方法说明与验收承载，交独立审查逐点核' });
     return;
   }
+  const tableIssues = planStatTableIssues(planText);
+  if (tableIssues.length) group.problems.push(...tableIssues);
   const rows = planStatRows(planText);
   const points = want.details.flatMap(d => d.rows.map(r => r[0]));
   const have = new Set(rows.map(r => pointKey(r.point)));
   const missing = [...new Set(points.filter(p => !have.has(pointKey(p))))];
-  if (missing.length) {
+  if (missing.length && (!tableIssues.length || rows.length)) {
     group.problems.push(`plan.md：蓝图埋点明细的这些统计点在逐点表里没有行：${missing.join('、')}——逐点表是表头含「统计点」与「责任方法」的表，`
       + '统计点名去掉空白与标记后按名比对，每个统计点列出适用结果及责任方法，允许多行');
   }

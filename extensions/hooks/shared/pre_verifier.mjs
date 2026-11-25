@@ -27,7 +27,7 @@ import { knowledgeTask } from './knowledge-task.mjs';
 import { obligationsFromContracts } from './obligations.mjs';
 import { extensionRoot, featureRoot, readTextOrNull, relDisplay } from './paths.mjs';
 import { ensureMermaid } from '../../skills/story/scripts/core/story/figure-view.mjs';
-import { designStatPoints, planStatRows, pointKey, statDelivery } from './stat-points.mjs';
+import { designStatPoints, planStatRows, planStatTableIssues, pointKey, statDelivery } from './stat-points.mjs';
 import { COVERED_CHECKS, DETAIL_KEYS, inputRows, reviewInputs } from './review-inputs.mjs';
 import { overlayChecks, summaryStructure } from './verifier-report.mjs';
 
@@ -120,11 +120,15 @@ function statPointTable(projectRoot, feature, inputs) {
     return [...statDelivery(judged, inputs.contracts, inputs.acceptance), '',
       '这一次没有 plan.md：逐点核每个统计点在契约方法说明与验收里有没有写出适用结果与验证方式，缺哪个点名哪个。'];
   }
+  const tableIssues = planStatTableIssues(planText);
   const plan = planStatRows(planText);
   const byKey = new Map();
   for (const r of plan) byKey.set(pointKey(r.point), [...(byKey.get(pointKey(r.point)) ?? []), r]);
   const consumed = new Set();
-  const rows = ['| 埋点明细 | 设计的这一行 | plan 的结果行 |', '|---|---|---|'];
+  const rows = [
+    ...(tableIssues.length ? [...tableIssues.map(i => `- **表头结构歧义**：${i}`), ''] : []),
+    '| 埋点明细 | 设计的这一行 | plan 的结果行 |', '|---|---|---|',
+  ];
   for (const d of design.details) {
     for (const r of d.rows) {
       const key = pointKey(r[0]);

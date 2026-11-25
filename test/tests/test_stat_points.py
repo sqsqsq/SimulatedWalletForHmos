@@ -178,6 +178,45 @@ class PlanRowsAreFoundByTheirColumns(unittest.TestCase):
         )
         self.assertEqual([["当前提交", ["Gateway.save"]]], [[r["point"], r["methods"]] for r in run("m.planStatRows(plan)", plan=both)])
 
+    def test_s07_annotated_method_headers_with_role_word_or_example_and_ambiguity_diagnostics(self) -> None:
+        """S07：按主列名识别，附注含另一职责词或「示例」不再误拒；单格混合两职责与重复职责列报行号和实际表头。"""
+        for header in (
+            "责任方法（该统计点的归属）",
+            "责任方法（示例：InvoiceService.submit）",
+            "责任方法：接口.方法",
+            "责任方法 - 该统计点落点",
+        ):
+            with self.subTest(header=header):
+                plan = (
+                    "# 计划\n\n## 宿主扩展（可选）\n\n### 埋点\n\n"
+                    f"| {header} | 结果 | 统计点（含示例说明） |\n|---|---|---|\n"
+                    "| Gateway.save | 成功 | 当前提交 |\n"
+                )
+                rows = run("m.planStatRows(plan)", plan=plan)
+                self.assertEqual([["当前提交", ["Gateway.save"]]], [[r["point"], r["methods"]] for r in rows])
+                self.assertEqual([], run("m.planStatTableIssues(plan)", plan=plan))
+
+        # 单格混合两职责：不认作有效逐点表，并给出精确行号与实际表头
+        mixed = "# 计划\n\n## 宿主扩展（可选）\n\n### 埋点\n\n| 统计点/责任方法 | 结果 |\n|---|---|\n| Gateway.save | 成功 |\n"
+        self.assertEqual([], run("m.planStatRows(plan)", plan=mixed))
+        issues = run("m.planStatTableIssues(plan)", plan=mixed)
+        self.assertEqual(1, len(issues), issues)
+        self.assertIn("第 7 行", issues[0])
+        self.assertIn("| 统计点/责任方法 | 结果 |", issues[0])
+        self.assertIn("结构歧义", issues[0])
+
+        # 重复同职责列：不静默猜第一列，报结构歧义
+        dup_col = (
+            "# 计划\n\n## 宿主扩展（可选）\n\n### 埋点\n\n"
+            "| 统计点 | 责任方法（主） | 责任方法（备） |\n|---|---|---|\n"
+            "| 当前提交 | Gateway.save | Gateway.backup |\n"
+        )
+        self.assertEqual([], run("m.planStatRows(plan)", plan=dup_col))
+        dup_issues = run("m.planStatTableIssues(plan)", plan=dup_col)
+        self.assertEqual(1, len(dup_issues), dup_issues)
+        self.assertIn("第 7 行", dup_issues[0])
+        self.assertIn("责任方法", dup_issues[0])
+
 
 
 #: 一条带附加条件、多种结果的合法埋点明细
