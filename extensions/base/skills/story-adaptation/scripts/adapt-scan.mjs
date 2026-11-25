@@ -15,7 +15,7 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync,
+  copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -24,7 +24,7 @@ import { KNOWLEDGE_SKILL_ENTRY } from '../../../hooks/shared/knowledge.mjs';
 import { shellArg } from '../../story/scripts/core/story/drafts.mjs';
 import { candidateProblems, entryCheck, entryMaterialize, entryPlan } from './entries.mjs';
 
-const MODES = ['--apply', '--check', '--mark-adapted', '--status', '--cleanup-examples'];
+const MODES = ['--prepare-init', '--apply', '--check', '--mark-adapted', '--status', '--cleanup-examples'];
 
 const ADAPTERS = 'adapters';
 const LEGACY_ADAPTERS = 'skills/story/scripts/adapters';
@@ -67,16 +67,13 @@ function config(root) {
 const extDir = root => config(root)?.paths?.extension_dir || 'doc/extensions';
 const featuresDir = root => config(root)?.paths?.features_dir || 'doc/features';
 
-function walk(dir, base = dir, skip = new Set()) {
+function walk(dir, base = dir, skip = new Set(), all = false) {
   if (!existsSync(dir)) return [];
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-    const f = join(dir, e.name);
-    if (e.isDirectory()) {
-      if (e.name === '__pycache__' || e.name.startsWith('.')) return [];
-      if (skip.has(rel(base, f))) return [];
-      return walk(f, base, skip);
-    }
-    return [rel(base, f)];
+    const f = join(dir, e.name), r = rel(base, f);
+    if (skip.has(r)) return [];
+    if (e.isDirectory()) return !all && (e.name === '__pycache__' || e.name.startsWith('.')) ? [] : walk(f, base, skip, all);
+    return [r];
   });
 }
 
@@ -85,7 +82,9 @@ function yamlStr(value) {
   return /^[A-Za-z0-9_./-]+$/.test(s) && !['true', 'false', 'null'].includes(s) ? s : JSON.stringify(s);
 }
 
-/** 合成运行时唯一根 manifest：机制声明取自 `base/package-manifest.yaml`（不含 provides.skills），name/description/业务 knowledge 归目标。 */
+const isStoryReg = p => /^(?:base\/)?(?:hooks|rules|skills)\//.test(String(p ?? '').trim());
+
+/** 合成运行时唯一根 manifest：本包机制登记取自 `base/package-manifest.yaml`（不含 provides.skills），name/description/业务 knowledge 及业务自定义登记归目标。 */
 function composeManifest(pkgText, tgtText, identity) {
   const pkg = parseYaml(pkgText) ?? {};
   const tgt = tgtText ? (parseYaml(tgtText) ?? {}) : {};
@@ -97,7 +96,29 @@ function composeManifest(pkgText, tgtText, identity) {
   const rawBiz = Array.isArray(tgt.provides?.knowledge) ? tgt.provides.knowledge : [];
   const biz = rawBiz.filter((item) => {
     const p = typeof item === 'string' ? item.trim() : String(item?.path ?? '').trim();
-    return p && p !== KNOWLEDGE_SKILL_ENTRY;
+    return p && p !== KNOWLEDGE_SKILL_ENTRY && p !== 'skills/story-knowledge/SKILL.md';
+  });
+  const merge2 = (pkgObj, tgtObj, fn) => {
+    const res = {};
+    for (const [src, own] of [[pkgObj, true], [tgtObj, false]]) {
+      for (const [k1, sub] of Object.entries(src ?? {})) for (const [k2, val] of Object.entries(sub ?? {})) fn(res, k1, k2, val, own);
+    }
+    return res;
+  };
+  const skillAssets = merge2(provides.skill_assets, tgt.provides?.skill_assets, (r, s, k, v, own) => {
+    if (own || (!isStoryReg(v) && !(r[s] && k in r[s]))) (r[s] ??= {})[k] = v;
+  });
+  const hooks = merge2(provides.hooks, tgt.provides?.hooks, (r, ph, ev, list, own) => {
+    const kept = (list ?? []).filter(p => own || !isStoryReg(p));
+    if (kept.length) (r[ph] ??= {})[ev] = [...new Set([...(r[ph]?.[ev] ?? []), ...kept])];
+  });
+  const overlays = { ...Object.fromEntries(Object.entries(tgt.provides?.phase_rules_overlays ?? {}).filter(([, p]) => !isStoryReg(p))), ...(provides.phase_rules_overlays ?? {}) };
+  const bindings = merge2(pkg.phase_bindings, tgt.phase_bindings, (r, ph, sl, items, own) => {
+    const kept = (items ?? []).filter(b => own || !isStoryReg(b?.ref));
+    if (!kept.length) return;
+    const cur = (r[ph] ??= {})[sl] ?? [];
+    for (const b of kept) if (!cur.some(x => x.kind === b.kind && x.ref === b.ref)) cur.push(b);
+    r[ph][sl] = cur;
   });
   const verComments = [];
   if (tgtText) {
@@ -113,9 +134,9 @@ function composeManifest(pkgText, tgtText, identity) {
     `description: ${description}`,
     'provides:',
   ];
-  if (provides.skill_assets && Object.keys(provides.skill_assets).length) {
+  if (Object.keys(skillAssets).length) {
     out.push('  skill_assets:');
-    for (const [sid, assets] of Object.entries(provides.skill_assets)) {
+    for (const [sid, assets] of Object.entries(skillAssets)) {
       out.push(`    ${sid}:`);
       for (const [k, v] of Object.entries(assets ?? {})) out.push(`      ${k}: ${v}`);
     }
@@ -133,9 +154,9 @@ function composeManifest(pkgText, tgtText, identity) {
       else if (item.audience) out.push(`      audience: ${item.audience}`);
     }
   }
-  if (provides.hooks && Object.keys(provides.hooks).length) {
+  if (Object.keys(hooks).length) {
     out.push('  hooks:');
-    for (const [phase, events] of Object.entries(provides.hooks)) {
+    for (const [phase, events] of Object.entries(hooks)) {
       out.push(`    ${phase}:`);
       for (const [ev, list] of Object.entries(events ?? {})) {
         out.push(`      ${ev}:`);
@@ -143,13 +164,13 @@ function composeManifest(pkgText, tgtText, identity) {
       }
     }
   }
-  if (provides.phase_rules_overlays && Object.keys(provides.phase_rules_overlays).length) {
+  if (Object.keys(overlays).length) {
     out.push('  phase_rules_overlays:');
-    for (const [phase, p] of Object.entries(provides.phase_rules_overlays)) out.push(`    ${phase}: ${p}`);
+    for (const [phase, p] of Object.entries(overlays)) out.push(`    ${phase}: ${p}`);
   }
-  if (pkg.phase_bindings && Object.keys(pkg.phase_bindings).length) {
+  if (Object.keys(bindings).length) {
     out.push('phase_bindings:');
-    for (const [phase, slots] of Object.entries(pkg.phase_bindings)) {
+    for (const [phase, slots] of Object.entries(bindings)) {
       out.push(`  ${phase}:`);
       for (const [slot, items] of Object.entries(slots ?? {})) {
         out.push(`    ${slot}:`);
@@ -302,19 +323,52 @@ function adaptersStatus() {
   return { dir: `${extDir(TARGET)}/${ADAPTERS}`, story, token, standIn, status };
 }
 
+function adapterGap(ad = adaptersStatus()) {
+  if (ad.standIn || ad.status === 'present') return null;
+  const miss = [!ad.story && 'story.js', !ad.token && 'token.js'].filter(Boolean);
+  return `对接层未就位（${ad.status}，${ad.dir} 缺 ${miss.join('、')}）——补齐真实对接文件并在真实环境核验`;
+}
+
+function planAdapterMigration() {
+  const legacy = join(TDIR, ...LEGACY_ADAPTERS.split('/'));
+  if (!existsSync(legacy) || TARGET_ADAPTATION.doc.adapters === 'stand-in') return { copy: [], conflicts: [] };
+  const copy = [], conflicts = [];
+  for (const p of walk(legacy)) {
+    const src = join(legacy, ...p.split('/')), dst = join(TDIR, ADAPTERS, ...p.split('/'));
+    if (!existsSync(dst)) copy.push(p);
+    else if (!readFileSync(src).equals(readFileSync(dst))) conflicts.push(`${ADAPTERS}/${p}（与旧 ${LEGACY_ADAPTERS}/${p} 内容不同）`);
+  }
+  return { copy, conflicts };
+}
+
+function pruneEmpty(dir) {
+  if (!existsSync(dir)) return;
+  for (const e of readdirSync(dir, { withFileTypes: true })) if (e.isDirectory()) pruneEmpty(join(dir, e.name));
+  if (!readdirSync(dir).length) rmdirSync(dir);
+}
+
 function cleanupExamples() {
-  const examples = join(BASE_DIR, 'examples');
-  const gitignore = join(BASE_DIR, '.gitignore');
+  const examples = join(BASE_DIR, 'examples'), gitignore = join(BASE_DIR, '.gitignore');
   if (!existsSync(examples)) return { ok: true, removed: false, gitignorePreserved: existsSync(gitignore) };
-  try {
-    rmSync(examples, { recursive: true, force: false });
-  } catch (e) {
+  const mf = join(examples, '.manifest.json');
+  let expected = null;
+  if (existsSync(mf)) { try { expected = JSON.parse(read(mf))?.files; } catch { expected = null; } }
+  if (!expected || typeof expected !== 'object' || !Object.keys(expected).length) {
+    return { ok: false, removed: false, gitignorePreserved: existsSync(gitignore), error: 'base/examples/.manifest.json 缺失或无效，拒绝递归删除' };
+  }
+  const all = walk(examples, examples, new Set(['.manifest.json']), true);
+  const kept = all.flatMap((p) => {
+    const exp = expected[p];
+    if (!exp) return [`${p}（用户新增，不在发行样例清单内）`];
+    const got = `sha256:${createHash('sha256').update(lf(read(join(examples, ...p.split('/')))), 'utf8').digest('hex')}`;
+    return got === exp ? [] : [`${p}（内容已改动，与发行样例字节不符）`];
+  });
+  if (kept.length) return { ok: false, removed: false, gitignorePreserved: existsSync(gitignore), error: `保留非包/已改动文件，未删除：${kept.join('；')}` };
+  try { for (const p of all) rmSync(join(examples, ...p.split('/'))); rmSync(mf); pruneEmpty(examples); } catch (e) {
     return { ok: false, removed: false, gitignorePreserved: existsSync(gitignore), error: String(e?.message ?? e) };
   }
-  if (existsSync(examples)) {
-    return { ok: false, removed: false, gitignorePreserved: existsSync(gitignore), error: `${rel(TARGET, examples)} 清理后仍存在` };
-  }
-  return { ok: true, removed: true, gitignorePreserved: existsSync(gitignore) };
+  return { ok: !existsSync(examples), removed: true, gitignorePreserved: existsSync(gitignore),
+    error: existsSync(examples) ? `${rel(TARGET, examples)} 清理后仍存在` : undefined };
 }
 
 const SCRIPT_BASE = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -486,9 +540,11 @@ function writeAdaptedFor() {
 async function printFollowUp() {
   const f = await followUp();
   console.log(`[adapt-scan] 按版本跟进：${JSON.stringify(f)}`);
-  if (Object.values(f.items).some(list => list.length) || f.check.status !== 'PASS') {
-    console.log('[adapt-scan] 有演进条目或知识不合当前协议（条目是待判断的适配主题，不表示目标仓已采用）：按块摆出来，停一次问人「现在做这些适配吗」；'
-      + '选稍后就不写任何东西；选中的知识与对接适配都交回后跑 --mark-adapted（将核入口/知识、清理 base/examples/ 并最后写 adapted_for）');
+  const adGap = adapterGap(f.adapters);
+  if (Object.values(f.items).some(list => list.length) || f.check.status !== 'PASS' || adGap) {
+    if (adGap) console.log(`[adapt-scan] 尚欠对接层：${adGap}`);
+    console.log('[adapt-scan] 有演进条目、知识不合协议或对接层未就位（条目是待判断的适配主题，不表示目标仓已采用）：按块摆出来，停一次问人「现在做这些适配吗」；'
+      + '选稍后就不写任何东西；选中的知识与对接适配都交回后跑 --mark-adapted（将核入口/知识/对接、清理 base/examples/ 并最后写 adapted_for）');
     return true;
   }
   const cleaned = cleanupExamples();
@@ -545,6 +601,8 @@ if (mode === '--mark-adapted') {
       + `${f.check.review.problems.join('\n  ')}\n  按 reference/knowledge-review.md 发起与收回审查；`
       + '机制已经装好，知识适配未完成，adapted_for 不写', 2);
   }
+  const adGap = adapterGap(f.adapters);
+  if (adGap) die(`${adGap}；适配未完成，不清理 base/examples/，adapted_for 不写`, 2);
   const cleaned = cleanupExamples();
   if (!cleaned.ok) die(`清理 base/examples/ 失败（${cleaned.error}）：不报适配完成，adapted_for 未写入`, 1);
   if (!cleaned.gitignorePreserved) die('base/.gitignore 缺失：清理后必须保留 base/.gitignore，adapted_for 未写入', 1);
@@ -554,7 +612,8 @@ if (mode === '--mark-adapted') {
   process.exit(0);
 }
 
-if (mode === '--apply') {
+if (mode === '--apply' || mode === '--prepare-init') {
+  const prep = mode === '--prepare-init';
   if (!repoInfo(TARGET).ok) {
     die(`目标不在 git 仓库内：${TARGET}\n  这一次要改写或清理旧机制与宿主入口，没存档的改动被盖掉就找不回来了。`);
   }
@@ -573,9 +632,10 @@ if (mode === '--apply') {
         copyFileSync(join(BASE_DIR, ...p.split('/')), join(dir, 'base', ...p.split('/')));
       }
       writeFileSync(join(dir, 'manifest.yaml'), composedText, 'utf8');
-      for (const p of walk(join(TDIR, KNOWLEDGE))) {
-        mkdirSync(dirname(join(dir, KNOWLEDGE, ...p.split('/'))), { recursive: true });
-        copyFileSync(join(TDIR, KNOWLEDGE, ...p.split('/')), join(dir, KNOWLEDGE, ...p.split('/')));
+      const skip = new Set(['base', ...LEGACY_DIRS, 'manifest.yaml', ADAPTATION]);
+      for (const p of walk(TDIR, TDIR, skip)) {
+        mkdirSync(dirname(join(dir, ...p.split('/'))), { recursive: true });
+        copyFileSync(join(TDIR, ...p.split('/')), join(dir, ...p.split('/')));
       }
     });
   } catch (e) {
@@ -590,14 +650,12 @@ if (mode === '--apply') {
   try { plan = entryPlan(TARGET, PKG_SKILLS); } catch (e) { die(`宿主入口核不了（${e.message}）`); }
 
   const extRel = extDir(TARGET);
-  const legacyFiles = LEGACY_DIRS.flatMap(d => walk(join(TDIR, d)).map(p => `${extRel}/${d}/${p}`));
-  const legacyAdapters = join(TDIR, ...LEGACY_ADAPTERS.split('/'));
-  const migrateAdapters = existsSync(legacyAdapters)
-    && !existsSync(join(TDIR, ADAPTERS)) && TARGET_ADAPTATION.doc.adapters !== 'stand-in';
-  const writeSurface = new Set([...legacyFiles, ...plan.entries, ...plan.retire, ...plan.bridges]);
+  const legacyFiles = prep ? [] : LEGACY_DIRS.flatMap(d => walk(join(TDIR, d)).map(p => `${extRel}/${d}/${p}`));
+  const adapterPlan = prep ? { copy: [], conflicts: [] } : planAdapterMigration();
+  const writeSurface = new Set(prep ? [] : [...legacyFiles, ...plan.pendingEntries, ...plan.retire, ...plan.pendingBridges]);
   if (existsSync(tgtManifest) && lf(currentManifest) !== lf(composedText)) writeSurface.add(`${extRel}/manifest.yaml`);
   if (TARGET_ADAPTATION.text !== null && existsSync(join(TDIR, ADAPTATION))) writeSurface.add(`${extRel}/${ADAPTATION}`);
-  if (missingGitignoreLines(TARGET).length || usageBlockedBy(TARGET).startsWith('.gitignore:')) writeSurface.add('.gitignore');
+  if (!prep && (missingGitignoreLines(TARGET).length || usageBlockedBy(TARGET).startsWith('.gitignore:'))) writeSurface.add('.gitignore');
   if (STATE === 'fresh' && !config(TARGET)?.paths?.extension_dir) writeSurface.add('framework.config.json');
 
   const dirty = dirtyPaths(TARGET).filter(p => writeSurface.has(p));
@@ -606,7 +664,12 @@ if (mode === '--apply') {
     dirty.forEach(p => console.error(`  ${p}`));
     die('先提交或暂存自己的改动再升级——本命令不替你动工作区（不 stash、不提交）', 2);
   }
-  if (existsSync(join(TARGET, ...USAGE.record.split('/')))) {
+  if (adapterPlan.conflicts.length) {
+    console.error(`[adapt-scan] 停：对接层存在 ${adapterPlan.conflicts.length} 处同名内容冲突：`);
+    adapterPlan.conflicts.forEach(c => console.error(`  ${c}`));
+    die('先确认保留哪一份再升级。目标一个字节未写', 2);
+  }
+  if (!prep && existsSync(join(TARGET, ...USAGE.record.split('/')))) {
     const u = await usageWriter(BASE_DIR, 'inspect');
     if (!u.ok) die(`使用记录 ${USAGE.record} 不合法（${(u.errors ?? []).join('；')}）：它不会被当成空表覆盖。机制一个字节没写，修好后重跑 --apply`, 2);
   }
@@ -615,23 +678,8 @@ if (mode === '--apply') {
     plan.conflicts.forEach(c => console.error(`  ${c}`));
     die('这些内容要保留就挪到它自己的位置，确认可弃就删掉，再升级。目标一个字节未写', 2);
   }
-
   const written = [];
   const removed = [];
-  if (migrateAdapters) {
-    for (const p of walk(legacyAdapters)) {
-      const to = join(TDIR, ADAPTERS, ...p.split('/'));
-      mkdirSync(dirname(to), { recursive: true });
-      copyFileSync(join(legacyAdapters, ...p.split('/')), to);
-      written.push(`${ADAPTERS}/${p}`);
-    }
-  }
-  for (const d of LEGACY_DIRS) {
-    const abs = join(TDIR, d);
-    if (!existsSync(abs)) continue;
-    for (const p of walk(abs)) removed.push(`${d}/${p}`);
-    rmSync(abs, { recursive: true, force: true });
-  }
   if (!existsSync(tgtManifest) || lf(read(tgtManifest)) !== lf(composedText)) {
     mkdirSync(dirname(tgtManifest), { recursive: true });
     writeFileSync(tgtManifest, composedText, 'utf8');
@@ -641,6 +689,33 @@ if (mode === '--apply') {
     writeFileSync(join(TDIR, ADAPTATION), TARGET_ADAPTATION.text, 'utf8');
     written.push(ADAPTATION);
   }
+  if (STATE === 'fresh') {
+    const cfgFile = join(TARGET, 'framework.config.json');
+    const cfg = config(TARGET);
+    if (!cfg?.paths?.extension_dir) {
+      cfg.paths = { ...(cfg.paths || {}), extension_dir: 'doc/extensions' };
+      writeFileSync(cfgFile, `${JSON.stringify(cfg, null, 2)}\n`, 'utf8');
+      written.push('framework.config.json');
+    }
+  }
+  if (prep) {
+    console.log(`[adapt-scan] 已预置根清单（写入 ${written.length} 个文件：${written.join('、') || '无变更'}），`
+      + '已合入 docs.post_check 稳定登记并保留业务登记；可直接执行项目级 framework-init（CREATE/UPDATE）生成／刷新宿主桥');
+    process.exit(0);
+  }
+  const legacyAdapters = join(TDIR, ...LEGACY_ADAPTERS.split('/'));
+  for (const p of adapterPlan.copy) {
+    const to = join(TDIR, ADAPTERS, ...p.split('/'));
+    mkdirSync(dirname(to), { recursive: true });
+    copyFileSync(join(legacyAdapters, ...p.split('/')), to);
+    written.push(`${ADAPTERS}/${p}`);
+  }
+  for (const d of LEGACY_DIRS) {
+    const abs = join(TDIR, d);
+    if (!existsSync(abs)) continue;
+    for (const p of walk(abs)) removed.push(`${d}/${p}`);
+    rmSync(abs, { recursive: true, force: true });
+  }
   {
     const f = join(TARGET, '.gitignore');
     const have = existsSync(f) ? read(f) : '';
@@ -649,15 +724,6 @@ if (mode === '--apply') {
     if (missing.length) {
       writeFileSync(f, `${have.replace(/\n*$/, '\n')}${missing.join('\n')}\n`, 'utf8');
       written.push('.gitignore');
-    }
-  }
-  if (STATE === 'fresh') {
-    const cfgFile = join(TARGET, 'framework.config.json');
-    const cfg = config(TARGET);
-    if (!cfg?.paths?.extension_dir) {
-      cfg.paths = { ...(cfg.paths || {}), extension_dir: 'doc/extensions' };
-      writeFileSync(cfgFile, `${JSON.stringify(cfg, null, 2)}\n`, 'utf8');
-      written.push('framework.config.json');
     }
   }
   let entries;
@@ -722,6 +788,8 @@ if (!u.ok) bad.push(`④ 使用记录：${(u.errors ?? []).join('；')}——缺
 const kc = await knowledgeCheck();
 if (kc.status !== 'PASS') bad.push(`⑤ 目标知识不可读：${kc.problems.join('；')}`);
 const ad = adaptersStatus();
+const adGap = adapterGap(ad);
+if (adGap) bad.push(`⑥ ${adGap}`);
 if (HOOKS_OFF) console.log(HOOKS_OFF);
 if (bad.length) {
   console.error(`[adapt-scan] 核对不符 ${bad.length} 处：`);

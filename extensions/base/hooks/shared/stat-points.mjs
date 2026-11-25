@@ -28,8 +28,8 @@ export function statTableCols(header, words) {
   return at.some(i => i < 0) || new Set(at).size !== words.length ? null : at;
 }
 
-/** 扫描 plan.md「埋点」直接所属段中存在结构歧义的表头（单格混合两职责、已知点位与方法合填或同职责重复列），报精确行号与原表头；其余非逐点附表可经 extraOut 留给独审。 */
-export function planStatTableIssues(planText, designPoints = null, extraOut = null) {
+/** 扫描 plan.md「埋点」直接所属段中存在结构歧义的表头（主表头合填两职责或同职责重复列），报精确行号与原表头；其余非逐点附表经 extraOut 原样留给独审，永不充抵覆盖。 */
+export function planStatTableIssues(planText, extraOut = null) {
   const doc = parseDocument(String(planText ?? ''));
   const sec = planEventSection(doc);
   if (!sec) return [];
@@ -39,11 +39,12 @@ export function planStatTableIssues(planText, designPoints = null, extraOut = nu
     const lineNo = sec.from + t.line + 1;
     const rawHeader = `| ${t.header.join(' | ')} |`;
     const labels = t.header.map(mainHeaderLabel);
-    const methodRow = !statTableCols(t.header, words) && !words.some(w => labels.filter(l => l === w).length > 1) ? t.rows.find(r => r.some(c => (designPoints ?? []).some(p => pointKey(p) && pointKey(c).includes(pointKey(p))) && Boolean(clean(c).match(METHOD_REF)))) : null;
-    if (methodRow || (labels.some(l => l.includes('统计点') && l.includes('责任方法')) && !labels.every(l => !(l.includes('统计点') && l.includes('责任方法')) || /(?:说明|备注|规范|规则|定义|示例)$/.test(l)))) {
-      issues.push(`plan.md 第 ${lineNo} 行表头「${rawHeader}」未拆成独立的「统计点」「责任方法」两列（结构歧义${(methodRow ?? t.rows[0]) ? `；原表行如 \`| ${(methodRow ?? t.rows[0]).join(' | ')} |\`` : ''}）——两者须拆成独立列，该表行不计入已覆盖`);
+    if (labels.some(l => l.includes('统计点') && l.includes('责任方法') && !/(?:说明|备注|规范|规则|定义|示例)$/.test(l))) {
+      issues.push(`plan.md 第 ${lineNo} 行表头「${rawHeader}」未拆成独立的「统计点」「责任方法」两列（结构歧义${t.rows[0] ? `；原表行如 \`| ${t.rows[0].join(' | ')} |\`` : ''}）——两者须拆成独立列，该表行不计入已覆盖`);
       continue;
-    } else if (extraOut && !statTableCols(t.header, words) && !words.some(w => labels.filter(l => l === w).length > 1)) extraOut.push(`- 埋点段附表（第 ${lineNo} 行，未计入覆盖，原表供核）：\`${rawHeader}\`${t.rows.length ? ` → ${t.rows.map(r => `\`| ${r.join(' | ')} |\``).join('；')}` : ''}`);
+    } else if (extraOut && !statTableCols(t.header, words) && !words.some(w => labels.filter(l => l === w).length > 1)) {
+      extraOut.push(`- 埋点段附表（第 ${lineNo} 行，未计入正式覆盖，原表供独审核实质矛盾）：\`${rawHeader}\`${t.rows.length ? ` → ${t.rows.map(r => `\`| ${r.join(' | ')} |\``).join('；')}` : ''}`);
+    }
     for (const w of words) {
       const hits = labels.filter(l => l === w);
       if (hits.length > 1) {

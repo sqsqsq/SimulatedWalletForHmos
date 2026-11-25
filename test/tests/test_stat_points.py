@@ -252,6 +252,21 @@ class PlanRowsAreFoundByTheirColumns(unittest.TestCase):
         self.assertIn("| 统计点以及责任方法 | 场景 |", combo_issues[0])
         self.assertNotIn("统计点与责任方法说明", combo_issues[0])
 
+        # 3) S26：说明/备注表含已知点位+方法或文件名、以及结构不确定表（| 埋点记录 | 场景 |）均不硬拦且永不充数，原表通过 extraOut 交独审
+        for label, extra_tbl in (
+            ("点位+方法说明表", "| 说明 | 备注 |\n|---|---|\n| 余额刷新 | 复用 HomeRepository.refreshBalance |"),
+            ("点位+文件名说明表", "| 说明 | 备注 |\n|---|---|\n| 余额刷新 | 详见 docs.md |"),
+            ("结构不确定表", "| 埋点记录 | 场景 |\n|---|---|\n| 余额刷新 HomeRepository.refreshBalance | 返回首页 |"),
+        ):
+            with self.subTest(label=label):
+                p = f"# 计划\n\n## 宿主扩展（可选）\n\n### 埋点\n\n{extra_tbl}\n"
+                self.assertEqual([], run("m.planStatRows(plan)", plan=p))
+                res = run("(() => { const extra = []; const issues = m.planStatTableIssues(plan, extra); return { issues, extra }; })()", plan=p)
+                self.assertEqual([], res["issues"], res)
+                self.assertEqual(1, len(res["extra"]), res)
+                self.assertIn("埋点段附表", res["extra"][0])
+                self.assertIn("原表供独审核实质矛盾", res["extra"][0])
+
 
 
 #: 一条带附加条件、多种结果的合法埋点明细

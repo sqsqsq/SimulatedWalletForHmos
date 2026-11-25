@@ -579,8 +579,19 @@ class AFreshInstallRunsOutOfTheBox(AdaptCase):
         self.assertEqual({"facts": 0, "constraints": 0, "patterns": 0,
                           "entries": 0, "problems": 0}, json.loads(proc.stdout))
 
+    def place_real_adapters(self) -> None:
+        self.adapters.mkdir(parents=True, exist_ok=True)
+        for name in ("story.js", "token.js"):
+            (self.adapters / name).write_text(f"// real {name}\nmodule.exports = {{}};\n", encoding="utf-8")
+
     def test_a_fresh_install_passes_its_own_check(self) -> None:
         self.assertEqual(0, self.adapt("--apply").returncode)
+        # S28：缺真实对接层时 --check 报尚欠事项，补齐后通过
+        missing = self.adapt("--check")
+        self.assertEqual(1, missing.returncode, self.out(missing))
+        self.assertIn("story.js", self.out(missing))
+        self.assertIn("token.js", self.out(missing))
+        self.place_real_adapters()
         proc = self.adapt("--check")
         self.assertEqual(0, proc.returncode, self.out(proc))
 
@@ -597,6 +608,13 @@ class AFreshInstallRunsOutOfTheBox(AdaptCase):
         self.commit("首次装好")
         self.assertEqual(2, self.adapt("--mark-adapted").returncode, "首装未独审却记成已适配")
         self.write_review()
+        # 独审已过但真实对接未就位：--mark-adapted 必须阻止、保留样例与游标
+        no_ad = self.adapt("--mark-adapted")
+        self.assertEqual(2, no_ad.returncode, self.out(no_ad))
+        self.assertIn("对接层未就位", self.out(no_ad))
+        self.assertTrue((self.base / "examples").is_dir(), "缺真实对接时不应清理 base/examples/")
+        self.assertNotIn("adapted_for", (self.ext / "adaptation.yaml").read_text(encoding="utf-8"))
+        self.place_real_adapters()
         marked = self.adapt("--mark-adapted")
         self.assertEqual(0, marked.returncode, self.out(marked))
         self.assertIn(f'adapted_for: "{PKG_VERSION}"', (self.ext / "adaptation.yaml").read_text(encoding="utf-8"))
@@ -661,6 +679,9 @@ class TheUsageRecordIsSetUpByApply(AdaptCase):
 
     def test_a_fresh_install_and_a_same_version_rerun_set_it_up(self) -> None:
         self.make_fresh()
+        self.adapters.mkdir(parents=True, exist_ok=True)
+        for name in ("story.js", "token.js"):
+            (self.adapters / name).write_text(f"// real {name}\nmodule.exports = {{}};\n", encoding="utf-8")
         self.without_record("空仓")
         self.assert_set_up(self.adapt("--apply"))
         self.commit("装好")
@@ -767,6 +788,10 @@ class TheRepairLineRunsAsPrinted(unittest.TestCase):
         config.setdefault("paths", {})["extension_dir"] = "doc/my ext"
         (target / "framework.config.json").write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
         shutil.copytree(DEV_BASE, target / "doc" / "my ext" / "base", ignore=shutil.ignore_patterns("__pycache__"))
+        ad = target / "doc" / "my ext" / "adapters"
+        ad.mkdir(parents=True, exist_ok=True)
+        for f in ("story.js", "token.js"):
+            (ad / f).write_text(f"// real {f}\nmodule.exports = {{}};\n", encoding="utf-8")
         for args in (["init", "-q"], ["add", "-A"], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base"]):
             subprocess.run(["git", "-C", str(target), *args], capture_output=True)
         (target / "doc").mkdir(exist_ok=True)

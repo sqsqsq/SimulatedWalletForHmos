@@ -301,8 +301,19 @@ process.stdout.write(JSON.stringify(res));
         self.assertTrue((pay / "doc/extensions/base/examples/knowledge").is_dir(), "首装 --apply 后样例应仍供模型参考")
         self.assertIn("doc/extensions/base/skills/story/SKILL.md", (pay / ".codex/skills/story/SKILL.md").read_text(encoding="utf-8"))
 
-        # 写目标知识与独立审查报告 → 跑 --check 与 --mark-adapted（清样例、保留 .gitignore、最后写 adapted_for）
+        # 写目标知识与独立审查报告 → 缺真实对接时 --check 与 --mark-adapted 均拦住并保住样例与游标
         write_sample_knowledge_and_review(pay, scan)
+        chk_missing = subprocess.run(["node", str(scan), "--check"], cwd=str(pay), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(1, chk_missing.returncode, chk_missing.stdout + chk_missing.stderr)
+        self.assertIn("story.js", chk_missing.stdout + chk_missing.stderr)
+        mark_missing = subprocess.run(["node", str(scan), "--mark-adapted"], cwd=str(pay), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(2, mark_missing.returncode, mark_missing.stdout + mark_missing.stderr)
+        self.assertTrue((pay / "doc/extensions/base/examples").is_dir(), "缺真实对接时不应清理样例")
+        # 补齐真实业务对接实现 → 跑 --check 与 --mark-adapted（清样例、保留 .gitignore、最后写 adapted_for）
+        ad_dir = pay / "doc/extensions/adapters"
+        ad_dir.mkdir(parents=True, exist_ok=True)
+        (ad_dir / "story.js").write_text("// pay story adapter\nmodule.exports = {};\n", encoding="utf-8")
+        (ad_dir / "token.js").write_text("// pay token adapter\nconsole.log('tok');\n", encoding="utf-8")
         chk = subprocess.run(["node", str(scan), "--check"], cwd=str(pay), capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(0, chk.returncode, chk.stdout + chk.stderr)
         self.assertIn("知识可读（1 份）", chk.stdout)
@@ -488,6 +499,265 @@ process.stdout.write(JSON.stringify(res));
         self.assertEqual(other_body, other.read_text(encoding="utf-8"))
         self.assertIn("doc/extensions/base/skills/story/SKILL.md",
                       (proj / ".codex/skills/story/SKILL.md").read_text(encoding="utf-8"))
+
+    def _copy_real_framework(self, proj: Path) -> Path:
+        import design_fixture  # noqa: PLC0415
+        fw_src = design_fixture.framework_under_test()
+        shutil.copytree(fw_src, proj / "framework", ignore=shutil.ignore_patterns("node_modules", "reports"))
+        nm_src = fw_src / "harness" / "node_modules"
+        nm_dst = proj / "framework" / "harness" / "node_modules"
+        if os.name == "nt":
+            subprocess.run(["cmd", "/c", "mklink", "/J", str(nm_dst), str(nm_src)], check=True, capture_output=True)
+        else:
+            nm_dst.symlink_to(nm_src, target_is_directory=True)
+        for doc_rel in ("doc/architecture.md", "doc/module-catalog.yaml", "doc/glossary.yaml"):
+            src_doc = DEMO / doc_rel
+            if src_doc.is_file():
+                dst_doc = proj / doc_rel
+                dst_doc.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src_doc, dst_doc)
+        (proj / "doc" / "glossary-seed.txt").write_text("# seed\n", encoding="utf-8")
+        return proj / "framework" / "harness"
+
+    def _run_live_init(self, proj: Path, adapters_csv: str) -> subprocess.CompletedProcess:
+        harness = proj / "framework" / "harness"
+        ts_node = harness / "node_modules" / "ts-node" / "dist" / "bin.js"
+        clean_env = {k: v for k, v in os.environ.items() if k != "NODE_OPTIONS"}
+        cmd = [
+            "node", str(ts_node), "--transpile-only",
+            str(harness / "scripts" / "init-orchestrate.ts"),
+            "--execute", "--smart-auto", "--scope", "project",
+            "--project-root", str(proj),
+            "--materialized-adapters", adapters_csv,
+        ]
+        return subprocess.run(cmd, cwd=str(harness), env=clean_env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+
+    def test_s27_pack_rejects_missing_or_tampered_examples(self) -> None:
+        """S27 R3：打包缺约定样例或字节与 .manifest.json 不符时必须失败，绝不宣告成功。"""
+        broken = self.root / "broken-src" / "base"
+        shutil.copytree(DEV_SOURCE / "base", broken)
+        (broken / "examples" / "knowledge" / "facts" / "component-profile.md").unlink()
+        with self.assertRaises(pub.InputError) as cm:
+            pub.pack_external_base(broken.parent, self.root / "out-missing")
+        self.assertIn("缺少约定样例文件", str(cm.exception))
+        self.assertFalse((self.root / "out-missing" / "base").exists())
+
+        tampered = self.root / "tampered-src" / "base"
+        shutil.copytree(DEV_SOURCE / "base", tampered)
+        f = tampered / "examples" / "knowledge" / "facts" / "component-profile.md"
+        f.write_text(f.read_text(encoding="utf-8") + "\n# tampered\n", encoding="utf-8")
+        with self.assertRaises(pub.InputError) as cm2:
+            pub.pack_external_base(tampered.parent, self.root / "out-tampered")
+        self.assertIn("字节摘要与 .manifest.json 不符", str(cm2.exception))
+
+    def test_s27_s28_legacy_205_first_init_update_preserves_biz_hook_partial_adapters_and_reaches_adapt(self) -> None:
+        """S27 R4 + S28 R5/R6b：真实 2.0.5 旧仓（旧桥 + 业务自定义 hook + 新根已有 story.js、旧根独有 token.js）经导入预置后，
+        第一次真实 framework-init UPDATE 即刷新旧桥与新增宿主桥，再经生成桥运行 adapt 迁入 token.js 并保留业务 hook 与知识。"""
+        proj = self.root / "legacy-205-live"
+        proj.mkdir(parents=True)
+        self._copy_real_framework(proj)
+        cfg = json.loads((DEMO / "framework.config.json").read_text(encoding="utf-8"))
+        cfg["project_name"] = "Legacy205App"
+        cfg["materialized_adapters"] = ["codex", "claude"]
+        (proj / "framework.config.json").write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        (proj / ".gitignore").write_text("doc/features/**/AR/story-src/drafts/\n", encoding="utf-8")
+
+        ext = proj / "doc" / "extensions"
+        (ext / "hooks/spec").mkdir(parents=True)
+        (ext / "hooks/spec/post_check.mjs").write_text("export default () => ({ ok: true });\n", encoding="utf-8")
+        (ext / "rules").mkdir(parents=True)
+        (ext / "rules/spec-rules.overlay.yaml").write_text("semantic_checks: {}\n", encoding="utf-8")
+        for sid in ("story", "story-adaptation", "story-knowledge", "story-stats"):
+            (ext / f"skills/{sid}").mkdir(parents=True)
+            (ext / f"skills/{sid}/SKILL.md").write_text(f"---\nname: {sid}\ndescription: old 2.0.5\n---\n# {sid}\n", encoding="utf-8")
+        old_ad = ext / "skills/story/scripts/adapters"
+        old_ad.mkdir(parents=True)
+        biz_story = "// new root real story.js\nmodule.exports = { v: 2 };\n"
+        biz_token = "// legacy unique real token.js\nconsole.log('legacy-token');\n"
+        (old_ad / "token.js").write_text(biz_token, encoding="utf-8")
+        (ext / "adapters").mkdir(parents=True)
+        (ext / "adapters/story.js").write_text(biz_story, encoding="utf-8")
+        (ext / "business").mkdir(parents=True)
+        (ext / "business/observe.mjs").write_text("export default () => ({ ok: true, message: 'biz-hook-ran' });\n", encoding="utf-8")
+        kf = ext / "knowledge/facts/biz-profile.md"
+        kf.parent.mkdir(parents=True)
+        kf_text = "---\nname: biz-profile\nkind: facts\nform: facets\napplies_when: 核对业务边界时。\n---\n\n## 定位\n\n- 2.0.5 业务事实。\n"
+        kf.write_text(kf_text, encoding="utf-8")
+        (ext / "manifest.yaml").write_text(
+            'schema_version: "1.1"\nname: legacy-205-app\nversion: "2.0.5"\ndescription: 2.0.5 业务扩展\n'
+            'provides:\n  skills:\n    - story\n    - story-adaptation\n    - story-knowledge\n    - story-stats\n'
+            '  knowledge:\n    - knowledge/facts/biz-profile.md\n'
+            '  hooks:\n    spec:\n      post_check:\n        - hooks/spec/post_check.mjs\n        - business/observe.mjs\n',
+            encoding="utf-8",
+        )
+        (ext / "adaptation.yaml").write_text('adapted_for: "2.0.5"\n', encoding="utf-8")
+        (proj / "doc/usage.json").write_text('{"schema": 1, "requirements": {}}\n', encoding="utf-8")
+
+        old_bridge_script = """
+const [root] = process.argv.slice(1);
+const path = require('node:path');
+const { createRequire } = require('node:module');
+const fw = path.join(root, 'framework');
+const req = createRequire(path.join(fw, 'harness', 'package.json'));
+req('ts-node').register({ project: path.join(fw, 'harness', 'tsconfig.json'), transpileOnly: true });
+req('./scripts/utils/instance-skill-bridge.ts').emitInstanceSkillBridge({
+  repoRoot: root, frameworkDir: fw, agentAdapter: 'codex',
+  extensionDirRel: 'doc/extensions', declaredSkillIds: ['story', 'story-adaptation', 'story-knowledge', 'story-stats'],
+});
+"""
+        subprocess.run(["node", "-e", old_bridge_script, str(proj)], check=True, capture_output=True)
+        self.assertIn("doc/extensions/skills/story/SKILL.md", (proj / ".codex/skills/story/SKILL.md").read_text(encoding="utf-8"))
+        init_commit(proj)
+
+        imp = pub.import_external_base(DEV_SOURCE, proj, prepare_init=True)
+        self.assertTrue(imp["prepared"], imp["stdout"] + imp["stderr"])
+        mf_pre = yaml.safe_load((ext / "manifest.yaml").read_text(encoding="utf-8"))
+        self.assertIn("base/skills/story-adaptation/scripts/entries.mjs", mf_pre["provides"]["hooks"]["docs"]["post_check"])
+        self.assertIn("business/observe.mjs", mf_pre["provides"]["hooks"]["spec"]["post_check"])
+        self.assertNotIn("hooks/spec/post_check.mjs", mf_pre["provides"]["hooks"]["spec"]["post_check"])
+        self.assertIn("knowledge/facts/biz-profile.md", mf_pre["provides"]["knowledge"])
+
+        r_init = self._run_live_init(proj, "codex,claude")
+        self.assertEqual(0, r_init.returncode, r_init.stdout + r_init.stderr)
+        self.assertIn("doc/extensions/base/skills/story/SKILL.md", (proj / ".codex/skills/story/SKILL.md").read_text(encoding="utf-8"))
+        self.assertIn("doc/extensions/base/skills/story-adaptation/SKILL.md", (proj / ".claude/commands/story-adaptation.md").read_text(encoding="utf-8"))
+
+        scan = ext / "base/skills/story-adaptation/scripts/adapt-scan.mjs"
+        applied = subprocess.run(["node", str(scan), "--apply"], cwd=str(proj), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(0, applied.returncode, applied.stdout + applied.stderr)
+        self.assertEqual(biz_story, (ext / "adapters/story.js").read_text(encoding="utf-8"))
+        self.assertEqual(biz_token, (ext / "adapters/token.js").read_text(encoding="utf-8"))
+        for old_dir in ("hooks", "rules", "skills"):
+            self.assertFalse((ext / old_dir).exists(), f"{old_dir}/ 未退场")
+        self.assertEqual(kf_text, kf.read_text(encoding="utf-8"))
+        mf_post = yaml.safe_load((ext / "manifest.yaml").read_text(encoding="utf-8"))
+        self.assertIn("business/observe.mjs", mf_post["provides"]["hooks"]["spec"]["post_check"])
+        self.assertEqual("2.0.6", yaml.safe_load((ext / "adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"])
+        self.assertFalse((ext / "base/examples").exists())
+
+        load_probe = """
+const [root] = process.argv.slice(1);
+const path = require('node:path');
+const { createRequire } = require('node:module');
+const fw = path.join(root, 'framework');
+const req = createRequire(path.join(fw, 'harness', 'package.json'));
+req('ts-node').register({ project: path.join(fw, 'harness', 'tsconfig.json'), transpileOnly: true });
+const bundle = req('./extension-loader.ts').loadInstanceExtensions(root, 'doc/extensions', { frameworkRoot: fw });
+process.stdout.write(JSON.stringify({ errors: bundle.errors, specPost: bundle.hooks?.spec?.post_check ?? [] }));
+"""
+        lp = subprocess.run(["node", "-e", load_probe, str(proj)], capture_output=True, text=True, encoding="utf-8", check=True)
+        ld = json.loads(lp.stdout)
+        self.assertEqual([], ld["errors"])
+        self.assertTrue(any(p.replace("\\", "/").endswith("business/observe.mjs") for p in ld["specPost"]), ld["specPost"])
+
+    def test_s28_same_name_foreign_bridge_adapter_conflict_and_examples_user_draft_protection(self) -> None:
+        """S28 R5/R6a/R6c：同名他属桥保护不覆盖、同名不同字节 adapter 冲突写前停、base/examples/ 用户文件保护不误删。"""
+        proj = self.root / "foreign-bridge-proj"
+        make_consumer(proj, "ForeignBridgeApp", ["codex"])
+        ext = proj / "doc" / "extensions"
+        pub.pack_external_base(DEV_SOURCE, ext)
+        other_root = proj / "doc/extensions/other-ext/skills"
+        for sid in ("story", "helper"):
+            (other_root / sid).mkdir(parents=True)
+            (other_root / sid / "SKILL.md").write_text(f"---\nname: {sid}\ndescription: other\n---\n# {sid}\n", encoding="utf-8")
+        emit_other = """
+const [root] = process.argv.slice(1);
+const path = require('node:path');
+const { createRequire } = require('node:module');
+const fw = path.join(root, 'framework');
+const req = createRequire(path.join(fw, 'harness', 'package.json'));
+req('ts-node').register({ project: path.join(fw, 'harness', 'tsconfig.json'), transpileOnly: true });
+req('./scripts/utils/instance-skill-bridge.ts').emitInstanceSkillBridge({
+  repoRoot: root, frameworkDir: fw, agentAdapter: 'codex',
+  extensionDirRel: 'doc/extensions/other-ext', declaredSkillIds: ['story', 'helper'],
+});
+"""
+        subprocess.run(["node", "-e", emit_other, str(proj)], check=True, capture_output=True)
+        foreign_story = proj / ".codex/skills/story/SKILL.md"
+        foreign_helper = proj / ".codex/skills/helper/SKILL.md"
+        foreign_story_bytes = foreign_story.read_bytes()
+        foreign_helper_bytes = foreign_helper.read_bytes()
+        init_commit(proj)
+
+        scan = ext / "base/skills/story-adaptation/scripts/adapt-scan.mjs"
+        p_prep = subprocess.run(["node", str(scan), "--prepare-init"], cwd=str(proj), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(2, p_prep.returncode, p_prep.stdout + p_prep.stderr)
+        self.assertIn("doc/extensions/other-ext/skills/story/SKILL.md", p_prep.stdout + p_prep.stderr)
+        self.assertEqual(foreign_story_bytes, foreign_story.read_bytes())
+
+        p_apply = subprocess.run(["node", str(scan), "--apply"], cwd=str(proj), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(2, p_apply.returncode, p_apply.stdout + p_apply.stderr)
+        self.assertEqual(foreign_story_bytes, foreign_story.read_bytes())
+        self.assertEqual(foreign_helper_bytes, foreign_helper.read_bytes())
+
+        hook_probe = """
+const [entriesUrl, root] = process.argv.slice(1);
+process.env.HARNESS_INIT_INTERNAL_GLOBAL_RUN = '1';
+const mod = await import(entriesUrl);
+process.stdout.write(JSON.stringify(mod.default({ feature: '_global', phase: 'docs', projectRoot: root })));
+"""
+        entries_url = (ext / "base/skills/story-adaptation/scripts/entries.mjs").resolve().as_uri()
+        p_hook = subprocess.run(["node", "--input-type=module", "-e", hook_probe, entries_url, str(proj)],
+                                capture_output=True, text=True, encoding="utf-8", check=True)
+        hres = json.loads(p_hook.stdout)
+        self.assertFalse(hres["ok"], hres)
+        self.assertIn("other-ext", hres["message"])
+        self.assertEqual(foreign_story_bytes, foreign_story.read_bytes())
+
+        cproj = self.root / "adapter-conflict-proj"
+        make_consumer(cproj, "ConflictApp", ["codex"])
+        cext = cproj / "doc" / "extensions"
+        (cext / "skills/story/scripts/adapters").mkdir(parents=True)
+        (cext / "skills/story/scripts/adapters/story.js").write_text("// old version\n", encoding="utf-8")
+        (cext / "adapters").mkdir(parents=True)
+        (cext / "adapters/story.js").write_text("// new different version\n", encoding="utf-8")
+        (cext / "manifest.yaml").write_text('schema_version: "1.1"\nname: conflict-app\nversion: "2.0.5"\nprovides:\n  knowledge: []\n', encoding="utf-8")
+        (cext / "adaptation.yaml").write_text('adapted_for: "2.0.5"\n', encoding="utf-8")
+        pub.pack_external_base(DEV_SOURCE, cext)
+        init_commit(cproj)
+        cscan = cext / "base/skills/story-adaptation/scripts/adapt-scan.mjs"
+        c_res = subprocess.run(["node", str(cscan), "--apply"], cwd=str(cproj), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(2, c_res.returncode, c_res.stdout + c_res.stderr)
+        self.assertIn("story.js", c_res.stdout + c_res.stderr)
+        self.assertTrue((cext / "skills/story/scripts/adapters/story.js").is_file(), "冲突时误删了旧文件")
+        self.assertEqual("2.0.5", yaml.safe_load((cext / "adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"])
+
+        eproj = self.root / "examples-protect-proj"
+        make_consumer(eproj, "ExamplesProtectApp", ["codex"])
+        eext = eproj / "doc" / "extensions"
+        pub.pack_external_base(DEV_SOURCE, eext)
+        (eext / "adapters").mkdir(parents=True)
+        (eext / "adapters/story.js").write_text("// real story\n", encoding="utf-8")
+        (eext / "adapters/token.js").write_text("// real token\n", encoding="utf-8")
+        init_commit(eproj)
+        escan = eext / "base/skills/story-adaptation/scripts/adapt-scan.mjs"
+        self.assertEqual(0, subprocess.run(["node", str(escan), "--apply"], cwd=str(eproj), capture_output=True).returncode)
+        write_sample_knowledge_and_review(eproj, escan)
+
+        user_draft = eext / "base/examples/user-draft.md"
+        user_draft.write_text("# my unsaved notes\n", encoding="utf-8")
+        m_blocked = subprocess.run(["node", str(escan), "--mark-adapted"], cwd=str(eproj), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(1, m_blocked.returncode, m_blocked.stdout + m_blocked.stderr)
+        self.assertIn("user-draft.md", m_blocked.stdout + m_blocked.stderr)
+        self.assertTrue(user_draft.is_file(), "清理时误删了用户新增文件")
+        self.assertNotIn("adapted_for", yaml.safe_load((eext / "adaptation.yaml").read_text(encoding="utf-8")) or {})
+
+        user_draft.unlink()
+        sample = eext / "base/examples/knowledge/facts/component-profile.md"
+        orig_sample = sample.read_bytes()
+        sample.write_text(orig_sample.decode("utf-8") + "\n# user edit\n", encoding="utf-8")
+        m_edited = subprocess.run(["node", str(escan), "--mark-adapted"], cwd=str(eproj), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(1, m_edited.returncode, m_edited.stdout + m_edited.stderr)
+        self.assertIn("component-profile.md", m_edited.stdout + m_edited.stderr)
+        self.assertIn("# user edit", sample.read_text(encoding="utf-8"))
+        self.assertNotIn("adapted_for", yaml.safe_load((eext / "adaptation.yaml").read_text(encoding="utf-8")) or {})
+
+        sample.write_bytes(orig_sample)
+        m_ok = subprocess.run(["node", str(escan), "--mark-adapted"], cwd=str(eproj), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(0, m_ok.returncode, m_ok.stdout + m_ok.stderr)
+        self.assertFalse((eext / "base/examples").exists())
+        self.assertTrue((eext / "base/.gitignore").is_file())
+        self.assertEqual("2.0.6", yaml.safe_load((eext / "adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"])
 
 
 if __name__ == "__main__":

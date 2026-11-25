@@ -149,6 +149,9 @@ class BasePackageAndAdapterOwnership(InPlaceAdaptCase):
         self.assertFalse((target / ADAPTERS).exists(), "通用包把对接替身装进业务仓了")
         self.assertFalse((target / "doc/extensions/base/skills/story/scripts/adapters").exists())
         self.assertTrue((target / "doc/extensions/base/skills/story/scripts/core").is_dir())
+        chk = self.adapt("--check", target)
+        self.assertEqual(1, chk.returncode, "缺真实对接层时 --check 不应通过")
+        self.assertIn("story.js", self.out(chk))
 
     def test_a_base_upgrade_never_overwrites_business_adapters(self) -> None:
         target = self.blank_repo("BizA")
@@ -229,6 +232,7 @@ class HostBridgesAndLineEndings(InPlaceAdaptCase):
 
     def test_crlf_in_the_manifest_is_not_a_failure(self) -> None:
         target = self.blank_repo("BizA")
+        self.write_adapters(target, "BizA")
         self.adapt("--apply", target)
         manifest = target / "doc" / "extensions" / "manifest.yaml"
         raw = manifest.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
@@ -242,6 +246,7 @@ class WhatTheTargetGets(InPlaceAdaptCase):
 
     def test_it_adds_nothing_to_a_gitignore_that_already_covers_the_drafts(self) -> None:
         target = self.blank_repo("BizA")
+        self.write_adapters(target, "BizA")
         (target / ".gitignore").write_text("doc/features/\nbuild/\n", encoding="utf-8")
         self.commit(target, "需求目录整个不入库")
 
@@ -262,6 +267,7 @@ class WhatTheTargetGets(InPlaceAdaptCase):
 
     def test_the_usage_record_can_be_added_and_its_work_files_cannot(self) -> None:
         target = self.blank_repo("BizU")
+        self.write_adapters(target, "BizU")
         (target / ".gitignore").write_text("doc/*\n!doc/features/\n", encoding="utf-8")
         self.commit(target, "doc 下的文件默认不入库")
         self.assertFalse(self.git_add_takes(target, "doc/usage.json"), "前提不成立：规则本来就没挡住")
@@ -279,6 +285,7 @@ class WhatTheTargetGets(InPlaceAdaptCase):
 
     def test_disabled_lifecycle_hooks_are_named_and_left_as_the_target_set_them(self) -> None:
         target = self.blank_repo("BizH")
+        self.write_adapters(target, "BizH")
         self.assertEqual(0, self.adapt("--apply", target).returncode)
         self.commit(target, "装好")
         on = self.adapt("--check", target)
@@ -341,6 +348,7 @@ class WhatTheTargetGets(InPlaceAdaptCase):
 
     def test_the_entry_files_follow_the_targets_hosts(self) -> None:
         target = self.blank_repo("BizA", adapters=["claude"])
+        self.write_adapters(target, "BizA")
         self.assertFalse((target / "AGENTS.md").exists())
         proc = self.adapt("--apply", target)
         self.assertEqual(0, proc.returncode, self.out(proc))

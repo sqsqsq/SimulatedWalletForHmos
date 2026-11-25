@@ -22,7 +22,7 @@ description: /story adapt——在已解包 `<ext>/base/` 的业务工程内就�
 
 ## 解包覆盖前的 git 检查
 
-人工或内网流程把新版 `base/` 解包覆盖进目标仓之前，必须先核对目标工程 `git status --porcelain -uall`，确认没有未提交修改会被覆盖；事后运行的 adapt 不能恢复已被手工覆盖的文件。
+人工或内网流程把新版 `base/` 解包覆盖进目标仓之前，必须先核对目标工程 `git status --porcelain -uall`，确认没有未提交修改会被覆盖；事后运行的 adapt 不能恢复已被手工覆盖的文件。旧版（≤2.0.5）首次切换或空仓首次接入前，由发行导入人／维护者在解包 `base/` 后执行一次 `node doc/extensions/base/skills/story-adaptation/scripts/adapt-scan.mjs --prepare-init`，预检写面与桥归属并将 `docs.post_check` 合入原位根清单，使第一次 `framework-init` 即可刷新宿主桥并启动 `/story adapt`（后续同布局升级无需重复）。
 
 ## 你要做的四件事
 

@@ -120,7 +120,7 @@ function statPointTable(projectRoot, feature, inputs) {
     return [...statDelivery(judged, inputs.contracts, inputs.acceptance), '',
       '这一次没有 plan.md：逐点核每个统计点在契约方法说明与验收里有没有写出适用结果与验证方式，缺哪个点名哪个。'];
   }
-  const extra = [], tableIssues = planStatTableIssues(planText, design.details.flatMap(d => d.rows.map(r => r[0])), extra);
+  const extra = [], tableIssues = planStatTableIssues(planText, extra);
   const plan = planStatRows(planText);
   const byKey = new Map();
   for (const r of plan) byKey.set(pointKey(r.point), [...(byKey.get(pointKey(r.point)) ?? []), r]);

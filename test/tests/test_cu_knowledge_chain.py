@@ -1080,22 +1080,24 @@ class TheMaterializedContractIsReused(ChainCase):
         ghost_out = self.probe(fresh=True)
         self.assertIn("HomeRepository.notDefinedMethod", ghost_out["gate"], ghost_out["gate"])
 
-        # 4) S22/S24：合法表同节并排说明表（无引用 / 引用真实方法 / 引用文件名）均不被硬拦、原表留给独审且不计覆盖；
-        #    切换为真混合点位记录（| 统计点以及责任方法 | 或合填已知点位+方法）时门禁与独审均定位行号、表头与原行
-        for note_case, note_text in (
-            ("无引用", "仅注释，无带点引用"),
-            ("引用真实方法", "只说明复用 HomeRepository.refreshBalance，不追加统计点"),
-            ("引用文件名", "字段释义见 docs.md"),
+        # 4) S26：同一主表旁五类附表——仅说明/引用方法/引用已知点位+方法/引用已知点位+文件名/结构不确定表（| 埋点记录 | 场景 |）
+        #    均不硬拦、永不充数，原表随 extraOut 送独审；仅明确合并职责表头（| 统计点以及责任方法 |）仍硬拦。
+        for note_case, table_md, expected_needle in (
+            ("无引用说明表", "| 统计点与责任方法说明 | 备注 |\n|---|---|\n| 仅对主链路记点 | 仅注释，无带点引用 |", "仅注释，无带点引用"),
+            ("仅引方法说明表", "| 统计点与责任方法说明 | 备注 |\n|---|---|\n| 仅对主链路记点 | 只说明复用 HomeRepository.refreshBalance |", "HomeRepository.refreshBalance"),
+            ("引点位与方法说明表", "| 说明 | 备注 |\n|---|---|\n| 余额刷新 / 保存结果 | 复用 HomeRepository.refreshBalance（仅说明） |", "余额刷新 / 保存结果"),
+            ("引点位与文件名说明表", "| 说明 | 备注 |\n|---|---|\n| 余额刷新 / 保存结果 | 口径见 docs.md |", "docs.md"),
+            ("结构不确定附表", "| 埋点记录 | 场景 |\n|---|---|\n| 余额刷新 / 保存结果 HomeRepository.refreshBalance | 返回首页 |", "返回首页"),
         ):
             with self.subTest(note_case=note_case):
                 self.variant(
                     "plan/plan.md",
                     "# Plan\n\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n| 编号 | 落点 |\n|---|---|\n| OBS-02 | HomeRepository.refreshBalance |\n\n"
                     "### 设计模式选型与角色\n\n决策树节点表落在 HomeRepository。\n\n"
-                    "### 埋点\n\n| 统计点与责任方法说明 | 备注 |\n|---|---|\n"
-                    f"| 仅对主链路记点 | {note_text} |\n\n"
+                    "### 埋点\n\n"
                     "| 统计点 | 责任方法 | 结果 |\n|---|---|---|\n"
                     "| 余额刷新 / 保存结果 | HomeRepository.refreshBalance | 成功 |\n\n"
+                    f"{table_md}\n\n"
                     "#### 历史参考\n\n| 统计点 | 责任方法 |\n|---|---|\n| 历史旧点 | Legacy.oldMethod |\n",
                 )
                 note_out = self.probe(fresh=True)
@@ -1103,28 +1105,42 @@ class TheMaterializedContractIsReused(ChainCase):
                 self.assertNotIn("逐点表里没有行", note_out["gate"], (note_case, note_out["gate"]))
                 self.assertNotIn("表头结构歧义", note_out["review"], (note_case, note_out["review"]))
                 self.assertIn("埋点段附表", note_out["review"], (note_case, note_out["review"]))
-                self.assertIn(note_text, note_out["review"], (note_case, note_out["review"]))
+                self.assertIn(expected_needle, note_out["review"], (note_case, note_out["review"]))
                 self.assertNotIn("历史旧点", note_out["review"])
 
-        for mixed_header in ("| 统计点以及责任方法 | 场景 |", "| 埋点记录 | 场景 |"):
-            with self.subTest(mixed_header=mixed_header):
-                self.variant(
-                    "plan/plan.md",
-                    "# Plan\n\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n| 编号 | 落点 |\n|---|---|\n| OBS-02 | HomeRepository.refreshBalance |\n\n"
-                    "### 设计模式选型与角色\n\n决策树节点表落在 HomeRepository。\n\n"
-                    "### 埋点\n\n| 统计点与责任方法说明 | 备注 |\n|---|---|\n| 辅助说明 | 只说明复用 HomeRepository.refreshBalance |\n\n"
-                    "| 统计点 | 责任方法 | 结果 |\n|---|---|---|\n"
-                    "| 余额刷新 / 保存结果 | HomeRepository.refreshBalance | 成功 |\n\n"
-                    f"{mixed_header}\n|---|---|\n"
-                    "| 余额刷新 / 保存结果 HomeRepository.refreshBalance | 返回首页 |\n",
-                )
-                mixed_beside_valid = self.probe(fresh=True)
-                self.assertIn("第 25 行", mixed_beside_valid["gate"], mixed_beside_valid["gate"])
-                self.assertIn(mixed_header, mixed_beside_valid["gate"], mixed_beside_valid["gate"])
-                self.assertNotIn("统计点与责任方法说明", mixed_beside_valid["gate"], mixed_beside_valid["gate"])
-                self.assertIn("表头结构歧义", mixed_beside_valid["review"], mixed_beside_valid["review"])
-                self.assertIn(mixed_header, mixed_beside_valid["review"], mixed_beside_valid["review"])
-                self.assertIn("返回首页", mixed_beside_valid["review"], mixed_beside_valid["review"])
+        # 结构不确定附表单独存在（无正式两列表）：不充抵正式覆盖，门禁按必需点缺失报，原表仍送独审
+        self.variant(
+            "plan/plan.md",
+            "# Plan\n\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n| 编号 | 落点 |\n|---|---|\n| OBS-02 | HomeRepository.refreshBalance |\n\n"
+            "### 设计模式选型与角色\n\n决策树节点表落在 HomeRepository。\n\n"
+            "### 埋点\n\n| 埋点记录 | 场景 |\n|---|---|\n"
+            "| 余额刷新 / 保存结果 HomeRepository.refreshBalance | 返回首页 |\n",
+        )
+        uncertain_only = self.probe(fresh=True)
+        self.assertNotIn("结构歧义", uncertain_only["gate"], uncertain_only["gate"])
+        self.assertIn("逐点表里没有行", uncertain_only["gate"], uncertain_only["gate"])
+        self.assertIn("埋点段附表", uncertain_only["review"], uncertain_only["review"])
+        self.assertIn("| 埋点记录 | 场景 |", uncertain_only["review"], uncertain_only["review"])
+        self.assertIn("（plan 没有这个统计点）", uncertain_only["review"], uncertain_only["review"])
+
+        # 明确把统计点和责任方法合为一列的表头（| 统计点以及责任方法 |）仍硬拦并指出行号、表头与原行
+        self.variant(
+            "plan/plan.md",
+            "# Plan\n\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n| 编号 | 落点 |\n|---|---|\n| OBS-02 | HomeRepository.refreshBalance |\n\n"
+            "### 设计模式选型与角色\n\n决策树节点表落在 HomeRepository。\n\n"
+            "### 埋点\n\n| 统计点与责任方法说明 | 备注 |\n|---|---|\n| 辅助说明 | 只说明复用 HomeRepository.refreshBalance |\n\n"
+            "| 统计点 | 责任方法 | 结果 |\n|---|---|---|\n"
+            "| 余额刷新 / 保存结果 | HomeRepository.refreshBalance | 成功 |\n\n"
+            "| 统计点以及责任方法 | 场景 |\n|---|---|\n"
+            "| 余额刷新 / 保存结果 HomeRepository.refreshBalance | 返回首页 |\n",
+        )
+        mixed_beside_valid = self.probe(fresh=True)
+        self.assertIn("第 25 行", mixed_beside_valid["gate"], mixed_beside_valid["gate"])
+        self.assertIn("| 统计点以及责任方法 | 场景 |", mixed_beside_valid["gate"], mixed_beside_valid["gate"])
+        self.assertNotIn("统计点与责任方法说明", mixed_beside_valid["gate"], mixed_beside_valid["gate"])
+        self.assertIn("表头结构歧义", mixed_beside_valid["review"], mixed_beside_valid["review"])
+        self.assertIn("| 统计点以及责任方法 | 场景 |", mixed_beside_valid["review"], mixed_beside_valid["review"])
+        self.assertIn("返回首页", mixed_beside_valid["review"], mixed_beside_valid["review"])
 
 
 class S19PlanDirectEntryPreparesUseCasesAndKeepsAuthorization(ChainCase):

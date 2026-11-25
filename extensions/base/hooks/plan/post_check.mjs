@@ -73,7 +73,7 @@ function statProblems(inputs, design, contracts, group) {
     group.skipped.push({ what: 'plan.md 逐点表一致性', why: '这一次没有 plan.md；统计点由契约方法说明与验收承载，交独立审查逐点核' });
     return;
   }
-  const tableIssues = planStatTableIssues(planText, want.details.flatMap(d => d.rows.map(r => r[0])));
+  const tableIssues = planStatTableIssues(planText);
   if (tableIssues.length) group.problems.push(...tableIssues);
   const rows = planStatRows(planText);
   const points = want.details.flatMap(d => d.rows.map(r => r[0]));

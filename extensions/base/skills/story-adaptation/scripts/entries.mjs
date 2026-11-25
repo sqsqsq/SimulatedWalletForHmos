@@ -18,11 +18,25 @@ import { loadNative } from '../../../hooks/shared/framework-access.mjs';
 const BEGIN = '<!-- story-ext:begin -->';
 const END = '<!-- story-ext:end -->';
 const OLD_SECTION = 'skills/story/AGENTS.section.md';
+const BRIDGE_PREFIX = '# agent-maison:instance-extension-bridge ';
 
 const lf = text => text.replace(/\r\n/g, '\n');
 const read = file => (fs.existsSync(file) ? fs.readFileSync(file) : null);
 const baseRelOf = extDir => path.posix.join(extDir, 'base');
 const isStorySource = (src, extDir) => src.startsWith(`${extDir}/base/skills/`) || src.startsWith(`${extDir}/skills/`);
+
+function foreignSource(absPath, extDir) {
+  const line = read(absPath)?.toString('utf8').split(/\r?\n/, 5).find(l => l.startsWith(BRIDGE_PREFIX));
+  try {
+    const src = line ? JSON.parse(line.slice(BRIDGE_PREFIX.length))?.sourceRel : null;
+    return src && !isStorySource(src, extDir) ? src : null;
+  } catch { return null; }
+}
+
+const foreignConflict = (ctx, a) => {
+  const src = a.state === 'orphan' ? null : foreignSource(path.join(ctx.native.root, ...a.path.split('/')), ctx.extDir);
+  return src ? `${a.path}：已被其他扩展（${src}）合法占用，保留原文件不覆盖` : null;
+};
 
 function context(root) {
   const native = loadNative(root);
@@ -91,25 +105,21 @@ function bridgeArtifacts(ctx, skills) {
   }));
 }
 
-/** 保护非本包所有者的有效桥：emitInstanceSkillBridge 清理孤儿前先留快照，写后按原字节恢复。 */
+/** 保护非本包所有者的有效桥（含不同名孤儿与同名他属桥）：写前留快照，写后按原字节恢复。 */
 function snapshotOtherOwners(ctx, skills) {
   const saved = new Map();
   for (const a of bridgeArtifacts(ctx, skills)) {
-    if (a.state === 'orphan' && a.sourceRel && !isStorySource(a.sourceRel, ctx.extDir)) {
-      const abs = path.join(ctx.native.root, ...a.path.split('/'));
-      const data = read(abs);
-      if (data) saved.set(a.path, { abs, data });
-    }
+    const abs = path.join(ctx.native.root, ...a.path.split('/'));
+    const foreign = a.state === 'orphan' ? (a.sourceRel && !isStorySource(a.sourceRel, ctx.extDir)) : Boolean(foreignSource(abs, ctx.extDir));
+    if (foreign) { const data = read(abs); if (data) saved.set(a.path, { abs, data }); }
   }
   return saved;
 }
 
 function restoreOtherOwners(saved) {
   for (const { abs, data } of saved.values()) {
-    if (!fs.existsSync(abs)) {
-      fs.mkdirSync(path.dirname(abs), { recursive: true });
-      fs.writeFileSync(abs, data);
-    }
+    const cur = read(abs);
+    if (!cur || !cur.equals(data)) { fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, data); }
   }
 }
 
@@ -124,6 +134,8 @@ export default function initSkillBridgeHook(hookCtx) {
   const ctx = context(hookCtx.projectRoot);
   const skills = packageSkills(ctx.extRoot, ctx.native.require('yaml'));
   if (!skills.length) return { ok: true, message: 'Story base 未声明可物化 Skill' };
+  const foreigns = [...new Set(bridgeArtifacts(ctx, skills).map(a => foreignConflict(ctx, a)).filter(Boolean))];
+  if (foreigns.length) return { ok: false, message: `Story base 桥冲突，未覆盖他属入口：${foreigns.join('；')}` };
   const bridge = ctx.native.module('scripts/utils/instance-skill-bridge.ts');
   const protectedOwners = snapshotOtherOwners(ctx, skills);
   const rows = ctx.adapters.map(agentAdapter => ({
@@ -179,22 +191,32 @@ export function entryPlan(root, skills = null) {
   }
   const section = read(path.join(extRoot, ...OLD_SECTION.split('/')));
   const entries = renderedEntries(ctx);
+  const pendingEntries = [];
   for (const { target, rendered } of entries) {
     const current = read(path.join(native.root, target));
-    if (current === null) continue;
+    if (current === null) { pendingEntries.push(target); continue; }
     const kept = withoutOldZone(lf(current.toString('utf8')), section === null ? null : section.toString('utf8'));
     if (kept === null) conflicts.push(`${target}：扩展段与已装版本不符或标记不成对，原生物化会整份重写它`);
     else if (kept !== rendered) conflicts.push(`${target}：有原生生成之外的内容，原生物化会整份重写它`);
+    if (lf(current.toString('utf8')) !== rendered) pendingEntries.push(target);
   }
   const bridgeTargets = [];
+  const pendingBridges = [];
   for (const a of bridgeArtifacts(ctx, wanted)) {
     if (a.state === 'orphan' && a.sourceRel && !isStorySource(a.sourceRel, ctx.extDir)) continue;
+    const foreign = foreignConflict(ctx, a);
+    if (foreign) { conflicts.push(foreign); continue; }
     bridgeTargets.push(a.path);
+    if (a.state !== 'present') pendingBridges.push(a.path);
     if ((a.state === 'unowned' || a.state === 'drifted') && !retire.includes(a.path)) {
       conflicts.push(`${a.path}：本次要物化的 Skill 入口位置上已有${a.state === 'unowned' ? '无归属' : '被改过'}的文件`);
     }
   }
-  return { retire, conflicts: [...new Set(conflicts)], entries: entries.map(e => e.target), bridges: [...new Set(bridgeTargets)] };
+  return {
+    retire, conflicts: [...new Set(conflicts)],
+    entries: entries.map(e => e.target), pendingEntries,
+    bridges: [...new Set(bridgeTargets)], pendingBridges: [...new Set(pendingBridges)],
+  };
 }
 
 /** 写后核（只读）：根 manifest 合法、入口文件等于原生渲染、base/skills 桥全部 present 且无本包孤儿。 */
@@ -212,6 +234,8 @@ export function entryCheck(root, skills = null) {
   const states = new Map();
   for (const a of bridgeArtifacts(ctx, wanted)) {
     if (a.state === 'orphan' && a.sourceRel && !isStorySource(a.sourceRel, ctx.extDir)) continue;
+    const foreign = foreignConflict(ctx, a);
+    if (foreign) { problems.push(foreign); continue; }
     states.set(a.path, [...(states.get(a.path) ?? []), a.state]);
   }
   const warnings = [];
@@ -229,6 +253,8 @@ export function entryMaterialize(root, retire = [], skills = null) {
   const ctx = context(root);
   const { native, extRoot } = ctx;
   const wanted = skills && skills.length ? skills : packageSkills(extRoot, native.require('yaml'));
+  const foreigns = [...new Set(bridgeArtifacts(ctx, wanted).map(a => foreignConflict(ctx, a)).filter(Boolean))];
+  if (foreigns.length) return { written: [], removed: [], problems: foreigns, warnings: [] };
   const bridge = native.module('scripts/utils/instance-skill-bridge.ts');
   const protectedOwners = snapshotOtherOwners(ctx, wanted);
   const entries = renderedEntries(ctx);
