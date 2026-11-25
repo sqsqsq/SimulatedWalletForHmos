@@ -408,7 +408,28 @@ packages:
         actual_batch: {G: 16, X: 25}
         cumulative_version_estimate: {G: 677, X: 764}
         source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
+      - release: "2.0.6"
+        date: "2026-11-25"
+        by: "维护设计者 Codex（用户授权）"
+        at_ref: "f539f9cf"
+        approved_increment_g: 77
+        planned_retirement_x: 69
+        actual_batch: {G: 552, X: 504}
+        pending_confirmation_g: 304
+        cumulative_version_estimate: {G: 754, X: 991}
+        scope: "本轮旧额247加签1；S25至S28另准76/69。G304暂不追认。"
+        source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
     confirmations:
+      - band: ">150%"
+        by: "维护设计者 Codex（受用户委托）"
+        date: "2026-11-25"
+        at_ref: "f539f9cf"
+        actual_invested_g: 9616
+        confirmed_overrun_g: 1
+        pending_confirmation_g: 304
+        scope: "四步实投G552/X504，具名认可G248；安装脚本超额G304暂不追认。"
+        reason: "包R226.3%；核实必要的路径迁移、正常桥接和保留能力；实际用户资产保护不成立，须替换后再复核。"
+        source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
       - band: ">150%"
         by: "维护设计者 Codex（受用户委托）"
         date: "2026-11-25"
