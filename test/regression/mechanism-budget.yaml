@@ -356,6 +356,18 @@ packages:
         batches: {"01": [0, 0], "02": [132, 224], "03": [164, 240], "04": [242, 340], "05": [0, 0]}
         source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
         reason: "批准按步骤卡正向替换。实际投入、旧路径退出及超额按同包逐次复核。S09 原型未获正式接纳，真实 CLI、内网发布及上游实施另按其授权。"
+      - release: "2.0.6"
+        plan_revision: 4
+        date: "2026-11-24"
+        by: "维护设计者 Codex，依用户对预算的既有委托"
+        approved_increment_g: 38
+        planned_retirement_x: 68
+        scope: "阅读质量补充；仅为修订2批准额度之上的增量"
+        step_deltas: {S04: {G: 32, X: 60}, S05: {G: 6, X: 8}}
+        cumulative_version_estimate: {G: 576, X: 872}
+        forecast_peak: 19736
+        forecast_final: 18864
+        source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
     confirmations:
       - band: ">150%"
         by: 用户
