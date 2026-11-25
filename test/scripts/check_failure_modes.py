@@ -833,7 +833,7 @@ def m07_exact_heading_selector(root: Path, ctx: Ctx) -> Outcome:
 def m08_whole_file_sha_lock(root: Path, ctx: Ctx) -> Outcome:
     """模式基线守恒须分正文与元数据，不得整文件 SHA 绑死。"""
     hits = []
-    for path in iter_files(root, CODE_SUFFIXES, ()):
+    for path in iter_files(root, CODE_SUFFIXES, NON_MECHANISM_DIRS):
         text = read_text(path)
         if "design-patterns" not in text and "pattern" not in path.name:
             continue
