@@ -398,7 +398,26 @@ packages:
         actual_batch: {G: 59, X: 38}
         cumulative_version_estimate: {G: 675, X: 759}
         source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
+      - release: "2.0.6"
+        date: "2026-11-25"
+        by: "维护设计者 Codex（用户授权）"
+        at_ref: "18a718bb"
+        approved_increment_g: 2
+        planned_retirement_x: 6
+        scope: "S23维护域；S24预计G5/X6，复用余额G3。04本轮未交产品。"
+        actual_batch: {G: 16, X: 25}
+        cumulative_version_estimate: {G: 677, X: 764}
+        source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
     confirmations:
+      - band: ">150%"
+        by: "维护设计者 Codex（受用户委托）"
+        date: "2026-11-25"
+        at_ref: "18a718bb"
+        actual_invested_g: 9064
+        confirmed_overrun_g: 0
+        scope: "S20–S22本轮 G16/X25，S21行为签收；S20与S22各留一项。"
+        reason: "按原分母R213.3%，已发生增量必要；遗留无调用引用归S10清理，S23/S24按实际退场复核。"
+        source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
       - band: ">150%"
         by: "维护设计者 Codex（受用户委托）"
         date: "2026-11-24"
