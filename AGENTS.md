@@ -18,7 +18,7 @@
 | `tools/cli/` | 实跑用的 CLI runtime |
 | `output/` | 不入库：`output/story/` 放运行证据，`output/scratch/` 放临时脚本、临时工作区与 pytest 缓存 |
 
-`extensions/` 是当前开发版；测试时它被装进从 demo 复制的一次性 template；demo 只在正式发布时更新，平时保持上一个发布版。
+`extensions/` 是当前开发版；测试时它被装进从 demo 复制的一次性 template；仓内 demo 的 CLI 候选更新与正式发布更新按 §7 分别留证。
 
 版本目标、分支安排、实施进度与当前交接入口记录在对应的 spec/plan 中；本文维护项目长期适用的职责、所有权和工作规则。
 
@@ -100,7 +100,7 @@ demo/scripts/build-dependence.ps1                                     # 重建 d
 
 ### 3.2 Extension 结构
 
-- **按运行位置设计**：开发源在extensions，链接命令按消费工程安装位置`doc/extensions/`及宿主位置编写验证；测试装隔离template，发布才更新demo，对外adapt从demo已装发布版执行。
+- **按运行位置设计**：开发源在extensions，链接命令按消费工程安装位置`doc/extensions/`及宿主位置编写验证；Case 在隔离 template 运行；仓内 demo 的候选与发布同步按 §7，业务升级从目标工程已安装的正式 base 就地执行 adapt。
 - **两层一桥**：机制为knowledge以外的skills/hooks/rules/contracts/manifest及宿主入口，走公共扩展点，对目标模块、SDK、业务名、绝对路径和Case零强依赖；knowledge是可适配样板，适配按所有权接入，目标维护知识。
 - **机制层零测试特征**：机制/注入件无Case单号、测试业务或答案特征。按用户级review核所有模型可见的提示、代码、命名、注释、工具输出、输入与环境及实际生成内容；换合法题材/表达仍成立，不能由预列关系限制正常业务。中性例子与适用条件分开；当前需求业务名/数字核来源即可。机械回归见TEST§5.5，专名零命中不代签。
 - **单一真源**：事实、状态、配置、编号含义、图登记和决定各有真源；派生视图由其生成。随工程变化的约定进合同/配置；域/条目/模式/角色从权威清单与正文派生，失败报错。ID只作身份追踪；Story/Review完整性由独立语义判断范围内事实、关系、流程、异常、验收和决定。
@@ -192,7 +192,7 @@ demo/scripts/build-dependence.ps1                                     # 重建 d
 3. 三组本地定制（§2，文件清单见维护操作§2）被发布件覆盖时，在新文件上重新加回定制内容，不整文件回退到旧版；上游已带同义内容的那组不再加回。
 4. 在 demo 根按 [framework-init](demo/framework/skills/project/framework-init/SKILL.md) 做 UPDATE（S1–S4），物化清单按本轮实际选择。
 5. 宿主入口由 Framework 按已装 Extension 的 manifest 原生物化：UPDATE 后跑
-   `node demo/doc/extensions/skills/story-adaptation/scripts/entries.mjs --project-root demo --action check`，核入口文件与原生渲染一致、
+   `node demo/doc/extensions/base/skills/story-adaptation/scripts/entries.mjs --project-root demo --action check`，核入口文件与原生渲染一致、
    每个扩展 Skill 的入口都在；不一致按它点名的项处理，不手改入口文件。
 6. 装置同步：根 `.opencode/agent/verifier.md` 逐字节复制自 `demo/.opencode/agent/verifier.md`。
 7. 验证：demo 下 `cd framework/harness && npm test`；`check_framework_drift.py` 结果与本次接入一致；按 [TEST §5](test/TEST.md) 跑与改动相关的离线回归。
@@ -202,40 +202,17 @@ demo/scripts/build-dependence.ps1                                     # 重建 d
 
 ## 7. Extension 安装与发布
 
-同一个安装函数 `test/scripts/publish_to_demo.py` 服务两种目标，顺序固定：宿主入口写前核（只读）→ 整体替换目标 `doc/extensions` →
-撤下已核的旧入口、Framework 原生物化宿主入口并写后核。入口的核与物化只有一份实现，即扩展里的
-`skills/story-adaptation/scripts/entries.mjs`，对外 adapt 用的也是它：待装的扩展先用目标的 Framework 原生加载器核 manifest 与全部登记引用；
-入口文件去掉已装旧版的扩展段后须与 Framework 的渲染逐字相同，已装旧版登记的入口须与旧发布源相同才撤下，要物化的 Skill 入口位置上
-不能有无归属的文件；不成立就停在写之前。物化中途失败时按前后字节报出已写、已删的入口与原始错误；共用目录的宿主互相改写（Framework
-已知限制）留在结果的 warnings 里。
+**2.0.6 的仓内 demo 更新两次。** 执行者在最终 CLI 启动前将当前开发分支的 demo 更新并提交为测试候选；在用户决定发布后、正式发布前，按最终批准的组合再同步一次。两次分别记录源、demo 提交、Framework 分发与本地定制、宿主入口和适配结果。对外分发取正式发布身份。后续布局稳定且只改机制时，物料只替换 base；每次更新按 `framework-init → /story adapt` 刷新宿主入口、项目登记与适配版本。
 
-- **测试**：只装一次性 template，由 `run_multi_case.py` 按 TEST §1.2 装配，离线检查用的 template 按 TEST §5 现建。测试不写 demo；
-  需求产物回流到维护仓 `doc/features/`。
-- **版本号**：新版本第一次改动 `extensions/` 的提交就把 `manifest.yaml` 的 `version` 升到新版本号。
-- **正式发布**：前置是用户已决定发布本版本、demo 干净。
-
-  ```powershell
-  python test/scripts/publish_to_demo.py --source extensions --target demo --dry-run   # 看计划
-  python test/scripts/publish_to_demo.py --source extensions --target demo             # 退出 0 = 已安装
-  ```
-
-  验证 `git status -- demo` 的改动只在 `demo/doc/extensions/`、Framework 物化的扩展 Skill 入口与入口文件，再核 demo 扩展与开发源同源（打印 `True`）：
-
-  ```powershell
-  python -c @"
-  import sys
-  from pathlib import Path
-  sys.path.insert(0, 'test/scripts')
-  import publish_to_demo as p
-  src, dst = Path('extensions'), Path('demo/doc/extensions')
-  files = p.enumerate_source(src)
-  print(files == p.enumerate_source(dst) and all((src / f).read_bytes() == (dst / f).read_bytes() for f in files))
-  "@
-  ```
+- **Framework**：demo 与测试 pin 取本项目 main 上正在适配的同一正式分发，按 §6 核发布树、本地定制和物化结果。
+- **旧版首升**：先核真实目标的旧根 manifest、已有桥、知识、对接和 usage，写前保护用户资产并原位合并启动登记。新布局保留业务根 manifest、knowledge、adapters；执行项目级 init，由实际生成的 Story 桥进入 adapt，核清理后正式知识、测试对接和游标。
+- **测试**：正式 Case 在一次性工作区运行。维护者按 [TEST §1.2](test/TEST.md) 保存已核 demo、模板、Case 所消费的组合与预期隔离差异。测试运行本身不更新 demo 安装；需求产物按 TEST 回流。
+- **版本号**：新布局的包版本由 `extensions/base/package-manifest.yaml` 声明，经就地升级同步根清单；实际完成适配时再写 `adapted_for`。
+- **正式发布**：用户决定发布、demo 干净后，用最终批准物料第二次更新仓内 demo。核 base 机制与发布源同源，包自有样例已按适配结果清理，demo 的知识、清单、对接和使用记录符合其所有权。用实际差异决定回归范围，同版重入可用内容摘要确认一致。
 
   然后跑 `python test/scripts/check_failure_modes.py`（缺省检查 demo）。发布提交带上 demo、`doc/release/<版本>.md` 与更新后的
   [README](README.md)，并在 [项目演进记录](doc/EVOLUTION.md) 登记。提交前核：本版增量里使用者可见的每项变化都已反映在 README 的当前描述里
   （命令、能力、产物、入口、安装），与发布版本一致；README 只写当前状态，版本变化只写在本版发布说明。
 - **失败**：退出 2 是输入读取、git 前置或宿主入口写前核不成立，目标没写；退出 1 是写入或物化中途失败，结果 JSON 列出实际完成项。用 git 查看并还原 demo，
   修好后从同一源重装。
-- **对外升级**：其他仓的安装与升级用 demo 里已装的发布版 adapt（`demo/doc/extensions/skills/story-adaptation/`）。
+- **对外升级**：业务工程从内网正式发行取 base 与 adapters 后，在该工程运行已安装的 Story adapt。

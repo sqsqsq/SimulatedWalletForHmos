@@ -90,7 +90,7 @@ CLI 测试一律以非沙箱启动（用户长期授权，每轮不必重新征�
 
 0. **实例前置自检**（缺一不起跑）：`framework.config.json` 配了 `paths.ui_kit_target_dir` 且该目录已物化 UI kit 组件，否则跑到 coding 的
    Case 都会被 UI kit 门禁拦在「目标目录无法解析」上；demo 的 `framework/harness/state/` 下没有属于别人的阶段状态（有则先弄清归属，
-   再决定是否 clear-state）；demo 是发布基线：顶层没有维护目录（`test`、`tools`、`output`、`scratch`、`.bak`、`.git`）、没有 `doc/features`，
+   再决定是否 clear-state）；demo 是本轮已提交的消费工程基线：顶层没有维护目录（`test`、`tools`、`output`、`scratch`、`.bak`、`.git`）、没有 `doc/features`，
    git 查询成功且非忽略改动为空。Windows 上被测 CLI 在 PATH 里解析到原生可执行文件，不是 npm 的 `.cmd` 包装（配法见
    [tools/cli/README](../tools/cli/README.md)），否则首条请求会在启动前被拒。被测 CLI 的容量事实已固定并写进本轮运行证据：二进制版本、
    请求实际用的 model 与 config 路径、生效的输入 / 上下文 / 输出上限、上下文压缩怎样触发、服务计量约束，只记非秘密字段；
@@ -109,13 +109,13 @@ CLI 测试一律以非沙箱启动（用户长期授权，每轮不必重新征�
 活动 PID、有效 lease、路径越界、链接风险或无法可靠枚举进程时，保留现场并在第 5 步之前停止。
 `sw-story/` 只放可丢弃的临时现场，要长期保留的东西不放在那里。
 
-模板按固定顺序装配：核 demo（结构、没有 `doc/features`、git 干净、记下提交）→ 复制 demo（排除 `doc/features`、Framework 活动状态、
+2.0.6 正式 CLI 前由 S30 更新仓内 demo，并验证以下装配得到同一组合。现有模板按固定顺序装配：核 demo（结构、没有 `doc/features`、git 干净、记下提交）→ 复制 demo（排除 `doc/features`、Framework 活动状态、
 `oh_modules`、`build`、`.hvigor`、`__pycache__` 等运行态，业务模块自己的单测目录照常带上）→ 换上被测 Framework：按
 [`test/config/framework-under-test.json`](config/framework-under-test.json) 从维护仓 Git 的固定发布提交取 framework 子树原始字节（核树 OID 与发布清单，
 只留 harness 依赖、锁文件、运行报告与状态等运行态，依赖声明变了就停），核并应用同一文件登记的本地宿主补丁，配置的 `materialized_adapters`
 纳入登记的 adapter，在干净进程环境里跑原生 UPDATE 物化，核补丁动过的子代理模板与物化产物逐字节同源 → 把根 `extensions/` 的当前开发源
 （含未提交改动）装进模板的 `doc/extensions/`、按原生物化写宿主入口 → 核模板与开发源逐字节同源 → 再核 demo 提交与干净状态未变。任一步
-不成立，模板作废、不建 Case、不起跑，修好后重新装配。demo 平时保持其已接入的 Framework；被测组合只存在于模板。各 Case 工作区从模板复制，
+不成立，模板作废、不建 Case、不起跑，修好后重新装配。2.0.6 最终套件以仓内已提交 demo 候选为对照，Framework 分发、补丁及安装后的 Story、知识、对接、适配状态与入口须核实一致。各 Case 工作区从模板复制，
 再放入该 Case 的输入；启动前检查路径边界与软链接，并在 `workspace-boundary.json` 记录 demo 提交、被测 Framework（发布提交、树 OID、版本与
 source_commit、补丁及其摘要、物化清单、子代理产物摘要）、`copied`、`excluded`、安装结果和各 Case 的 `case_seeded`。
 每次启动 Case 前，按这次选中的 CLI 用 Framework 的 `check-personal-setup --ensure --select-adapter <CLI 名>` 写好这个隔离工程的
@@ -128,7 +128,7 @@ source_commit、补丁及其摘要、物化清单、子代理产物摘要）、`
 
 ### 1.3 人手试用
 
-人手试用在从 demo 复制出的隔离副本里做，用的是 demo 装着的发布版扩展；demo 本身保持发布基线。bootstrap 装好本地需求系统、验证链路，
+人手试用在从 demo 复制出的隔离副本里做，用 demo 已装的扩展；记录当前是 CLI 候选提交或正式发布提交。bootstrap 装好本地需求系统、验证链路，
 再按模板的复制规则把 demo 复制到系统临时目录的 `sw-story-trial/<时间>`，回执给出路径：
 
 ```powershell

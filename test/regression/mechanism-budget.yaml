@@ -419,7 +419,28 @@ packages:
         cumulative_version_estimate: {G: 754, X: 991}
         scope: "本轮旧额247加签1；S25至S28另准76/69。G304暂不追认。"
         source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
+      - release: "2.0.6"
+        date: "2026-11-25"
+        by: "维护设计者 Codex（用户授权）"
+        at_ref: "567fa6a1"
+        approved_increment_g: 172
+        planned_retirement_x: 32
+        actual_batch: {G: 174, X: 84}
+        pending_confirmation_g: 262
+        cumulative_version_estimate: {G: 926, X: 1038}
+        scope: "前轮追加认可102，本轮追加认可38，另准S29 G32/X32、S30维护域。"
+        source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
     confirmations:
+      - band: ">150%"
+        by: "维护设计者 Codex（受用户委托）"
+        date: "2026-11-25"
+        at_ref: "567fa6a1"
+        actual_invested_g: 9790
+        confirmed_overrun_g: 140
+        pending_confirmation_g: 262
+        scope: "S25–S28本轮实投174/84认可G114；前轮304再认102；202及60分列待核。"
+        reason: "按同一包R230.4%；认可可验证的桥、样例和对接迁移，保留未解决旧清单及写前保护的超额。"
+        source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
       - band: ">150%"
         by: "维护设计者 Codex（受用户委托）"
         date: "2026-11-25"
