@@ -1346,5 +1346,141 @@ console.log(JSON.stringify({
         self.assertNotIn("首次安装且正式知识为空", r_broken.stdout)
         self.assertEqual(broken_body, kf.read_text(encoding="utf-8"))
 
+    def _extract_7b11_base(self, ext_dir: Path) -> None:
+        import io, tarfile
+        arc = subprocess.run(["git", "-C", str(REPO_ROOT), "archive", "7b117923", "--", "extensions/base"], check=True, capture_output=True)
+        with tarfile.open(fileobj=io.BytesIO(arc.stdout), mode="r:*") as tf:
+            for m in tf.getmembers():
+                if not m.name.startswith("extensions/base/"):
+                    continue
+                rel = m.name[len("extensions/"):]
+                dst = ext_dir / rel
+                if m.isdir():
+                    dst.mkdir(parents=True, exist_ok=True)
+                elif m.isfile():
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    dst.write_bytes(tf.extractfile(m).read())
+
+    def test_s38_business_bridge_and_legacy_examples_root_and_subproject_protection(self) -> None:
+        """S38：业务 Skill 桥（business-receipts）在导入前、首次正式 init UPDATE 后、独立 --apply 后逐字节保活；
+        旧 base/examples/ 保护在 Git 根与 apps/pay 子工程、prepare_init True/False、忽略稿/已提交稿/改写原样例/伪造清单上均写前拦停，仅纯旧发行件放行。"""
+        # 1) R2：业务 Skill (business-receipts) 已有原生物化桥 → init UPDATE 与独立 --apply 均逐字节保活，Story 旧桥刷新到 base/skills/
+        p_biz = self.root / "s38-biz-bridge"
+        ext_biz = self._seed_real_205_repo(p_biz, rev="f6d3ed44")
+        biz_sk = ext_biz / "skills/business-receipts/SKILL.md"
+        biz_sk.parent.mkdir(parents=True, exist_ok=True)
+        biz_sk_text = "---\nname: business-receipts\ndescription: 业务回执校验\n---\n# Business Receipts\n"
+        biz_sk.write_text(biz_sk_text, encoding="utf-8")
+        mf = yaml.safe_load((ext_biz / "manifest.yaml").read_text(encoding="utf-8"))
+        mf["provides"]["skills"].append("business-receipts")
+        (ext_biz / "manifest.yaml").write_text(yaml.safe_dump(mf, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        emit_all = """
+const [root] = process.argv.slice(1);
+const path = require('node:path');
+const { createRequire } = require('node:module');
+const fw = path.join(root, 'framework');
+const req = createRequire(path.join(fw, 'harness', 'package.json'));
+req('ts-node').register({ project: path.join(fw, 'harness', 'tsconfig.json'), transpileOnly: true });
+req('./scripts/utils/instance-skill-bridge.ts').emitInstanceSkillBridge({
+  repoRoot: root, frameworkDir: fw, agentAdapter: 'codex',
+  extensionDirRel: 'doc/extensions',
+  declaredSkillIds: ['story', 'story-adaptation', 'story-knowledge', 'story-stats', 'business-receipts'],
+});
+"""
+        subprocess.run(["node", "-e", emit_all, str(p_biz)], check=True, capture_output=True)
+        biz_bridge = p_biz / ".codex/skills/business-receipts/SKILL.md"
+        self.assertTrue(biz_bridge.is_file())
+        biz_bridge_bytes = biz_bridge.read_bytes()
+        self.assertIn("doc/extensions/skills/business-receipts/SKILL.md", biz_bridge_bytes.decode("utf-8"))
+        self.assertIn("doc/extensions/skills/story/SKILL.md", (p_biz / ".codex/skills/story/SKILL.md").read_text(encoding="utf-8"))
+        init_commit(p_biz)
+
+        # 导入 + 预置
+        imp = pub.import_external_base(DEV_SOURCE, p_biz, prepare_init=True)
+        self.assertTrue(imp["prepared"], imp["stdout"] + imp["stderr"])
+        self.assertEqual(biz_bridge_bytes, biz_bridge.read_bytes())
+        # 第一次正式 framework-init UPDATE
+        r_init = self._run_live_init(p_biz, "codex,claude")
+        self.assertEqual(0, r_init.returncode, r_init.stdout + r_init.stderr)
+        self.assertTrue(biz_bridge.is_file(), "首次 init UPDATE 误删业务桥")
+        self.assertEqual(biz_bridge_bytes, biz_bridge.read_bytes(), "首次 init UPDATE 改写了业务桥字节")
+        self.assertIn("doc/extensions/base/skills/story/SKILL.md", (p_biz / ".codex/skills/story/SKILL.md").read_text(encoding="utf-8"))
+        after_init = self._load_extension_via_native_loader(p_biz)
+        self.assertEqual([], after_init["errors"], after_init)
+        self.assertIn("business-receipts", after_init["skills"])
+        # 独立再跑 adapt-scan --apply
+        scan_biz = ext_biz / "base/skills/story-adaptation/scripts/adapt-scan.mjs"
+        r_apply = subprocess.run(["node", str(scan_biz), "--apply"], cwd=str(p_biz), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(0, r_apply.returncode, r_apply.stdout + r_apply.stderr)
+        self.assertTrue(biz_bridge.is_file(), "独立 --apply 误删业务桥")
+        self.assertEqual(biz_bridge_bytes, biz_bridge.read_bytes(), "独立 --apply 改写了业务桥字节")
+        self.assertEqual(biz_sk_text, biz_sk.read_text(encoding="utf-8"))
+        after_apply = self._load_extension_via_native_loader(p_biz)
+        self.assertEqual([], after_apply["errors"], after_apply)
+        self.assertIn("business-receipts", after_apply["skills"])
+        self.assertEqual(0, subprocess.run(["node", str(scan_biz), "--check"], cwd=str(p_biz), capture_output=True).returncode)
+
+        # 2) R3：Git 根与 apps/pay 子工程同组对照（忽略稿、已提交人工稿、改写原样例、伪造清单均写前停；仅未改发行件成功）
+        for loc in ("root", "subproject"):
+            for prep in (False, True):
+                with self.subTest(loc=loc, prepare_init=prep):
+                    repo = self.root / f"s38-ex-{loc}-p{int(prep)}"
+                    proj = repo if loc == "root" else repo / "apps" / "pay"
+                    make_consumer(proj, f"S38Ex{loc}", ["codex"])
+                    ext = proj / "doc/extensions"
+                    self._extract_7b11_base(ext)
+                    init_commit(repo, "/apps/pay/framework/" if loc == "subproject" else "/framework/")
+
+                    # 2a) 被旧 base/.gitignore 忽略的额外手稿 → 写前拦停，原字节不动
+                    ig_draft = ext / "base/examples/project-owner/local-draft.md"
+                    ig_draft.parent.mkdir(parents=True, exist_ok=True)
+                    ig_body = "# local ignored draft\n"
+                    ig_draft.write_text(ig_body, encoding="utf-8")
+                    r_ig = pub.import_external_base(DEV_SOURCE, proj, prepare_init=prep)
+                    self.assertEqual(2, r_ig["returncode"], (loc, prep, r_ig))
+                    self.assertIn("project-owner/local-draft.md", r_ig["stderr"])
+                    self.assertEqual(ig_body, ig_draft.read_text(encoding="utf-8"))
+                    self.assertTrue((ext / "base/examples/.manifest.json").is_file())
+                    ig_draft.unlink()
+
+                    # 2b) 强制 git add -f 并提交的非包人工稿（工作区干净）→ 写前拦停，原字节不动
+                    tr_draft = ext / "base/examples/项目素材/验收手稿.md"
+                    tr_draft.parent.mkdir(parents=True, exist_ok=True)
+                    tr_body = "# committed user manuscript\n"
+                    tr_draft.write_text(tr_body, encoding="utf-8")
+                    run_git(repo, "add", "-f", str(tr_draft.relative_to(repo).as_posix()))
+                    run_git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "force-add draft")
+                    self.assertEqual("", run_git(repo, "status", "--porcelain").stdout.strip())
+                    r_tr = pub.import_external_base(DEV_SOURCE, proj, prepare_init=prep)
+                    self.assertEqual(2, r_tr["returncode"], (loc, prep, r_tr))
+                    self.assertIn("验收手稿.md", r_tr["stderr"])
+                    self.assertEqual(tr_body, tr_draft.read_text(encoding="utf-8"))
+                    run_git(repo, "rm", "-qf", str(tr_draft.relative_to(repo).as_posix()))
+                    run_git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "rm draft")
+
+                    # 2c) 改写原样例并伪造待删目录里的 .manifest.json 自证 → 写前拦停，原字节不动
+                    sample = ext / "base/examples/knowledge/facts/component-profile.md"
+                    orig_sample = sample.read_bytes()
+                    mod_body = orig_sample.decode("utf-8") + "\n- 本地改写\n"
+                    sample.write_text(mod_body, encoding="utf-8")
+                    mf_ex = ext / "base/examples/.manifest.json"
+                    orig_mf = mf_ex.read_bytes()
+                    forged = json.loads(orig_mf.decode("utf-8"))
+                    forged["files"]["knowledge/facts/component-profile.md"] = "sha256:" + hashlib.sha256(mod_body.replace("\r\n", "\n").encode("utf-8")).hexdigest()
+                    mf_ex.write_text(json.dumps(forged, indent=2), encoding="utf-8")
+                    r_mod = pub.import_external_base(DEV_SOURCE, proj, prepare_init=prep)
+                    self.assertEqual(2, r_mod["returncode"], (loc, prep, r_mod))
+                    self.assertIn("component-profile.md", r_mod["stderr"])
+                    self.assertEqual(mod_body, sample.read_text(encoding="utf-8"))
+                    sample.write_bytes(orig_sample)
+                    mf_ex.write_bytes(orig_mf)
+
+                    # 2d) 仅未改动的 7b117923 旧发行件 → 成功替换并退出 examples/ 与 base/.gitignore
+                    r_ok = pub.import_external_base(DEV_SOURCE, proj, prepare_init=prep)
+                    self.assertEqual(0, r_ok["returncode"], (loc, prep, r_ok))
+                    self.assertEqual(prep, r_ok["prepared"])
+                    self.assertFalse((ext / "base/examples").exists())
+                    self.assertFalse((ext / "base/.gitignore").exists())
+
 if __name__ == "__main__":
     unittest.main()

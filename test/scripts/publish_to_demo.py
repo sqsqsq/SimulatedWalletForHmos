@@ -110,11 +110,6 @@ def package_base_dir(source: Path) -> Path | None:
     return None
 
 
-def _lf_sha256(path: Path) -> str:
-    import hashlib
-    return "sha256:" + hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
-
-
 def verify_external_base(base: Path) -> None:
     """核验外网无样例 base 包边界：零 examples/、零 base/.gitignore、零 demo knowledge/、零替身 adapters。"""
     problems: list[str] = []
@@ -165,44 +160,11 @@ def import_external_base(source: Path, target: Path, *, prepare_init: bool = Tru
         except InputError as exc:
             return {"files": [], "prepared": False, "returncode": 2, "stdout": "", "stderr": f"[import] {exc}"}
         staged_base = stage_root / "base"
-        # 1) 目标已有 base/ 时，先核其未提交/未跟踪改动与被旧 .gitignore 忽略的人工/未归属文件（写前阻断，零字节改写）
+        # 1) 写前核统一交由暂存区新版 adapt-scan.mjs 执行：
+        #    prepare_init=True 走完整 --prepare-init --dry-run；
+        #    prepare_init=False 且目标已有 base/ 时走 --check-base，同样不能绕过 Git 写面与旧 base/examples 文件保护。
         existing_base = ext_root / "base"
-        if existing_base.is_dir():
-            st = subprocess.run(["git", "-C", str(target), "-c", "core.quotepath=false",
-                                 "status", "--porcelain", "-uall", "--", f"{ext_dir}/base"],
-                                capture_output=True, text=True, encoding="utf-8", errors="replace")
-            if st.returncode == 0 and st.stdout.strip():
-                return {"files": [], "prepared": False, "returncode": 2, "stdout": "",
-                        "stderr": f"[import] 停：目标 {ext_dir}/base/ 存在未提交或未跟踪改动，导入前请先处理：\n{st.stdout.strip()}"}
-            ig = subprocess.run(["git", "-C", str(target), "-c", "core.quotepath=false",
-                                 "status", "--porcelain", "--ignored=matching", "-uall", "--", f"{ext_dir}/base"],
-                                capture_output=True, text=True, encoding="utf-8", errors="replace")
-            if ig.returncode == 0 and ig.stdout.strip():
-                ex_mf = existing_base / "examples" / ".manifest.json"
-                exp_ex = (json.loads(ex_mf.read_text(encoding="utf-8")).get("files") if ex_mf.is_file() else None) or {}
-                prefix = f"{ext_dir}/base/"
-                unowned = []
-                for line in ig.stdout.splitlines():
-                    if not line.startswith("!! "):
-                        continue
-                    rel_p = line[3:].strip().strip('"')
-                    expanded = (
-                        [f.relative_to(target).as_posix() for f in sorted((target / rel_p.rstrip("/")).rglob("*")) if f.is_file()]
-                        if rel_p.endswith("/") else [rel_p]
-                    )
-                    for item_p in expanded:
-                        sub = item_p[len(prefix):] if item_p.startswith(prefix) else ""
-                        if not sub or "__pycache__/" in sub or sub.endswith((".pyc", ".pyo")):
-                            continue
-                        if sub == "examples/.manifest.json" and exp_ex:
-                            continue
-                        if sub.startswith("examples/") and sub[9:] in exp_ex and _lf_sha256(existing_base / sub) == exp_ex[sub[9:]]:
-                            continue
-                        unowned.append(item_p)
-                if unowned:
-                    return {"files": [], "prepared": False, "returncode": 2, "stdout": "",
-                            "stderr": f"[import] 停：目标 {ext_dir}/base/ 含被忽略的人工或未归属文件，拒绝覆盖：{', '.join(unowned)}"}
-        # 2) 用隔离暂存区中的新版 adapt-scan.mjs 在写入前跑完整 --prepare-init --dry-run 预检
+        staged_scan = staged_base / "skills" / "story-adaptation" / "scripts" / "adapt-scan.mjs"
         if prepare_init:
             shutil.copy2(cfg_path, stage_root / "framework.config.json")
             fw_src = target / "framework"
@@ -213,10 +175,18 @@ def import_external_base(source: Path, target: Path, *, prepare_init: bool = Tru
                     subprocess.run(["cmd", "/c", "mklink", "/J", str(fw_dst), str(fw_src)], check=True, capture_output=True)
                 else:
                     fw_dst.symlink_to(fw_src, target_is_directory=True)
-            staged_scan = staged_base / "skills" / "story-adaptation" / "scripts" / "adapt-scan.mjs"
             pre = subprocess.run(
                 ["node", str(staged_scan), "--prepare-init", "--target", str(target),
                  "--source-base", str(staged_base), "--dry-run"],
+                cwd=str(target), capture_output=True, text=True, encoding="utf-8", errors="replace",
+            )
+            if pre.returncode != 0:
+                return {"files": [], "prepared": False, "returncode": pre.returncode,
+                        "stdout": pre.stdout, "stderr": pre.stderr}
+        elif existing_base.exists() or existing_base.is_symlink():
+            pre = subprocess.run(
+                ["node", str(staged_scan), "--check-base", "--target", str(target),
+                 "--source-base", str(staged_base)],
                 cwd=str(target), capture_output=True, text=True, encoding="utf-8", errors="replace",
             )
             if pre.returncode != 0:

@@ -23,22 +23,23 @@ const BRIDGE_PREFIX = '# agent-maison:instance-extension-bridge ';
 const lf = text => text.replace(/\r\n/g, '\n');
 const read = file => (fs.existsSync(file) ? fs.readFileSync(file) : null);
 const baseRelOf = extDir => path.posix.join(extDir, 'base');
-const isStorySource = (src, extDir) => src.startsWith(`${extDir}/base/skills/`) || src.startsWith(`${extDir}/skills/`);
+const STORY_SKILLS = ['story', 'story-adaptation', 'story-knowledge', 'story-stats'];
+const isStorySource = (src, ctx) => ctx.own.has(src);
 
-function foreignSource(absPath, extDir) {
+function foreignSource(absPath, ctx) {
   const line = read(absPath)?.toString('utf8').split(/\r?\n/, 5).find(l => l.startsWith(BRIDGE_PREFIX));
   try {
     const src = line ? JSON.parse(line.slice(BRIDGE_PREFIX.length))?.sourceRel : null;
-    return src && !isStorySource(src, extDir) ? src : null;
+    return src && !isStorySource(src, ctx) ? src : null;
   } catch { return null; }
 }
 
 const foreignConflict = (ctx, a) => {
-  const src = a.state === 'orphan' ? null : foreignSource(path.join(ctx.native.root, ...a.path.split('/')), ctx.extDir);
+  const src = a.state === 'orphan' ? null : foreignSource(path.join(ctx.native.root, ...a.path.split('/')), ctx);
   return src ? `${a.path}：已被其他扩展（${src}）合法占用，保留原文件不覆盖` : null;
 };
 
-function context(root) {
+function context(root, skills = null) {
   const native = loadNative(root);
   const { loadFrameworkConfigWithSources } = native.module('config.ts');
   const sources = loadFrameworkConfigWithSources(native.root);
@@ -47,18 +48,19 @@ function context(root) {
     .filter(a => typeof a === 'string' && a.trim()).map(a => a.trim()))];
   if (!adapters.length) throw new Error('framework.config.json 的 materialized_adapters 为空：没有要物化的宿主');
   const extDir = sources.config.paths?.extension_dir ?? 'doc/extensions';
-  return { native, raw, adapters, extDir, baseRel: baseRelOf(extDir), extRoot: path.join(native.root, ...extDir.split('/')) };
+  const baseRel = baseRelOf(extDir), extRoot = path.join(native.root, ...extDir.split('/'));
+  const pkg = packageSkills(extRoot, native.require('yaml'));
+  const wanted = skills && skills.length ? skills : pkg;
+  const own = new Set([...[...STORY_SKILLS, ...pkg, ...wanted].map(id => `${baseRel}/skills/${id}/SKILL.md`),
+    ...STORY_SKILLS.map(id => `${extDir}/skills/${id}/SKILL.md`)]);
+  return { native, raw, adapters, extDir, baseRel, extRoot, wanted, own };
 }
 
-/** 从 `<ext>/base/package-manifest.yaml`（缺失回退根 `manifest.yaml`）读本包声明的 Skill ID 列表。 */
+/** 从 `<ext>/base/package-manifest.yaml` 读本包声明的 Skill ID 列表。 */
 function packageSkills(extRoot, YAML) {
-  for (const rel of [path.join('base', 'package-manifest.yaml'), 'manifest.yaml']) {
-    const raw = read(path.join(extRoot, rel));
-    if (!raw) continue;
-    const list = YAML.parse(raw.toString('utf8'))?.provides?.skills;
-    if (Array.isArray(list)) return list.filter(s => typeof s === 'string' && s.trim());
-  }
-  return [];
+  const raw = read(path.join(extRoot, 'base', 'package-manifest.yaml'));
+  const list = raw ? YAML.parse(raw.toString('utf8'))?.provides?.skills : null;
+  return Array.isArray(list) ? list.filter(s => typeof s === 'string' && s.trim()) : [];
 }
 
 /** 各宿主的入口文件（AGENTS.md / CLAUDE.md …）与原生按当前配置的渲染。 */
@@ -110,7 +112,7 @@ function snapshotOtherOwners(ctx, skills) {
   const saved = new Map();
   for (const a of bridgeArtifacts(ctx, skills)) {
     const abs = path.join(ctx.native.root, ...a.path.split('/'));
-    const foreign = a.state === 'orphan' ? (a.sourceRel && !isStorySource(a.sourceRel, ctx.extDir)) : Boolean(foreignSource(abs, ctx.extDir));
+    const foreign = a.state === 'orphan' ? (a.sourceRel && !isStorySource(a.sourceRel, ctx)) : Boolean(foreignSource(abs, ctx));
     if (foreign) { const data = read(abs); if (data) saved.set(a.path, { abs, data }); }
   }
   return saved;
@@ -131,8 +133,7 @@ export default function initSkillBridgeHook(hookCtx) {
   if (hookCtx?.feature !== '_global' || hookCtx?.phase !== 'docs' || !process.env.HARNESS_INIT_INTERNAL_GLOBAL_RUN) {
     return { ok: true };
   }
-  const ctx = context(hookCtx.projectRoot);
-  const skills = packageSkills(ctx.extRoot, ctx.native.require('yaml'));
+  const ctx = context(hookCtx.projectRoot), skills = ctx.wanted;
   if (!skills.length) return { ok: true, message: 'Story base 未声明可物化 Skill' };
   const foreigns = [...new Set(bridgeArtifacts(ctx, skills).map(a => foreignConflict(ctx, a)).filter(Boolean))];
   if (foreigns.length) {
@@ -177,10 +178,9 @@ export function candidateProblems(root, fill) {
 
 /** 写前核（只读）：返回要退出的旧入口、桥目标路径与冲突。 */
 export function entryPlan(root, skills = null, { includeEntries = true } = {}) {
-  const ctx = context(root);
-  const { native, extRoot } = ctx;
+  const ctx = context(root, skills);
+  const { native, extRoot, wanted } = ctx;
   const YAML = native.require('yaml');
-  const wanted = skills && skills.length ? skills : packageSkills(extRoot, YAML);
   const retire = [];
   const conflicts = [];
   const installed = read(path.join(extRoot, 'manifest.yaml'));
@@ -207,7 +207,7 @@ export function entryPlan(root, skills = null, { includeEntries = true } = {}) {
   const bridgeTargets = [];
   const pendingBridges = [];
   for (const a of bridgeArtifacts(ctx, wanted)) {
-    if (a.state === 'orphan' && a.sourceRel && !isStorySource(a.sourceRel, ctx.extDir)) continue;
+    if (a.state === 'orphan' && a.sourceRel && !isStorySource(a.sourceRel, ctx)) continue;
     const foreign = foreignConflict(ctx, a);
     if (foreign) { conflicts.push(foreign); continue; }
     bridgeTargets.push(a.path);
@@ -225,9 +225,8 @@ export function entryPlan(root, skills = null, { includeEntries = true } = {}) {
 
 /** 写后核（只读）：根 manifest 合法、入口文件等于原生渲染、base/skills 桥全部 present 且无本包孤儿。 */
 export function entryCheck(root, skills = null) {
-  const ctx = context(root);
-  const { native, extRoot } = ctx;
-  const wanted = skills && skills.length ? skills : packageSkills(extRoot, native.require('yaml'));
+  const ctx = context(root, skills);
+  const { native, wanted } = ctx;
   const inspect = native.module('scripts/utils/extension-inspect.ts')
     .inspectInstanceExtensions(native.root, native.frameworkRoot);
   const problems = inspect.manifestErrors.map(e => `manifest：${e.code} ${e.message}`);
@@ -237,7 +236,7 @@ export function entryCheck(root, skills = null) {
   }
   const states = new Map();
   for (const a of bridgeArtifacts(ctx, wanted)) {
-    if (a.state === 'orphan' && a.sourceRel && !isStorySource(a.sourceRel, ctx.extDir)) continue;
+    if (a.state === 'orphan' && a.sourceRel && !isStorySource(a.sourceRel, ctx)) continue;
     const foreign = foreignConflict(ctx, a);
     if (foreign) { problems.push(foreign); continue; }
     states.set(a.path, [...(states.get(a.path) ?? []), a.state]);
@@ -254,9 +253,8 @@ export function entryCheck(root, skills = null) {
 
 /** 退出已核旧入口 → 渲染入口文件 → 调原生桥生成器指向 `<ext>/base`（保护其他所有者）→ 写后核。 */
 export function entryMaterialize(root, retire = [], skills = null) {
-  const ctx = context(root);
-  const { native, extRoot } = ctx;
-  const wanted = skills && skills.length ? skills : packageSkills(extRoot, native.require('yaml'));
+  const ctx = context(root, skills);
+  const { native, wanted } = ctx;
   const foreigns = [...new Set(bridgeArtifacts(ctx, wanted).map(a => foreignConflict(ctx, a)).filter(Boolean))];
   if (foreigns.length) return { written: [], removed: [], problems: foreigns, warnings: [] };
   const bridge = native.module('scripts/utils/instance-skill-bridge.ts');
