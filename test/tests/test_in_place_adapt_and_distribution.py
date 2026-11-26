@@ -1463,6 +1463,40 @@ req('./scripts/utils/instance-skill-bridge.ts').emitInstanceSkillBridge({
         self.assertIn("business-receipts", after_apply["skills"])
         self.assertEqual(0, subprocess.run(["node", str(scan_biz), "--check"], cwd=str(p_biz), capture_output=True).returncode)
 
+        # 1b) 同名他属桥与同名人工稿在无 base/ 首次导入时，必须在首次写前拦截（不创建 base/、不改原字节）
+        for kind in ("foreign_bridge", "manual_draft"):
+            with self.subTest(same_name=kind):
+                p_col = self.root / f"s38-same-name-{kind}"
+                make_consumer(p_col, f"S38Same{kind}", ["codex"])
+                target_bridge = p_col / ".codex/skills/story/SKILL.md"
+                if kind == "foreign_bridge":
+                    other_sk = p_col / "doc/extensions/other-ext/skills/story/SKILL.md"
+                    other_sk.parent.mkdir(parents=True)
+                    other_sk.write_text("---\nname: story\ndescription: foreign\n---\n# foreign story\n", encoding="utf-8")
+                    emit_f = """
+const [root] = process.argv.slice(1);
+const path = require('node:path');
+const { createRequire } = require('node:module');
+const fw = path.join(root, 'framework');
+const req = createRequire(path.join(fw, 'harness', 'package.json'));
+req('ts-node').register({ project: path.join(fw, 'harness', 'tsconfig.json'), transpileOnly: true });
+req('./scripts/utils/instance-skill-bridge.ts').emitInstanceSkillBridge({
+  repoRoot: root, frameworkDir: fw, agentAdapter: 'codex',
+  extensionDirRel: 'doc/extensions/other-ext', declaredSkillIds: ['story'],
+});
+"""
+                    subprocess.run(["node", "-e", emit_f, str(p_col)], check=True, capture_output=True)
+                else:
+                    target_bridge.parent.mkdir(parents=True, exist_ok=True)
+                    target_bridge.write_text("# user manual story skill\n", encoding="utf-8")
+                before_bytes = target_bridge.read_bytes()
+                init_commit(p_col)
+                r_col = pub.import_external_base(DEV_SOURCE, p_col, prepare_init=True)
+                self.assertEqual(2, r_col["returncode"], (kind, r_col))
+                self.assertEqual(before_bytes, target_bridge.read_bytes())
+                self.assertFalse((p_col / "doc/extensions/base").exists(), f"{kind} 冲突时不应先创建 base/")
+                self.assertFalse((p_col / "doc/extensions/manifest.yaml").exists())
+
         # 2) R3：Git 根与 apps/pay 子工程同组对照（忽略稿、已提交人工稿、改写原样例、伪造清单均写前停；仅未改发行件成功）
         for loc in ("root", "subproject"):
             for prep in (False, True):

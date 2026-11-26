@@ -206,6 +206,17 @@ export function entryPlan(root, skills = null, { includeEntries = true } = {}) {
   }
   const bridgeTargets = [];
   const pendingBridges = [];
+  if (!fs.existsSync(path.join(extRoot, 'base'))) {
+    const b = native.module('scripts/utils/instance-skill-bridge.ts');
+    for (const adapter of ctx.adapters) for (const id of wanted) {
+      const hit = b.resolveMaterializedBuiltinSkillEntryRel(native.root, native.frameworkRoot, adapter, id, id);
+      if (!hit?.exists || retire.includes(hit.rel)) continue;
+      const abs = path.join(native.root, ...hit.rel.split('/'));
+      const fsrc = foreignSource(abs, ctx);
+      if (fsrc) conflicts.push(`${hit.rel}：已被其他扩展（${fsrc}）合法占用，保留原文件不覆盖`);
+      else if (!read(abs)?.toString('utf8').includes(BRIDGE_PREFIX)) conflicts.push(`${hit.rel}：本次要物化的 Skill 入口位置上已有无归属的文件`);
+    }
+  }
   for (const a of bridgeArtifacts(ctx, wanted)) {
     if (a.state === 'orphan' && a.sourceRel && !isStorySource(a.sourceRel, ctx)) continue;
     const foreign = foreignConflict(ctx, a);
