@@ -6,7 +6,7 @@ import { loadResolvedProfile } from '../../profile-loader';
 import { tryLoadProfileHarnessModule } from '../../profile-host-loader';
 import { ModuleCard, loadCatalog } from './catalog-parser';
 import { validateProjectRelativePath } from './project-relative-path';
-import { asRecord, asRecords, type BlueprintRecord } from './component-blueprint-model';
+import { asRecord, asRecords, asStrings, nonEmptyString, type BlueprintRecord } from './component-blueprint-model';
 
 export const ASSET_RESOLUTIONS = ['reuse', 'configure', 'adapt', 'evolve', 'custom'] as const;
 export const STATIC_CHECKS = ['scalable_font_unit', 'no_hardcoded_hex_color', 'declared_touch_target'] as const;
@@ -88,18 +88,104 @@ export function isBlueprintUiTarget(node: BlueprintRecord): boolean {
   return isUiComponent(node) || asRecords(asRecord(node.contracts)?.components).some(isUiComponent);
 }
 
-export function blueprintUiComponents(blueprint: BlueprintRecord): BlueprintRecord[] {
+function declaredComponentName(component: { name?: unknown; class?: unknown }): unknown {
+  return component.name === undefined ? component.class : component.name;
+}
+
+export function componentLocation(component: { file?: unknown; name?: unknown; class?: unknown }): string | undefined {
+  const name = declaredComponentName(component);
+  if (nonEmptyString(component.file) && nonEmptyString(name)) return `${component.file}#${name}`;
+}
+
+/** Legacy page facts bind an extra in-scope file to a source-confirmed symbol. */
+function declaredExistingPages(root: string, blueprint: BlueprintRecord, target: BlueprintRecord, typed: BlueprintRecord[], report: (message: string) => void): BlueprintRecord[] {
+  if (target.kind !== 'page') return [];
+  const files = new Set(asStrings(asRecord(target.contracts)?.files));
+  return asRecords(asRecord(blueprint.discovery)?.facts).flatMap(fact => {
+    const value = asRecord(fact.value);
+    const provenance = asRecord(fact.provenance);
+    if (!value || !String(fact.subject).startsWith('existing_page:') || !nonEmptyString(value.file) || !files.has(value.file)
+      || value.module !== target.module || value.file === target.file || typed.some(row => row.file === value.file && componentLocation(row))
+      || provenance?.evidence_strength !== 'authoritative' || provenance.source_ref !== value.file) return [];
+    const name = value.name ?? value.route;
+    try {
+      if (nonEmptyString(name)) {
+        const source = fs.readFileSync(path.join(root, validateProjectRelativePath(root, value.file, 'existing page fact')), 'utf8');
+        const profile = loadResolvedProfile(root, loadFrameworkConfig(root));
+        const host = tryLoadProfileHarnessModule<{ componentSourceSymbols?: (source: string) => string[] }>(profile.profileDir, 'component-extractor');
+        if (host?.componentSourceSymbols?.(source).filter(symbol => symbol === name).length === 1) {
+          return [{ file: value.file, name, kind: 'page', module: value.module }];
+        }
+      }
+    } catch { /* The owner can replace unreadable or ambiguous evidence with a typed declaration. */ }
+    report(`discovery.facts.${String(fact.fact_id)} (${value.file}): 缺少可确认的页面符号，请补 contracts.components.file/name`);
+    return [];
+  });
+}
+
+/** Complete a target's existing declarations from its own identified component facts. */
+export function blueprintTargetComponents(root: string | undefined, blueprint: BlueprintRecord, target: BlueprintRecord, report: (message: string) => void): BlueprintRecord[] {
+  const named = (row: BlueprintRecord): BlueprintRecord => {
+    if (row.name !== undefined && nonEmptyString(row.class) && row.name !== row.class) {
+      report(`${String(row.file)}: 组件 name=${String(row.name)} 与旧式 class=${row.class} 冲突`);
+    }
+    return row.name === undefined && nonEmptyString(row.class) ? { ...row, name: declaredComponentName(row) } : row;
+  };
+  const fields = ['file', 'name', 'module', 'kind', 'decorator', 'linked_functions', 'state', 'props', 'events', 'children', 'nav_destinations', 'nav_destination', 'description', 'asset_selection'];
+  const direct = isUiComponent(target) ? named(target) : undefined;
+  const explicit = direct && componentLocation(direct)
+    ? [Object.fromEntries(fields.filter(field => direct[field] !== undefined).map(field => [field, direct[field]]))] : [];
+  const typed = asRecords(asRecord(target.contracts)?.components).filter(row => isUiComponent(row) || row.asset_selection !== undefined
+    || row.kind === undefined && isUiComponent(target)).map(named);
+  const standalone = [...explicit, ...(root ? declaredExistingPages(root, blueprint, target, typed, report) : [])];
+  const identities = new Map([...standalone, ...typed].flatMap(row => {
+    const id = componentLocation(row);
+    return id ? [[id, row] as const] : [];
+  }));
+  const components = new Map<string, BlueprintRecord>();
+  for (const row of [...standalone, ...typed]) {
+    const candidates = componentLocation(row) ? [row] : [...identities.values()].filter(known =>
+      (row.file === undefined || known.file === row.file) && (row.name === undefined || known.name === row.name));
+    if (candidates.length !== 1) {
+      report(`contracts.components.file/name 缺失或有歧义：${JSON.stringify({ file: row.file, name: row.name })}`);
+      continue;
+    }
+    const known = candidates[0];
+    const key = componentLocation(known)!;
+    const prior = components.get(key);
+    for (const field of ['module', 'kind'] as const) {
+      if (prior?.[field] !== undefined && row[field] !== undefined && prior[field] !== row[field]) {
+        report(`${key}: 目标与 contracts.components 的 ${field} 冲突（${String(prior[field])} / ${String(row[field])}）`);
+      }
+    }
+    const completed: BlueprintRecord = { ...prior, ...row, file: known.file, name: known.name };
+    completed.module ??= target.module;
+    completed.kind ??= target.kind;
+    components.set(key, completed);
+  }
+  for (const [key, component] of components) {
+    if (!nonEmptyString(component.module) || !nonEmptyString(component.kind)) report(`${key}: contracts.components 缺 module/kind`);
+  }
+  return [...components.values()];
+}
+
+export function blueprintUiComponents(blueprint: BlueprintRecord, root?: string): BlueprintRecord[] {
   const development = asRecords(blueprint.design_views).find(view => view.view_id === 'development');
-  const components = asRecords(development?.nodes).flatMap(node => asRecords(asRecord(node.contracts)?.components)).filter(isUiComponent);
-  return [...new Map(components.map(component => [`${component.file}#${component.name}`, component])).values()];
+  const components = asRecords(development?.nodes).flatMap(node => blueprintTargetComponents(root, blueprint, node, () => undefined));
+  return [...new Map(components.flatMap(component => {
+    const key = componentLocation(component);
+    return key ? [[key, component] as const] : [];
+  })).values()];
 }
 
 /** Select by the declared target relationship, never by a guessed name or the local selection value. */
-export function blueprintComponentDecisions(blueprint: BlueprintRecord, component: BlueprintRecord): BlueprintRecord[] {
+export function blueprintComponentDecisions(blueprint: BlueprintRecord, component: BlueprintRecord, root?: string): BlueprintRecord[] {
   const nodes = asRecords(asRecords(blueprint.design_views).find(view => view.view_id === 'development')?.nodes);
-  const exact = nodes.filter(node => node.file === component.file && node.name === component.name && isUiComponent(node));
-  const owners = exact.length ? exact : nodes.filter(node => asRecords(asRecord(node.contracts)?.components)
-    .some(item => item.file === component.file && item.name === component.name));
+  const key = componentLocation(component);
+  if (!key) return [];
+  const exact = nodes.filter(node => isUiComponent(node) && componentLocation(node) === key);
+  const owners = exact.length ? exact : nodes.filter(node => blueprintTargetComponents(root, blueprint, node, () => undefined)
+    .some(item => componentLocation(item) === key));
   const targets = new Set(owners.map(node => `view:development/node:${node.node_id}`));
   return asRecords(asRecord(blueprint.decisions_and_gaps)?.decisions)
     .filter(decision => decision.kind === 'component_asset_selection' && targets.has(String(decision.target_ref)));

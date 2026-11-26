@@ -13,7 +13,7 @@ import {
 } from './utils/component-blueprint-path';
 import { validateComponentBlueprint, isSmallBlueprintRequest, type ComponentBlueprintValidationContext } from './utils/component-blueprint-validator';
 import { profileHasDesignLens } from './utils/blueprint-provider-boundary';
-import { prepareDesignRequest, bindDesignRequestBlueprint, createDesignPreparationWrite, readDesignGoalOrigin, type DesignPreparationWrite } from './utils/automatic-request';
+import { prepareDesignRequest, bindDesignRequestBlueprint, createDesignPreparationWrite, readDesignGoalOrigin, requestTestingScope, type DesignPreparationWrite } from './utils/automatic-request';
 import { enumerateCanonicalChangeUnitIds } from './utils/change-unit-path';
 import { currentScopeItems } from './utils/blueprint-requirement-traceability';
 import { loadEventsJsonlStrict } from './utils/goal-runner-phase';
@@ -21,7 +21,10 @@ import { realProjectPath } from './utils/project-relative-path';
 import { resolveProbeFrameworkRoot } from '../repo-layout';
 import { deriveContentImpact } from './utils/content-impact';
 import { renderBlueprintReviewMarkdown } from './utils/blueprint-review-projection';
+import { selectBlueprintRequestContent } from './utils/blueprint-skill-projection';
+import type { AcceptanceSpec } from './utils/types';
 import { loadFrameworkConfig } from '../config';
+import { assembleKnowledge, renderKnowledge } from './utils/knowledge-context';
 import { inspectBlueprintReview, materializeBlueprintReview } from './utils/blueprint-review-materialization';
 import { computeBlueprintReaderGuideSourceDigest, inspectBlueprintReaderGuide } from './utils/blueprint-reader-guide';
 import {
@@ -43,6 +46,7 @@ interface CliArgs {
   json?: boolean;
   'write-review'?: boolean;
   'reader-guide-digest'?: boolean;
+  'design-knowledge'?: boolean;
   'session-ref'?: string;
   'request-file'?: string;
   'report-dir'?: string;
@@ -247,19 +251,34 @@ export function prepareCanonicalBlueprintSource(projectRoot: string, blueprintId
 function main(): void {
   const args = minimist<CliArgs>(process.argv.slice(2), {
     string: ['project-root', 'blueprint', 'ref', 'materialization', 'projection', 'feedback', 'session-ref', 'request-file', 'report-dir', 'framework-root', 'requirement-source', 'target'],
-    boolean: ['json', 'write-review', 'reader-guide-digest', 'prepare-source'],
+    boolean: ['json', 'write-review', 'reader-guide-digest', 'design-knowledge', 'prepare-source'],
     default: { 'project-root': process.cwd(), json: false },
   });
   if (!args.blueprint) {
     console.error('用法：check-component-blueprint --project-root <root> --blueprint <blueprint-id> [--ref <json>]'
       + ' [--session-ref <native>#<user-id> | --request-file <component-design request>] [--report-dir <host-relative-dir>] [--target <file>] [--requirement-source <file>] [--prepare-source]'
-      + ' [--reader-guide-digest | --write-review | --materialization <path> | --projection <path> | --feedback <path>] [--json]');
+      + ' [--design-knowledge | --reader-guide-digest | --write-review | --materialization <path> | --projection <path> | --feedback <path>] [--json]');
     process.exit(2);
   }
   let prepared: ReturnType<typeof prepareDesignRequest> | undefined;
   let context: ComponentBlueprintValidationContext = {};
   const preparation = createDesignPreparationWrite();
   try {
+    if (args['design-knowledge']) {
+      if (args['write-review'] || args['reader-guide-digest'] || args.materialization || args.projection || args.feedback || args.ref
+        || args['session-ref'] || args['request-file'] || args['prepare-source'] || args['report-dir'] || args['requirement-source'] || args.target) {
+        throw new Error('--design-knowledge 是设计准备的独立只读模式。');
+      }
+      const projectRoot = path.resolve(args['project-root']!);
+      const canonicalPath = componentBlueprintPath(projectRoot, args.blueprint);
+      const frameworkRoot = args['framework-root'] ?? resolveProbeFrameworkRoot(projectRoot, __dirname);
+      const knowledge = assembleKnowledge({ projectRoot, frameworkRoot, subject: 'component-design', role: 'author' }, 'design-knowledge');
+      console.log(args.json ? JSON.stringify({ canonical_path: canonicalPath, knowledge }, null, 2)
+        : `蓝图位置：${canonicalPath}
+
+${renderKnowledge(knowledge)}`);
+      return;
+    }
     if (args['reader-guide-digest']) {
       if (args['write-review'] || args.materialization || args.projection || args.feedback || args.ref) throw new Error('--reader-guide-digest 是独立只读模式，不能与其它模式混用。');
       const loaded = loadCanonicalBlueprint(args['project-root']!, args.blueprint);
@@ -304,7 +323,8 @@ function main(): void {
       const list = (value?: string | string[]): string[] | undefined => typeof value === 'string' ? [value] : value;
       prepared = prepareDesignRequest({ projectRoot: root, frameworkRoot: args['framework-root'] ?? resolveProbeFrameworkRoot(root, __dirname),
         blueprintId: args.blueprint, sessionRef: args['session-ref'], requestFile: args['request-file'], reportDir: args['report-dir'],
-        targets: list(args.target), requirementSources: list(args['requirement-source']), readonly: readonlyDesign, write: preparation.write });
+        targets: list(args.target), requirementSources: list(args['requirement-source']), readonly: readonlyDesign,
+        captureDirtyAtPrepare: !readonlyDesign, write: preparation.write });
       context = { requestIntake: prepared.intake, requestSourceItems: prepared.currentScopeItems };
       if (args['prepare-source'] && !prepared.originGap) prepareCanonicalBlueprintSource(root, args.blueprint, context,
         { requestFile: prepared.requestFile, write: preparation.write });
@@ -335,6 +355,12 @@ function main(): void {
       ? materializeBlueprintReview(root, args.blueprint, context) : inspectBlueprintReview(root, args.blueprint, context);
     const reviewFailed = args['write-review'] && reviewDocument?.status === 'failed';
     if (args.json) {
+      const requestFile = prepared && path.relative(root, prepared.requestFile).replace(/\\/g, '/');
+      const acceptance = small && !failed && blueprintBinding
+        ? selectBlueprintRequestContent(result.blueprint).acceptance as unknown as AcceptanceSpec | undefined : undefined;
+      const ids = blueprintBinding?.acceptance_ids;
+      const device = acceptance && Array.isArray(ids) && ids.every(id => typeof id === 'string')
+        ? requestTestingScope(root, prepared?.intake, acceptance, ids) : undefined;
       console.log(JSON.stringify({
         status: failed ? 'FAIL' : 'PASS',
         canonical_path: result.canonicalPath,
@@ -350,6 +376,8 @@ function main(): void {
         request_file: prepared ? path.relative(path.resolve(args['project-root']!), prepared.requestFile).replace(/\\/g, '/') : undefined, source_refs: prepared?.sourceRefs, origin_gap: prepared?.originGap,
         summary: small && !failed ? renderBlueprintReviewMarkdown(result.blueprint, result.artifactSha256, undefined, context) : undefined,
         content_impact: prepared?.intake ? deriveContentImpact(root, prepared.intake) : undefined,
+        ...(device ? { next: device.required ? [{ phase: 'testing', acceptance_ids: device.items.map(item => item.id),
+          content_impact: device.impacts, command: `npm run check -- --project-root ${JSON.stringify(root)} --phase testing --request-file ${JSON.stringify(requestFile)} --prepare-request` }] : [] } : {}),
       }, null, 2));
     } else if (failed) {
       console.error(`❌ Component blueprint FAIL (${result.issues.length} issues)`);

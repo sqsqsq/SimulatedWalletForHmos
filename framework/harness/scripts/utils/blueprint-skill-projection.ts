@@ -8,7 +8,7 @@ import { loadResolvedProfile } from '../../profile-loader';
 import { tryLoadUtSourceRootResolver } from '../../profile-host-loader';
 import { loadEffectiveExecutionScope, resolveEffectiveScopeSource } from './goal-run-creation';
 import { resolveExecutionScope, findSubtractedRequiredObligations, readScopeRevisionUserControl, applyScopeUserControl, type ExecutionScope, type ExecutionScopeInput } from './execution-scope';
-import { readScopeAcceptance, collectResolvedScopeFacts, recomputeDefinitionFacts, featureTrackDeclPath } from './feature-track';
+import { readScopeAcceptance, collectResolvedScopeFacts, resolveChangeUnitImpactFacts, recomputeDefinitionFacts, featureTrackDeclPath } from './feature-track';
 import { loadGoalManifestFromRun } from './goal-manifest';
 import { asRecord, asRecords, asStrings, getId, issue, type BlueprintIssue, type BlueprintRecord } from './component-blueprint-model';
 import { resolveBlueprintTarget, stableAddressIndex } from './blueprint-addressing';
@@ -23,7 +23,7 @@ import { validateChangeUnit } from './change-unit-validator';
 import { checkChangeUnitFeatureProjection, validateChangeUnitFeatureProjection, changeUnitMappingIssues, deriveModifiableModules } from './change-unit-feature-projection';
 import { projectImplementationModules } from './diff-scope';
 import { loadCatalog } from './catalog-parser';
-import { projectComponentSelections, componentProjectionFindings } from './component-selection-check';
+import { projectComponentSelections, resolveComponentSelectionProjection } from './component-selection-check';
 import { resolveContractFileReferences, findUnplannedContractFileReferences, CONTRACT_FILE_REFERENCE_FIELDS } from './contract-reference-closure';
 import { acceptanceLinkedUseCaseFailure, checkAcceptanceContent, checkAcceptanceUtLayerComplete, checkAcceptanceDeviceFocusPresent, checkAcceptanceLinkedUseCases, extractAcceptanceIdRefs } from './check-acceptance';
 import { isInsideProjectRoot, existingProjectPathSpelling, inferLegacyProjectRoot, resolveDependencyPath } from './project-relative-path';
@@ -37,6 +37,7 @@ import { resolveCheckDisposition } from './check-disposition';
 import { createIdentityNeutralDigestReaders, identityNeutralDigest, type IdentityNeutralDigestReaders } from './identity-neutral-digest';
 import { classifyGoalRunsDir } from './fidelity-shared';
 import { ArtifactSchemaError, resolveArtifactContent } from './artifact-content';
+import { blueprintMethodProjection, isBlueprintMethodRef, type BlueprintMethodIssue } from './blueprint-method-projection';
 
 export type BlueprintProjectionKind = 'acceptance' | 'contracts';
 /** Author-produced temporary mapping; canonical identity is filled by the accepting writer. */
@@ -259,7 +260,9 @@ export function designScopeRevisionChecks(ctx: CheckContext, checks: CheckResult
     requirement: runId ? loadGoalManifestFromRun(ctx.projectRoot, runId, { feature: ctx.feature }).requirement : undefined,
     impactInherited: true,
   };
-  let verifiedFacts = collectResolvedScopeFacts(proposal, factsContext);
+  // Budget the same prospective basis as the runtime without changing the stored producer proposal.
+  const sourceBudget = { ...proposal, request: { ...proposal.request } };
+  let verifiedFacts = resolveChangeUnitImpactFacts(sourceBudget, factsContext);
   let reopened = false;
   for (const fact of proposal.facts) {
     if (fact.kind === kind || !['acceptance-context', 'design-context'].includes(fact.kind) || !fact.satisfied_by) continue;
@@ -269,13 +272,14 @@ export function designScopeRevisionChecks(ctx: CheckContext, checks: CheckResult
     if (kept.length) fact.satisfied_by = kept; else delete fact.satisfied_by;
     reopened = true;
   }
-  if (reopened) verifiedFacts = collectResolvedScopeFacts(proposal, factsContext);
+  if (reopened) verifiedFacts = collectResolvedScopeFacts(sourceBudget,
+    sourceBudget.request.impact === proposal.request.impact ? factsContext : { ...factsContext, impactInherited: false });
   // Reading the new proposal still uses the strict binding reader. Dropping a
   // stale proof reopens its owner; it never declares the other definition done.
   const acceptance = ctx.phase === 'spec' && ctx.featureSpec.acceptance
     ? { value: ctx.featureSpec.acceptance, binding: resolved.binding }
     : readScopeAcceptance(ctx.projectRoot, proposal, { feature: ctx.feature, frameworkRoot: ctx.frameworkRoot });
-  const next = applyScopeUserControl(resolveExecutionScope(proposal, workflow, acceptance, verifiedFacts), workflow, control);
+  const next = applyScopeUserControl(resolveExecutionScope(sourceBudget, workflow, acceptance, verifiedFacts), workflow, control);
   if (findSubtractedRequiredObligations(scope, next, control.allowedSubtractions).length) {
     return [{ id: 'design_scope_facts', category: 'structure', severity: 'BLOCKER', status: 'FAIL', description: '设计修订不得静默删除冻结义务', details: '新验收与既有 required 义务冲突；返回 scope owner 澄清，不缩减本 run 责任', suggestion: '回到 scope owner 澄清验收变化，保留已冻结义务；正式需求变化沿既有 correction/successor 处理。' }];
   }
@@ -424,6 +428,10 @@ export class BlueprintContentError extends Error {
   constructor(public readonly code: string, message: string, public readonly locations: DesignAuthorityLocation[] = []) { super(message); }
 }
 
+function methodContentError(issue: BlueprintMethodIssue): never {
+  throw new BlueprintContentError('authority_content_conflict', issue.message, issue.locations);
+}
+
 /** Prove only defects that cannot be resolved by selecting a different CU projection. */
 export function blueprintDeclaredAcceptanceIssues(projectRoot: string, feature: string, blueprint: BlueprintRecord): BlueprintIssue[] {
   let targets: Iterable<BlueprintRecord>;
@@ -539,9 +547,15 @@ export function mergeBlueprintTargetContent(selected: readonly BlueprintContentL
 
 /** Request designs share typed content with CU projection, without inventing a CU or canonical identity. */
 export function selectBlueprintRequestContent(blueprint: BlueprintRecord): { selected: BlueprintContentLocation[]; acceptance?: BlueprintRecord; contracts?: BlueprintRecord; useCases?: BlueprintRecord } {
+  const methods = blueprintMethodProjection(blueprint);
   const selected: BlueprintContentLocation[] = asRecords(blueprint.design_views).filter(view => view.view_id === 'development')
     .flatMap(view => asRecords(view.nodes).filter(node => node.acceptance !== undefined || node.contracts !== undefined || node.use_cases !== undefined)
-      .map(target => ({ ref: { blueprint_id: String(blueprint.blueprint_id ?? ''), target: { kind: 'node' as const, view_id: 'development', id: String(getId(target, 'node_id') ?? '') } }, target })));
+      .map(node => {
+        const ref = { blueprint_id: String(blueprint.blueprint_id ?? ''), target: { kind: 'node' as const, view_id: 'development', id: String(getId(node, 'node_id') ?? '') } };
+        const target = structuredClone(node);
+        methods.expand(target, blueprintRefAddress(ref), methodContentError);
+        return { ref, target };
+      }));
   return { selected, acceptance: mergeBlueprintTargetContent(selected, 'acceptance'), contracts: mergeBlueprintTargetContent(selected, 'contracts'), useCases: mergeBlueprintTargetContent(selected, 'use_cases') };
 }
 
@@ -583,9 +597,11 @@ export function selectBlueprintSkillContent(blueprint: BlueprintRecord, cu: Chan
   const attempt = <T>(read: () => T): T | undefined => {
     try { return read(); } catch (error) { if (!onError) throw error; onError(error); return undefined; }
   };
+  const methods = attempt(() => blueprintMethodProjection(blueprint));
   const selected = cu.design_refs.flatMap(ref => {
     const target = attempt(() => structuredClone(resolveBlueprintTarget(blueprint, ref.target)));
     if (!target) return [];
+    methods?.expand(target, blueprintRefAddress(ref), issue => { attempt(() => methodContentError(issue)); });
     return [{ ref, target }];
   });
   const flows = selected.filter(({ ref }) => ref.target.kind === 'flow');
@@ -611,6 +627,10 @@ export function selectBlueprintSkillContent(blueprint: BlueprintRecord, cu: Chan
         else if (canonical(row[key]) !== canonical(value)) throw new BlueprintContentError('authority_content_conflict', `${ref.target.id}: ${field} 期望=${JSON.stringify(value)} 实际=${JSON.stringify(row[key])}`, location(field));
       };
       state.design_ref = structuredClone(ref);
+      const declaredFlow = methods?.index.get(blueprintRefAddress(ref));
+      if (state.ordered_steps === undefined && asStrings(declaredFlow?.ordered_steps).some(isBlueprintMethodRef)) {
+        state.ordered_steps = structuredClone(flow.ordered_steps);
+      }
       fill(state, 'owner_ref', asRecord(flow.state_owner)?.ref);
       const contracts = [...new Set([...asStrings(flow.logical_contract_refs), ...asStrings(flow.external_contract_refs)])];
       if (state.contract_refs !== undefined && canonical([...asStrings(state.contract_refs)].sort()) === canonical([...contracts].sort())) state.contract_refs = contracts;
@@ -759,8 +779,14 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
     }
     const source = `derive.blueprint-${kind}:${loaded.artifactSha256}:${cu.component_blueprint_ref.artifact_sha256}`;
     const acceptance = bundle.acceptance;
-    const construction = kind === 'contracts' && bundle.contracts
-      ? attempt(() => projectComponentSelections(projectRoot, bundle.contracts as unknown as ContractsSpec, cu, resolveRef)) as unknown as BlueprintRecord | undefined : undefined;
+    const staged = kind === 'contracts' ? resolveFeatureArtifact(projectRoot, feature, 'contracts.yaml') : undefined;
+    const stagedContracts = staged?.exists && !authoredMapping
+      ? asRecord(YAML.parse(fs.readFileSync(staged.actualPath, 'utf8'))) : undefined;
+    const stageMapping = asRecord(stagedContracts?.change_unit);
+    const componentProjection = kind === 'contracts' && bundle.contracts
+      ? attempt(() => resolveComponentSelectionProjection(projectRoot, bundle.contracts as unknown as ContractsSpec, cu, resolveRef,
+        stageMapping ? asRecords(stagedContracts?.components) as unknown as ContractsSpec['components'] : [])) : undefined;
+    const construction = componentProjection?.contracts as unknown as BlueprintRecord | undefined;
     const useCases = bundle.useCases;
     for (const [field, value] of [['acceptance', acceptance], ['contracts', bundle.contracts], ['use_cases', useCases]] as const) {
       if (!value && selected.some(({ target }) => target[field] !== undefined)) fail([], `因 ${field} 来源内容不能确定合并，未能检查依赖该内容的投影；其余独立检查继续，不能签为通过。`);
@@ -805,15 +831,20 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
     }
     if (construction) {
       const contracts = parsed.contracts!;
-      const staged = resolveFeatureArtifact(projectRoot, feature, 'contracts.yaml');
-      const stageMapping = staged.exists && asRecord(asRecord(YAML.parse(fs.readFileSync(staged.actualPath, 'utf8')))?.change_unit);
       if (contracts.change_unit && (authoredMapping || !stageMapping)) {
         const mappingIssues = changeUnitMappingIssues(projectRoot, contracts.change_unit as unknown as BlueprintRecord, cu, 'plan');
         if (mappingIssues.length) fail(mappingIssues.map(issue => issue.id), 'plan/component-design: ' + mappingIssues.map(issue => issue.message).join('; '));
-        const selections = componentProjectionFindings(projectRoot, contracts, cu, resolveRef, 'blueprint');
-        if (selections.length) fail(selections.map(finding => finding.route === 'reconcile_blueprint'
-          ? 'change_unit_blueprint_reconciliation_required' : 'change_unit_design_mapping_incomplete'),
-        'plan/component-design: ' + selections.map(finding => finding.message).join('; '));
+      }
+      for (const finding of componentProjection?.findings ?? []) {
+        const blueprintOwned = finding.route === 'reconcile_blueprint';
+        if (!blueprintOwned && !authoredMapping && stageMapping) continue;
+        const locations: DesignAuthorityLocation[] = [];
+        const node = /^view:development\/node:(.+)$/.exec(finding.targetAddress ?? '');
+        if (blueprintOwned && node) locations.push({ blueprint_id: cu.blueprint_id,
+          target: { kind: 'node', view_id: 'development', id: node[1] }, field: 'contracts.components' });
+        if (blueprintOwned && finding.decision) locations.push({ blueprint_id: cu.blueprint_id, target: finding.decision, field: 'target_ref' });
+        fail(blueprintOwned ? 'change_unit_blueprint_reconciliation_required' : 'change_unit_design_mapping_incomplete',
+          finding.message, locations, !blueprintOwned);
       }
       const contentIssues = attempt(() => checkTypedConstructionContent(projectionContext).filter(check => check.status === 'FAIL')) ?? [];
       if (contentIssues.length) fail('authority_construction_content_incomplete', 'plan: ' + contentIssues.map(check => check.details).join('; '));
@@ -862,13 +893,14 @@ export function blueprintCandidateAuthorityFindings(projectRoot: string, bluepri
 
 /** Current unpublished content diagnostics through the same consumer; never an input binding or publication. */
 export function deriveBlueprintCandidateSkillInput(projectRoot: string, feature: string, frameworkRoot: string, kind: BlueprintProjectionKind,
-  candidate: { blueprint: BlueprintRecord; changeUnit: ChangeUnitArtifact; architecture?: ArchitectureDsl; constructionMapping?: ChangeUnitConstructionMapping }): BlueprintSkillProjection {
+  candidate: { blueprint: BlueprintRecord; changeUnit: ChangeUnitArtifact; architecture?: ArchitectureDsl; constructionMapping?: ChangeUnitConstructionMapping;
+    blueprintSource?: ReturnType<typeof loadCanonicalBlueprint> }): BlueprintSkillProjection {
   const readers = createIdentityNeutralDigestReaders();
   const canonicalPath = changeUnitPath(projectRoot, candidate.changeUnit.blueprint_id, candidate.changeUnit.change_unit_id);
   const bytes = Buffer.from(YAML.stringify(candidate.changeUnit));
   const originalUnit = fs.existsSync(canonicalPath) ? loadCanonicalChangeUnit(projectRoot, candidate.changeUnit.blueprint_id, candidate.changeUnit.change_unit_id)
     : { canonicalPath, bytes, artifactSha256: 'sha256:' + crypto.createHash('sha256').update(bytes).digest('hex'), changeUnit: candidate.changeUnit };
-  const originalBlueprint = loadCanonicalBlueprint(projectRoot, candidate.changeUnit.blueprint_id);
+  const originalBlueprint = candidate.blueprintSource ?? loadCanonicalBlueprint(projectRoot, candidate.changeUnit.blueprint_id);
   readers.loadChangeUnit = (root, blueprint, unit) => blueprint === candidate.changeUnit.blueprint_id && unit === candidate.changeUnit.change_unit_id
     ? { ...originalUnit, changeUnit: { ...candidate.changeUnit } } : loadCanonicalChangeUnit(root, blueprint, unit);
   readers.blueprint = (_root, value) => resolveBlueprintCandidateRefFromLoaded(originalBlueprint, candidate.blueprint, value);

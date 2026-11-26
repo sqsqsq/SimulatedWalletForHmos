@@ -8,12 +8,13 @@ import { asRecord, asRecords, ComponentBlueprintResolutionError, blueprintAuthor
 import { loadFrameworkConfig, relFeaturesDir, featureFilePath, featurePhaseReportsDir } from '../../config';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import { featurePhasesFromWorkflow } from './phase-transition-policy';
-import { prepareDesignRequest, readDesignGoalOrigin, bindDesignRequestBlueprint, type PreparedDesignRequest } from './automatic-request';
+import { prepareDesignRequest, readDesignGoalOrigin, bindDesignRequestBlueprint, requestTestingScope, type PreparedDesignRequest } from './automatic-request';
 import { nativeFixedScale } from './request-intake';
-import { collectUnitScopeIds, collectDeviceScopeP0P1 } from './acceptance-layering';
-import { phaseWriteConflictProblems } from './phase-write-boundary';
+import { collectUnitScopeIds } from './acceptance-layering';
+import { describePhaseWriteConflicts, readPhaseRecoveryFile, unresolvedPhaseWrites } from './phase-write-boundary';
+import { blueprintReviewPath, inspectBlueprintReview, materializeBlueprintReview } from './blueprint-review-materialization';
 import { realProjectPath, isInsideProjectRoot } from './project-relative-path';
-import type { AcceptanceSpec } from './types';
+import type { AcceptanceSpec, CheckResult } from './types';
 import { buildInitialDesignGoalManifest, isInitialDesignManifest, isRepeatedRequirement, deriveSuccessorRequirement,
   loadGoalRunManifestFromRun, type GoalManifest, type InitialDesignGoalManifest, type GoalBudget,
   type UnattendedContract, type AdapterModelPin, type RunAdapterProvenance } from './goal-manifest';
@@ -23,7 +24,7 @@ import { FEATURE_LOCK_NAME, readLockRecord, isLockStale, tryAcquireLock, release
 import { componentBlueprintPath, loadCanonicalBlueprint } from './component-blueprint-path';
 import { validateComponentBlueprint } from './component-blueprint-validator';
 import { enumerateCanonicalChangeUnits, asChangeUnitArtifact, deriveChangeUnitFeatureId, changeUnitPath, buildChangeUnitTestingLocationHint } from './change-unit-path';
-import { blueprintDeclaredAcceptanceIssues, diagnoseBlueprintSkillAuthority, diagnoseDesignAuthority, compareAuthoritativeContent } from './blueprint-skill-projection';
+import { blueprintDeclaredAcceptanceIssues, diagnoseBlueprintSkillAuthority, diagnoseDesignAuthority } from './blueprint-skill-projection';
 import { resolveProbeFrameworkRoot } from '../../repo-layout';
 import { deriveChangeUnitReadySet } from './change-unit-ready-set';
 import { readChangeUnitDesignOwnership } from './change-unit-design-gate';
@@ -33,7 +34,7 @@ import { loadAuthoritativeEvents, loadEventsJsonlStrict, resolveEffectiveRunEnd,
 import { acceptedSessionReport, readHandoffMaterial, sessionReportInputPath, sessionExecutionForInvoke, type SessionExecutionReport } from './session-execution-handoff';
 import { readOriginalDeliveryActivity, readOriginalDeliveryRuns, resolveOriginalDeliveryExecution, currentOriginalDelivery, type DeliveryRunFacts } from './delivery-origin';
 import { independentQuestioningBlockers } from './blueprint-questioning';
-import { renderQuestioningResultInstructions, selectQuestioningScopes } from './blueprint-questioning';
+import { describeQuestioningChanges, renderQuestioningResultInstructions, selectQuestioningScopes } from './blueprint-questioning';
 import { extractProviderFinalText } from './codex-terminal-events';
 import { invocationCompleted } from './invocation-completion';
 import { dispositionFacts } from './goal-failure-classifier';
@@ -46,7 +47,8 @@ import { resolveCurrentDisposition, type CurrentDisposition, type CurrentDisposi
 import { loadCanonicalComponentClosure } from './component-closure-path';
 import { validateComponentClosure } from './component-closure-validator';
 import { independentVerificationContext } from './verifier-material';
-import { ChangeUnitCandidateRejected } from './change-unit-provider-boundary';
+import { assembleKnowledge, renderKnowledge } from './knowledge-context';
+import { ChangeUnitCandidateRejected, inspectChangeUnitCandidateBatch } from './change-unit-provider-boundary';
 
 /** The caller places this existing writer outside the native invocation's attribution window. */
 export function prepareInitialDesignDraft(input: {
@@ -338,25 +340,36 @@ function initialRequestDisposition(projectRoot: string, frameworkRoot: string, r
   const rawRequest = fs.existsSync(prepared.requestFile) ? JSON.parse(fs.readFileSync(prepared.requestFile, 'utf8')) : undefined;
   const explicit = rawRequest?.origin_request ? readDesignGoalOrigin(projectRoot, rawRequest.origin_request).manifest.initial_design.requested_phases : [];
   if (request.frame === 'small') try {
-    const loaded = loadCanonicalBlueprint(projectRoot, String(JSON.parse(fs.readFileSync(prepared.requestFile, 'utf8')).blueprint.ref.blueprint_id));
+    const loaded = loadCanonicalBlueprint(projectRoot, String(rawRequest.blueprint.ref.blueprint_id));
     const { selectBlueprintRequestContent } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
     acceptance = selectBlueprintRequestContent(loaded.blueprint).acceptance as unknown as AcceptanceSpec;
   } catch { gap('component-design', '原请求的短蓝图当前绑定尚未通过'); }
+  const device = acceptance && requestTestingScope(projectRoot, prepared.intake, acceptance, rawRequest.blueprint.acceptance_ids);
   const families = ['review', ...(!acceptance || collectUnitScopeIds(acceptance).length || explicit.includes('ut') ? ['ut'] : []),
-    ...(explicit.includes('testing') || acceptance && (() => { const device = collectDeviceScopeP0P1(acceptance); return device.criteria.length || device.boundaries.length; })() ? ['testing'] : [])];
+    ...((device ? device.required : explicit.includes('testing')) ? ['testing'] : [])];
   for (const phase of families.filter(phase => !excluded.has(phase))) try {
     const { prepareExplicitRequest } = require('./capability-resolution-entry-input') as typeof import('./capability-resolution-entry-input');
     const dir = path.join(prepared.reportDir, phase), file = path.join(dir, 'request.json');
     const input = prepareExplicitRequest({ projectRoot, frameworkRoot, phase, requestFile: path.relative(projectRoot, file), reportDir: path.relative(projectRoot, dir) });
     const summary = JSON.parse(fs.readFileSync(path.join(dir, 'summary.json'), 'utf8'));
     const reportFile = realProjectPath(projectRoot, summary.evidence.script_report, 'request report');
+    const reportBytes = fs.readFileSync(reportFile);
     if (summary.subject !== 'request' || summary.verdict !== 'PASS' || summary.request_sha256 !== input.request_sha256
       || stableStringify(summary.targets) !== stableStringify(input.bindings)
-      || summary.evidence.script_report_sha256 !== createHash('sha256').update(fs.readFileSync(reportFile)).digest('hex')) gap(phase, '当前原请求的实际专项结果未通过或输入已变化；保留既有FAIL，不签完成');
-    const { readBoundInput, resolveRequestInputs } = require('./capability-resolution') as typeof import('./capability-resolution');
-    const context = resolveRequestInputs(projectRoot, frameworkRoot, input).context;
+      || summary.evidence.script_report_sha256 !== createHash('sha256').update(reportBytes).digest('hex')) gap(phase, '当前原请求的实际专项结果未通过或输入已变化；保留既有FAIL，不签完成');
+    if (phase === 'testing' && device?.items.length) {
+      const checks = (JSON.parse(reportBytes.toString('utf8')).checks ?? []) as CheckResult[];
+      const missing = device.items.filter(item => !checks.some(check => check.id === 'request_device_acceptance' && check.status === 'PASS'
+        && (check.structured as { acceptance_id?: string } | undefined)?.acceptance_id === item.id));
+      if (missing.length) gap(phase, `短蓝图设备验收尚欠 ${missing.map(item => item.id).join('、')}；核 ${path.relative(projectRoot, reportFile)}`);
+    }
+    const { readBoundInput, requestPhaseInputContext } = require('./capability-resolution') as typeof import('./capability-resolution');
+    const context = requestPhaseInputContext(input.request_sha256);
     for (const binding of Object.values(summary.input_bindings ?? {})) readBoundInput({ projectRoot, frameworkRoot, phase, track: 'full', request: input, inputContext: context }, binding as never);
-  } catch (error) { gap(phase, `当前原请求专项结果尚未准备：${String(error)}`); }
+  } catch (error) {
+    const ids = phase === 'testing' ? device?.items.map(item => item.id) : undefined;
+    gap(phase, `当前原请求专项结果尚未准备${ids?.length ? `（设备验收 ${ids.join('、')}）` : ''}：${String(error)}`);
+  }
   return resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: problems });
 }
 
@@ -525,7 +538,22 @@ export function readInitialDesignDelivery(input: { projectRoot: string; framewor
       }
     }
     if (disposition.completionBlocking.some(problem => problem.action === 'repair')) return { ...state, kind: 'author', issues: feedback };
-    if (disposition.completionBlocking.length) return { ...state, kind: 'questioning', issues: feedback };
+    if (disposition.completionBlocking.length) {
+      if (!units.length && fs.existsSync(candidatesPath)) {
+        const precheck = inspectChangeUnitCandidateBatch({ projectRoot: input.projectRoot, blueprintId: input.manifest.feature, candidatesPath });
+        if (precheck.issues.length) {
+          const issues = precheck.issues.map(issue => {
+            const where = issue.locations?.map(({ target, field }) => `${target.view_id ? `view:${target.view_id}/` : ''}${target.kind}:${target.id}.${field}`);
+            return `${issue.code}${issue.change_unit_id ? ` [${issue.change_unit_id}]` : ''}：${issue.message}${where?.length ? `（${where.join('、')}）` : ''}`;
+          });
+          if (precheck.designAuthority?.length) return initialDesignCandidateRejection({ ...state, kind: 'author', issues: [] },
+            new ChangeUnitCandidateRejected(precheck.issues[0].code, issues.join('\n'), precheck.designAuthority), input.manifest.feature);
+          return { ...state, kind: precheck.issues.some(issue => issue.owner === 'blueprint') ? 'author' : 'decompose',
+            issues, candidateRejection: { code: precheck.issues[0].code, detail: issues.join('\n') } };
+        }
+      }
+      return { ...state, kind: 'questioning', issues: feedback };
+    }
     if (ownershipFindings.length) return { ...state, kind: 'author', issues: ownershipIssues.map(issue => issue.message),
       designRepair: { feature: input.manifest.feature, brief: { class: 'B2', items: ownershipFindings } } };
     return { ...state, kind: 'construction', progression, issues: progression.reasons };
@@ -569,12 +597,8 @@ function previousDesignWork(input: { projectRoot: string; manifest: InitialDesig
       affectedDependencies = questioningDependencyChanges(input.projectRoot, current, previous?.preSnapshot, input.observation.blueprintPath, undefined, usable?.result ?? undefined);
       selectedScopes = selectQuestioningScopes(previous?.beforeDocument, current, usable?.result ?? undefined,
         affectedDependencies.map(item => isInsideProjectRoot(input.projectRoot, item.path) ? path.relative(input.projectRoot, item.path).replace(/\\/g, '/') : item.path), input.projectRoot);
-      if (previous) {
-        const difference = compareAuthoritativeContent(blueprintAuthorContent(YAML.parse(previous.beforeBlueprint)), blueprintAuthorContent(current));
-        actualDiff = [{ label: '(actual blueprint changes)', content: JSON.stringify({ state: difference.state,
-          locations: 'items' in difference ? difference.items.map(item => ({ id: item.id, field: item.field })) : [],
-          before: previous.beforeSource, current: input.observation.blueprintPath }) }];
-      }
+      if (previous?.beforeDocument) actualDiff = [{ label: '(actual blueprint changes)',
+        content: describeQuestioningChanges(previous.beforeDocument, current, previous.beforeSource, input.observation.blueprintPath) }];
     } catch { /* Missing originals retain full first-reading context. */ }
     parts.push(...independentVerificationContext({ designQuestioning: true, previousOriginal: previous
       ? { label: previous.source, kind: 'path', content: '上轮独立原件；只定向读取本轮范围的原结论及来源，未变项由机器保留。' } : null,
@@ -661,6 +685,10 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
   catch { /* A missing or malformed author draft still receives the machine-allocated ID. */ }
   const sources = (manifest.requirement_source_files ?? []).join('、') || `${manifest.report_dir}/manifest.json#requirement`;
   const schemas = ['app-component-blueprint.schema.json', 'runtime-data-flow.schema.json', 'change-unit.schema.json'];
+  const designKnowledge = observation.kind === 'author'
+    ? assembleKnowledge({ projectRoot: input.projectRoot, frameworkRoot, subject: 'component-design', role: 'author' }, 'design-knowledge')
+    : undefined;
+  const designPrecheck = `npm run check:change-unit -- --project-root ${JSON.stringify(input.projectRoot)} --blueprint ${JSON.stringify(manifest.feature)} --precheck --json`;
   const parts = [
     ...(questioning ? ['本职终点：完成当前蓝图的真实独立质询；先读评审正文，再核来源与当前设计。'] : [
       `原始正式需求：\n${manifest.requirement}`, `请求终点：${manifest.initial_design.completion_target}；${manifest.initial_design.requested_results.filter(result => result.trim() !== (manifest.requirement ?? '').trim()).join('；') || '完成上述原始需求的全部适用CU正式交付。'}`,
@@ -682,10 +710,13 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
     '按原P1范围处理当前交付切片：稳定义务、可观察通道和真实内部/外部契约从原需求及工程事实取得。',
     questioning ? '本次独立质询只读；只通过结果运输返回本次JSON原件，不写蓝图或其它工程文件。'
       : `本次唯一作者写集：${observation.scope?.candidatePath ?? (observation.kind === 'decompose' ? observation.candidatesPath : path.dirname(observation.blueprintPath))}。范围候选仅经现有prepare-scope命令生成。不得写产品源码、测试、framework或其它Feature/CU；不自行签机器准入、receipt、events或完成。`,
+    ...(designKnowledge && (designKnowledge.entries.length || designKnowledge.notices.length)
+      ? [renderKnowledge(designKnowledge)] : []),
     ...prior.lines,
     ...(observation.kind === 'author' ? [
       `本次必须实际编写或补齐 ${observation.blueprintPath}，不是只调查、写author-findings.md或报告尚未完成。已有发现是中间材料；完成必要定向核实后立即把本次真实设计写进schema蓝图，并按当前机器缺口继续修到本职可交接。`,
       '先完成原需求的当前切片、4+1视图、稳定义务、内部/外部契约与数据/导航/失败恢复闭环；不等另一位作者接手，不以尚待独立质询为停止写蓝图的理由。没有真实授权或必需事实时明确具体缺口，不编答案。',
+      '在所属节点的 typed contracts.interfaces 声明接口方法签名。流程 ordered_steps 可用 interface:view:development/node:<node_id>/<class>#<method>，业务分支写成功、重复和失败的去向。用例数据边界 methods 使用所属类下唯一的方法名或同一完整引用；验收保留可观察结果，独立 DTO 显式描述转换。',
       '从原需求提取当前切片的预期结果，每个需独立证据的行为给独立验收 ID、真实产品触发和可观察通道。结果页出现证明页面已到达；逐项说明 UI checkpoint 的元素或断言能观察哪个承诺，多个 UI 义务可以共用动作。应用内测试即使在真机执行也归 unit，可分别验证输入映射与默认值、生产持久化写入及实际读回、实际调用次数。跨层行为说明同一次对象的生产、交接、消费与清理；交回前核对同一 CU 的 ID，保留完整一致的共享定义。',
       'focus 写应观察的结果与通道。使用已核产品事实写适用 P0 检查点和逐字需求引用；具体测试 API、定位或注入方式、数据前置、可运行用例与断言强度在既有 CU 计划和原验证职责确定。缺测试时保留原义务并将执行留给该职责；先完成本轮产品设计与来源。',
     ] : []),
@@ -695,10 +726,13 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
       `D（原阶段域）=[${initialDesignPhasePolicy(input.projectRoot, frameworkRoot, manifest).domain.join(',')}]；E（明确动作）=[${initialDesignPhasePolicy(input.projectRoot, frameworkRoot, manifest).explicit.join(',')}]。本CU动作A由你按原请求/已准入CU选择，必须保留E且只能取D内阶段。E空不等于没有交付责任；不可删显式testing，也不把域D全抄成用户明确要求。完整feature的验收、设备与视觉义务仍由原resolver全量派生，不列testing不会裁掉真实设备/视觉要求；不得因缺工具缩减原目标。`,
       'impact-behavior-change判断的是最终用户在运行产品上可见或可操作的行为变化，不等同任何内部函数、公开API或部件状态变化。true会使testing入链并要求真实设备工具链；false仍保留验收设备层、性能待定和视觉定档的真实义务。工具缺失不是选择false的理由。依据该CU真实设计、源码与验收给完整判断、理由和实际来源；未知不能默认为false，也不复制root结论。必须整份生成候选，不手改hash。完成本职输入准备后由runtime严格验证、正式出生并施工。',
     ] : []),
-    ...(observation.kind === 'decompose' ? ['同一次设计作者交回新CU候选及 construction_mapping：predicate_mappings、provide_mappings、design_ref_mappings 使用既有 contracts.change_unit 同形数组，逐项明确实际 implementation_refs 与 test_refs/verification_refs（未落盘可用 planned:）。不从 touches 或 AC ID 猜测测试文件；已有唯一明确设计映射可复用。consumer 接受 CU 后填真实 change_unit_ref，再由原 writer 整份校验并物化 Feature 契约；不需要额外作者调用补 sidecar。保留全部已有 canonical CU、蓝图及有效交付原件；现有CU内容修订交原正式设计发布事务。'] : []),
+    ...(observation.kind === 'decompose' ? ['同一次设计作者交回新 CU 候选。以 artifact.component_blueprint_ref 绑定当前蓝图；在 artifact.design_refs 逐条写 {target: {kind, view_id?, id}, implementation_refs, verification_refs}，工具从每条稳定目标展开原 design_ref_mappings 和精确蓝图身份。touches[].design_ref 可用 {target}。construction_mapping 填 predicate_mappings 与 provide_mappings，引用真实 implementation_refs 和 test_refs。保留旧完整映射时须与显式声明一致。未落盘文件可用 planned:；施工和测试落点按实际证据填写，有歧义交原作者核对。接受方填真实 change_unit_ref，再由原 writer 校验并物化 Feature 契约。保留全部已有 canonical CU、蓝图及有效交付原件；现有 CU 修订交原正式事务。'] : []),
     ...(observation.kind === 'decompose' ? [
       '映射到框架 testing 计划时，用候选自己的 blueprint_id 与 change_unit_id 解析长期引用。CU 计划落在自身目录，施工映射只引用长期计划位置。',
       buildChangeUnitTestingLocationHint(input.projectRoot, manifest.feature),
+    ] : []),
+    ...((observation.kind === 'author' || observation.kind === 'decompose') ? [
+      `本会话内运行只读预检（cwd=${path.join(frameworkRoot, 'harness')}）：${designPrecheck}。已准备候选时加 --candidates ${JSON.stringify(observation.candidatesPath)}，一并修复归本责任方的 issues 并复验。ready_for_questioning 表示作者可修项已就绪；pending_questioning 由 runtime 签发真实独立质询，不要求作者证明其已通过。正式接收仍重读当前绑定并原子写出。`,
     ] : []),
     observation.kind === 'questioning'
       ? questioningInstruction!
@@ -744,11 +778,55 @@ export function readInitialDesignWriteEvents(projectRoot: string, manifest: Init
   return [...prior, ...current ?? loadAuthoritativeEvents(path.resolve(projectRoot, manifest.report_dir, 'events.jsonl'))];
 }
 
+export function resolveInitialDesignWriteRecovery(projectRoot: string, manifest: InitialDesignGoalManifest, events: readonly GoalRunEvent[],
+  options: { emit?: (event: Record<string, unknown>) => void; forQuestioning?: boolean; authority?: Parameters<typeof unresolvedPhaseWrites>[2] } = {}) {
+  const conflicts = unresolvedPhaseWrites(projectRoot, events, options.authority);
+  const target = blueprintReviewPath(projectRoot, manifest.feature);
+  const review = path.relative(projectRoot, target).replace(/\\/g, '/');
+  const violation = conflicts.get(review);
+  if (!violation) return { conflicts };
+  conflicts.delete(review);
+  if (conflicts.size) return { conflicts, review: { file: review, violation } };
+  let produced: Record<string, unknown> | undefined;
+  try {
+    const before = readPhaseRecoveryFile(projectRoot, target).bytes;
+    let inspected = inspectBlueprintReview(projectRoot, manifest.feature);
+    if (options.emit && ['missing', 'stale'].includes(inspected.status) && !inspected.hasSourceErrors
+      && (options.forQuestioning || !inspected.sourceGaps?.length)) {
+      const materialized = materializeBlueprintReview(projectRoot, manifest.feature, {}, { requireTrustedSources: true });
+      if (materialized.status === 'failed') return { conflicts, review: { file: review, violation, reason: materialized.reason } };
+      inspected = inspectBlueprintReview(projectRoot, manifest.feature);
+    }
+    if (inspected.status !== 'current' || inspected.sourceGaps?.length) return { conflicts, review: { file: review, violation,
+      readableForQuestioning: inspected.status === 'current' && !inspected.hasSourceErrors,
+      reason: inspected.reason ?? (inspected.sourceGaps?.join('；') || inspected.status) } };
+    if (options.emit) {
+      const after = readPhaseRecoveryFile(projectRoot, target).bytes;
+      if (!after) return { conflicts, review: { file: review, violation, reason: '展示文件在重建后缺失' } };
+      const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+      produced = { path: review, pre_sha256: before ? hash(before) : null, post_sha256: hash(after),
+        recovered_pre_sha256: violation.before, recovered_observed_at: violation.observedAt };
+    }
+  } catch (error) {
+    return { conflicts, review: { file: review, violation, reason: (error as Error).message } };
+  }
+  if (produced) options.emit?.({ type: 'phase_write_observed', phase: 'initial-design', producer: 'blueprint-review',
+    feature: manifest.feature, produced: [produced] });
+  return { conflicts };
+}
+
+function initialDesignWriteProblems(projectRoot: string, manifest: InitialDesignGoalManifest): CurrentDispositionProblem[] {
+  const { conflicts, review } = resolveInitialDesignWriteRecovery(projectRoot, manifest, readInitialDesignWriteEvents(projectRoot, manifest));
+  if (review) conflicts.set(review.file, { ...review.violation, restorable: false });
+  return describePhaseWriteConflicts(conflicts).map(problem => review && problem.files?.includes(review.file)
+    ? { ...problem, detail: `框架将在可信来源恢复后重建评审展示：${review.file}${review.reason ? `；${review.reason}` : ''}。` } : problem);
+}
+
 /** Root completion consumes the same design, CU and formal assembly facts as their own endpoints. */
 export function readInitialDesignCompletionDisposition(input: { projectRoot: string; frameworkRoot: string; manifest: InitialDesignGoalManifest;
   observation?: InitialDesignObservation }): CurrentDisposition {
   const observed = input.observation ?? readInitialDesignDelivery(input);
-  const writes = phaseWriteConflictProblems(input.projectRoot, readInitialDesignWriteEvents(input.projectRoot, input.manifest));
+  const writes = initialDesignWriteProblems(input.projectRoot, input.manifest);
   if (observed.request) return observed.kind === 'construction' ? initialRequestDisposition(input.projectRoot, input.frameworkRoot, observed.request, writes)
     : resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: [...writes, { phase: 'component-design', id: 'execution_scope', action: 'repair', affects: 'completion', severity: 'BLOCKER', owner: 'component-design', detail: observed.issues.join('；') }] });
   const problems: CurrentDispositionProblem[] = [...writes, ...(observed.disposition?.problems ?? [])];
@@ -790,7 +868,10 @@ export function projectInitialDesignDelivery(input: { projectRoot: string; frame
   const events = loadEventsJsonlStrict(path.join(runDir, 'events.jsonl'));
   if (events.corruptLines.length) throw new Error('[initial-design] corrupt original request events');
   const observed = readInitialDesignDelivery({ projectRoot, frameworkRoot: input.frameworkRoot, manifest });
-  const currentDisposition = readInitialDesignCompletionDisposition({ ...input, manifest, observation: observed });
+  const currentDisposition = observed.request && observed.kind === 'construction' && observed.disposition
+    ? resolveCurrentDisposition({ endpoint: 'request', phases: [],
+      additionalProblems: [...initialDesignWriteProblems(projectRoot, manifest), ...observed.disposition.problems] })
+    : readInitialDesignCompletionDisposition({ ...input, manifest, observation: observed });
   const end = resolveEffectiveRunEnd(events.events);
   const disposition = end && 'run_disposition' in end && typeof end.run_disposition === 'string' ? end.run_disposition : undefined;
   const waitKind = end && 'run_wait_kind' in end && typeof end.run_wait_kind === 'string' ? end.run_wait_kind : undefined;
