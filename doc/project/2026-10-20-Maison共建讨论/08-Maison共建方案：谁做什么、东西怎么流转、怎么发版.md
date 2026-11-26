@@ -115,7 +115,6 @@ maison-distribution/                       分支 1.x、2.x
 │  └─ dist/                                打包输出，不入库
 ├─ extensions/
 │  ├─ base/                                Extensions 包，与业务工程 doc/extensions/base/ 同构，随外网快照
-│  │  └─ examples/knowledge/               base 内的适配样例，base 同时带 .gitignore
 │  └─ adapters/                            来自 maison-adapters 的 tag
 ├─ 打包/
 │  ├─ pack-maison.ps1（或 .sh）             从当前提交打出 Maison 发行包
@@ -209,16 +208,16 @@ maison-adapters/                           分支 1.x、2.x
 
 | 目录 | 归谁 | 内容 | 升级时 |
 |---|---|---|---|
-| `base/` | 外网 Extension | 机制与临时适配样例 | 整份替换 |
+| `base/` | 外网 Extension | 通用机制与知识识别方法 | 整份替换 |
 | `manifest.yaml` | 业务工程根清单 | 机制登记、项目身份与知识激活清单 | 保留原位，adapt 就地合并 |
 | `knowledge/` | 业务工程 | 项目正式知识 | 由本工程 adapt 按需适配 |
 | `adapters/` | 内网对接层维护者 | 发行包选定的需求系统对接实现 | 业务项目随 base 一起替换 |
 | `adaptation.yaml` | 业务 | 已适配版本等状态 | 由 adapt 写 |
 
-- 外网只发布 `extensions/base/`。正式知识样板和替身对接层只在外网 demo 中供开发测试使用，外网发布物没有同级的 knowledge 或 adapters。
+- 外网仓持有完整、业务无关的 `extensions/` 交付源（当前仅含 base）。外网 demo 单独持有知识与测试对接，每轮 CLI 前安装候选；修订后复测前更新。发布从通过 CLI 的同一提交取交付源，核身份即可。
 - 内网发布仓的 Extensions 部分只有 `base/` 和 `adapters/`。导入外网版本时只换 base；对接层独立接收内网 tag。内网发行包把这两个目录一起交给业务工程。
 - 业务工程的 `paths.extension_dir` 保持 `doc/extensions`，原知识登记继续相对根 manifest 解析。
-- adapt 从已装的 `base/examples/knowledge/` 参考写法，依据本工程事实生成或更新知识。随包 `base/.gitignore` 忽略 `/examples/`，适配成功后清理本次安装的样例。
+- demo 维护本项目正式知识并校准方法。发布仓只交付通用方法；首次使用的业务仓由 /story adapt 从该项目证据生成知识，升级按版本演进定向适配。
 
 这一目录是 Extensions 2.x 的整改目标，由王义康在 Extensions 2.x 的 Spec 里设计并实施，前提见 §10。主要改动有三项：
 
@@ -243,7 +242,7 @@ maison-2.1.0.zip（另附 maison-2.1.0.zip.sha256）
    ├─ framework-3.2.0.zip            发布仓打出的 Framework 包，含 web-app、android-app
    ├─ framework-3.2.0.manifest.json
    └─ extensions/
-      ├─ base/                        外网机制包，内含 examples/knowledge/ 和 .gitignore
+      ├─ base/                        外网机制包，含适配方法，无成品知识
       └─ adapters/                    内网对接层，首装和升级均随 base 交付
 ```
 
@@ -273,9 +272,9 @@ maison-2.1.0.zip（另附 maison-2.1.0.zip.sha256）
 
 1. 从发布说明确认要装的版本和支持范围，核对发行包的 sha256。
 2. 把 `framework-<版本>.zip` 解压到工程根，得到 `framework/`。
-3. 在业务工程运行 framework-init，选定宿主，复制内网包的 base、adapters。根 manifest 保持原位，首次可按正式接口做一次最小配置。
-4. 2.0.6 的宿主 Story 入口须直接指向 base 内的源文件。现有 900c 在这个布局上尚不能仅靠根 manifest 登记 ID 完成首次物化，正式接法见下节链接；此处是目标流程。
-5. 在业务工程里执行 `/story adapt`，生成或更新项目知识与登记、核对对接及入口，成功后清理临时样例并记录版本。2.0.6 的入口准备命令与升级分工见[首装设计](../../spec/2.0.6/draft/2026-11-23-目录调整与就地适配.md#首次取得-story-入口)。
+3. 先将同一内网包的 base、adapters 完整放入业务扩展根。首次在原位根 manifest 做最小登记；已有合法业务登记随项目保留。
+4. 在业务工程运行 framework-init 并选定宿主，确认 Story 桥指向 base 内唯一源。
+5. 从已生成的入口执行 /story adapt。知识为空时基于目标生成并登记，已有知识则据已适配版本分析演进，允许无需新增。成功后读回正式知识并记版本。
 6. 在 `framework.local.json` 里填写个人工具链路径。
 7. 按安装说明里的接入验收项确认可用，再合入业务主线。
 
@@ -284,7 +283,7 @@ maison-2.1.0.zip（另附 maison-2.1.0.zip.sha256）
 升级：
 
 1. 若本轮同时更新 Framework，替换其发行文件；把同一内网发行包的 base、adapters 替换到业务工程。
-2. 项目完成 Framework 更新并取得指向新版 base 的宿主入口后，执行 `/story adapt`，按新版包完成业务适配。
+2. 每次更新 Extension 都执行 framework-init，取得指向新版 base 的宿主入口后，执行 `/story adapt`，按新版包完成业务适配。
 3. 上述目录替换保留项目知识、根 manifest、适配游标和业务配置；adapt 按实际事项更新知识及登记。
 4. 2.x 不接续 1.x 的在途需求：在途需求在 1.x 工程上做完，新需求进 2.x。
 
@@ -488,7 +487,7 @@ flowchart TB
 | 发布仓归档上游 Framework ZIP 和 Demo | 用户要求发布仓放源码，并由它自己打包 | §5.1 |
 | 平台从上游 ZIP 手工组装自测工程 | 与 Extensions 已在用的协作方式不一致 | 平台仓带 demo，按发布仓打出的包同步（§5.2） |
 | Extensions 以正式 Demo 作为发布形态 | Demo 是开发测试工程 | 发布 `base/`，随 Maison 发行包交付（§6.1） |
-| 样例随包会进入业务提交 | 2.0.6 样例放在 base/examples/knowledge/ | 随 base 交付 .gitignore，适配成功后删除安装样例（§6.1） |
+| 业务仓首次如何生成知识 | 已选择不发整套 demo 样例 | adapt 依据目标仓生成；demo 仅作维护校准，方法与真实效果验收见 2.0.6 S33。 |
 | 迁移 manifest 导致知识越出扩展根 | 2.0.6 已确定 manifest 保持原位 | 原知识登记有效，待验的是机制搬迁后的 Skill 入口（§10） |
 
 ### 13.3 核到的事实

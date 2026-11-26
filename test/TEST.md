@@ -109,7 +109,7 @@ CLI 测试一律以非沙箱启动（用户长期授权，每轮不必重新征�
 活动 PID、有效 lease、路径越界、链接风险或无法可靠枚举进程时，保留现场并在第 5 步之前停止。
 `sw-story/` 只放可丢弃的临时现场，要长期保留的东西不放在那里。
 
-2.0.6 正式 CLI 前由 S30 更新仓内 demo，并验证以下装配得到同一组合。现有模板按固定顺序装配：核 demo（结构、没有 `doc/features`、git 干净、记下提交）→ 复制 demo（排除 `doc/features`、Framework 活动状态、
+每轮正式 CLI 前由执行者更新仓内 demo（2.0.6 按 S30/S32/S33）；若 CLI 后修订交付物，复测前同步新候选。发布复用最后通过的同一候选。验证以下装配得到同一组合。现有模板按固定顺序装配：核 demo（结构、没有 `doc/features`、git 干净、记下提交）→ 复制 demo（排除 `doc/features`、Framework 活动状态、
 `oh_modules`、`build`、`.hvigor`、`__pycache__` 等运行态，业务模块自己的单测目录照常带上）→ 换上被测 Framework：按
 [`test/config/framework-under-test.json`](config/framework-under-test.json) 从维护仓 Git 的固定发布提交取 framework 子树原始字节（核树 OID 与发布清单，
 只留 harness 依赖、锁文件、运行报告与状态等运行态，依赖声明变了就停），核并应用同一文件登记的本地宿主补丁，配置的 `materialized_adapters`

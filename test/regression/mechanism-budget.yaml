@@ -430,7 +430,58 @@ packages:
         cumulative_version_estimate: {G: 926, X: 1038}
         scope: "前轮追加认可102，本轮追加认可38，另准S29 G32/X32、S30维护域。"
         source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
+      - release: "2.0.6"
+        date: "2026-11-25"
+        by: "维护设计者 Codex（用户授权）"
+        at_ref: "7b117923"
+        approved_increment_g: 258
+        planned_retirement_x: 12
+        actual_batch: {G: 85, X: 30}
+        pending_confirmation_g: 77
+        cumulative_version_estimate: {G: 1184, X: 1048}
+        scope: "前两笔追认140+60，本轮追加38，另准S31 G20/X12，S32维护域。"
+        source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
+      - release: "2.0.6"
+        date: "2026-11-25"
+        by: "维护设计者 Codex（用户授权）"
+        at_ref: "7b117923"
+        approved_increment_g: 6
+        planned_retirement_x: 5
+        pending_confirmation_g: 77
+        cumulative_version_estimate: {G: 1190, X: 1053}
+        scope: "S33：样例忽略改归消费侧；外网和内网正常追踪完整交付，维护域不计。"
+        source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
+      - release: "2.0.6"
+        date: "2026-11-25"
+        by: "维护设计者 Codex（用户授权）"
+        at_ref: "7b117923"
+        approved_increment_g: 26
+        planned_retirement_x: 63
+        pending_confirmation_g: 77
+        cumulative_version_estimate: {G: 1216, X: 1116}
+        scope: "S33 改为无样例首装知识生成，32/68 替换原估 6/5，此处只记差额。"
+        source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
+      - release: "2.0.6"
+        date: "2026-11-25"
+        by: "维护设计者 Codex（用户授权）"
+        at_ref: "7b117923"
+        approved_increment_g: 68
+        planned_retirement_x: 108
+        pending_confirmation_g: 77
+        cumulative_version_estimate: {G: 1284, X: 1224}
+        scope: "S33 整体知识写作重设计：G100/X176 替换 G32/X68，只追加差额。"
+        source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
     confirmations:
+      - band: ">150%"
+        by: "维护设计者 Codex（受用户委托）"
+        date: "2026-11-25"
+        at_ref: "7b117923"
+        actual_invested_g: 9875
+        confirmed_overrun_g: 238
+        pending_confirmation_g: 77
+        scope: "本轮实投85/30，认可70；原暂缓202/60中追认140/60，余62和本轮15分列。"
+        reason: "R232.4%，真实旧版迁移、两案装配、替身与保护已核；业务清单与同名内容归属留S31复核。"
+        source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
       - band: ">150%"
         by: "维护设计者 Codex（受用户委托）"
         date: "2026-11-25"
