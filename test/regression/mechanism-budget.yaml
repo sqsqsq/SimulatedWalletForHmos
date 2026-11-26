@@ -471,7 +471,28 @@ packages:
         cumulative_version_estimate: {G: 1284, X: 1224}
         scope: "S33 整体知识写作重设计：G100/X176 替换 G32/X68，只追加差额。"
         source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
+      - release: "2.0.6"
+        date: "2026-11-25"
+        by: "维护设计者 Codex（用户授权）"
+        at_ref: "1a4e82f9"
+        approved_increment_g: 92
+        planned_retirement_x: 26
+        actual_batch: {G: 191, X: 263}
+        pending_confirmation_g: 88
+        cumulative_version_estimate: {G: 1376, X: 1325}
+        scope: "历史追认15，本轮额外认可45；S34/S35另准32/26，S36维护域。"
+        source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
     confirmations:
+      - band: ">150%"
+        by: "维护设计者 Codex（受用户委托）"
+        date: "2026-11-25"
+        at_ref: "1a4e82f9"
+        actual_invested_g: 10066
+        confirmed_overrun_g: 60
+        pending_confirmation_g: 88
+        scope: "新实投191/263，认可165；历史暂缓77中追认15。"
+        reason: "包R236.8%；审核安装前像、写面、知识作业实际读面和两案装配。G62、17、9分列。"
+        source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
       - band: ">150%"
         by: "维护设计者 Codex（受用户委托）"
         date: "2026-11-25"

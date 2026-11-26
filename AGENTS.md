@@ -194,7 +194,7 @@ demo/scripts/build-dependence.ps1                                     # 重建 d
 5. 宿主入口由 Framework 按已装 Extension 的 manifest 原生物化：UPDATE 后跑
    `node demo/doc/extensions/base/skills/story-adaptation/scripts/entries.mjs --project-root demo --action check`，核入口文件与原生渲染一致、
    每个扩展 Skill 的入口都在；不一致按它点名的项处理，不手改入口文件。
-6. 装置同步：根 `.opencode/agent/verifier.md` 逐字节复制自 `demo/.opencode/agent/verifier.md`。
+6. 核消费端宿主资产：按已选宿主检查 demo 内物化的 verifier、配置层和模板是否同源。宿主项目级配置只在消费工程维护，维护仓根退出 OpenCode 副本。
 7. 验证：demo 下 `cd framework/harness && npm test`；`check_framework_drift.py` 结果与本次接入一致；按 [TEST §5](test/TEST.md) 跑与改动相关的离线回归。
 8. 提交 demo，并在 [doc/EVOLUTION.md](doc/EVOLUTION.md) 登记发布件版本、source_commit、定制处理与验证结果。
 
