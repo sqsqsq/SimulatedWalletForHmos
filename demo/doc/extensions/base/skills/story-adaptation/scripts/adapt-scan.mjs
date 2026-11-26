@@ -106,19 +106,46 @@ function manifestRefs(doc) {
 }
 
 const sha16 = text => createHash('sha256').update(text, 'utf8').digest('hex').slice(0, 16);
+const bizSkillsOf = doc => (Array.isArray(doc?.provides?.skills) ? doc.provides.skills : [])
+  .filter(s => typeof s === 'string' && !PKG_SKILLS.includes(s) && s !== 'story-knowledge');
 
 function legacyState(tgtDoc, bizRefs) {
   const preFile = join(BASE_DIR, 'skills', 'story-adaptation', 'contracts', 'legacy-preimages.json');
   const pre = new Set(existsSync(preFile) ? (JSON.parse(read(preFile)).digests ?? []) : []);
-  const owned = storyOwnedSet(tgtDoc), retireOwn = [], modifiedOwn = [], unknownLegacy = [];
+  const owned = storyOwnedSet(tgtDoc), bizDirs = bizSkillsOf(tgtDoc).map(s => `skills/${s}/`), retireOwn = [], modifiedOwn = [], unknownLegacy = [];
   for (const relPath of LEGACY_DIRS.flatMap(d => walk(join(TDIR, d)).map(p => `${d}/${p}`))) {
     if (relPath.startsWith(`${LEGACY_ADAPTERS}/`)) { retireOwn.push(relPath); continue; }
     const body = lf(read(join(TDIR, ...relPath.split('/')))), cur = join(BASE_DIR, ...relPath.split('/'));
     if (pre.has(sha16(`${relPath}\0${body}`)) || (existsSync(cur) && sha16(body) === sha16(lf(read(cur))))) retireOwn.push(relPath);
     else if (owned.has(relPath)) modifiedOwn.push(relPath);
-    else if (!bizRefs.has(relPath)) unknownLegacy.push(relPath);
+    else if (!bizRefs.has(relPath) && !bizDirs.some(d => relPath.startsWith(d))) unknownLegacy.push(relPath);
   }
   return { owned, retireOwn, modifiedOwn, unknownLegacy };
+}
+
+function manifestConflicts(pkg, tgt, owned) {
+  const out = [];
+  const check = (p, q, label) => { if (q && p !== q && !owned.has(String(p ?? '').trim())) out.push(`${label}：目标 ${p} 与包 ${q} 同键异主`); };
+  for (const [ph, p] of Object.entries(tgt.provides?.phase_rules_overlays ?? {})) check(p, pkg.provides?.phase_rules_overlays?.[ph], `provides.phase_rules_overlays.${ph}`);
+  for (const [s, m] of Object.entries(tgt.provides?.skill_assets ?? {}))
+    for (const [k, v] of Object.entries(m ?? {})) check(v, pkg.provides?.skill_assets?.[s]?.[k], `provides.skill_assets.${s}.${k}`);
+  return out;
+}
+
+function unownedIgnoredInBase(extRel) {
+  const r = git(TARGET, ['-c', 'core.quotepath=false', 'status', '--porcelain', '--ignored=matching', '-uall', '--', `${extRel}/base`]);
+  const exMf = join(TDIR, 'base', 'examples', '.manifest.json'), prefix = `${extRel}/base/`;
+  let exp = null;
+  if (existsSync(exMf)) { try { exp = JSON.parse(read(exMf))?.files ?? null; } catch { exp = null; } }
+  const items = !r.ok ? [] : r.out.split(/\r?\n/).filter(l => l.startsWith('!! ')).flatMap((l) => {
+    const p = l.slice(3).trim().replace(/^"(.*)"$/, '$1');
+    return p.endsWith('/') ? walk(join(TARGET, ...p.slice(0, -1).split('/')), TARGET, new Set(), true) : [p];
+  });
+  return items.filter((relPath) => {
+    const sub = relPath.startsWith(prefix) ? relPath.slice(prefix.length) : '';
+    if (!sub || sub.includes('__pycache__/') || /\.(?:pyc|pyo)$/.test(sub) || (sub === 'examples/.manifest.json' && exp)) return false;
+    return !(sub.startsWith('examples/') && exp?.[sub.slice(9)] === `sha256:${createHash('sha256').update(lf(read(join(TDIR, 'base', ...sub.split('/')))), 'utf8').digest('hex')}`);
+  });
 }
 
 /** 合成运行时唯一根 manifest：按真实所有权合并本包机制，保留目标身份、业务 knowledge 与业务自定义登记，同步退出被接替的旧技能绑定。 */
@@ -128,8 +155,7 @@ function composeManifest(pkgText, tgtText, identity) {
   const owned = storyOwnedSet(tgt);
   const isStoryReg = p => owned.has(String(p ?? '').trim());
   const isStoryBind = b => isStoryReg(b?.ref) || (b?.kind === 'skill' && (PKG_SKILLS.includes(String(b?.ref ?? '')) || b?.ref === 'story-knowledge'));
-  const bizSkills = (Array.isArray(tgt.provides?.skills) ? tgt.provides.skills : [])
-    .filter(s => typeof s === 'string' && !PKG_SKILLS.includes(s) && s !== 'story-knowledge');
+  const bizSkills = bizSkillsOf(tgt);
   const name = typeof tgt.name === 'string' && tgt.name.trim() ? tgt.name.trim() : identity.name;
   const description = typeof tgt.description === 'string' && tgt.description.trim()
     ? tgt.description.trim() : identity.description;
@@ -577,27 +603,39 @@ function writeAdaptedFor() {
   if (!existsSync(file) || read(file) !== next) writeFileSync(file, next, 'utf8');
 }
 
+function reviewGap(f) {
+  const r = f.check.review;
+  if (!r || r.status === 'valid' || (r.status === 'missing' && !f.items.知识?.length)) return null;
+  return `知识独审未通过（${r.status}）：${r.problems.join('；')}——按 reference/knowledge-review.md 对受影响知识按新摘要重审`;
+}
+
 async function printFollowUp() {
   const f = await followUp();
-  console.log(`[adapt-scan] 按版本跟进：${JSON.stringify(f)}`);
-  const adGap = adapterGap(f.adapters);
-  const kItems = f.items.知识 ?? [];
-  const kFiles = f.check.files ?? [];
-  const kState = f.check.status === 'PASS' && !kItems.length && kFiles.length ? '知识可用' : '知识待写';
-  console.log(`[adapt-scan] 状态：机制已安装（${PKG_VERSION}） / ${kState}（激活 ${kFiles.length} 份，校验 ${f.check.status}） / 对接 ${f.adapters.status}`);
-  if (Object.values(f.items).some(list => list.length) || f.check.status !== 'PASS' || adGap) {
+  const adGap = adapterGap(f.adapters), rGap = reviewGap(f), kItems = f.items.知识 ?? [], kFiles = f.check.files ?? [];
+  const regBiz = (existsSync(tgtManifest) ? (parseYaml(read(tgtManifest))?.provides?.knowledge ?? []) : [])
+    .filter(x => { const p = typeof x === 'string' ? x.trim() : String(x?.path ?? '').trim(); return p && p !== KNOWLEDGE_SKILL_ENTRY && p !== 'skills/story-knowledge/SKILL.md'; });
+  const kState = f.check.status === 'PASS' && !kItems.length && !rGap && kFiles.length ? '知识可用' : (regBiz.length && f.check.status !== 'PASS' ? '知识加载失败' : '知识待写');
+  console.log(`[adapt-scan] 状态：机制已安装（${PKG_VERSION}） / ${kState}（登记 ${regBiz.length} 份，可读 ${kFiles.length} 份，校验 ${f.check.status}） / 对接 ${f.adapters.status}`);
+  if (Object.values(f.items).some(list => list.length) || f.check.status !== 'PASS' || adGap || rGap) {
+    if (f.check.status !== 'PASS') console.log(`[adapt-scan] 知识加载失败：${f.check.problems.join('；')}`);
+    if (rGap) console.log(`[adapt-scan] ${rGap}`);
     if (adGap) console.log(`[adapt-scan] 尚欠对接层：${adGap}`);
     const branch = f.since === '0'
-      ? (kFiles.length
-        ? '无游标但已有正式知识：走 knowledge-adaptation.md「无游标已有知识」分支，从基线核覆盖并保留有效原文与编号，不自行推测游标'
-        : '首次安装且正式知识为空：先从仓内一个常规业务操作起手，走 knowledge-adaptation.md「首次安装作者」与 knowledge-topics.md 取证起草（上面演进条目作查漏清单）')
-      : `已适配 ${f.since}，只看晚于游标的变更：走 knowledge-adaptation.md「已有知识的升级作者」定向修订`;
+      ? (!regBiz.length
+        ? '首次安装且正式知识为空：先从仓内一个常规业务操作起手，走 knowledge-adaptation.md「首次安装作者」与 knowledge-topics.md 取证起草（下方演进条目作查漏清单）'
+        : f.check.status === 'PASS'
+          ? '无游标但已有正式知识可读：走 knowledge-adaptation.md「无游标已有知识」，从基线核覆盖并保留有效原文与编号，不自行推测游标'
+          : '无游标且已有知识登记但加载失败：先按上面错误修好已有知识或登记并保住现稿，不派首次重写')
+      : (!kItems.length && rGap
+        ? `已有知识已改动或原独审失效：保留游标 ${f.since}，按 reference/knowledge-review.md 对受影响知识按新摘要重审`
+        : `已适配 ${f.since}，只看晚于游标的变更：走 knowledge-adaptation.md「已有知识的升级作者」定向修订`);
     console.log(`[adapt-scan] 下一步（条目是待判断的适配主题，不表示目标仓已采用）：${branch}；按块摆出来，停一次问人「现在做这些适配吗」；`
       + '选稍后就不写任何东西；选中的知识（含独审）与对接适配交回后跑 --mark-adapted 记 adapted_for');
-    return true;
+  } else {
+    writeAdaptedFor();
+    console.log(`[adapt-scan] 目标已按包的版本适配，入口、知识与对接（${f.adapters.status}）已核，adapted_for 记为 ${PKG_VERSION}`);
   }
-  writeAdaptedFor();
-  console.log(`[adapt-scan] 目标已按包的版本适配，入口、知识与对接（${f.adapters.status}）已核，adapted_for 记为 ${PKG_VERSION}`);
+  console.log(`[adapt-scan] 按版本跟进：${JSON.stringify(f)}`);
   return true;
 }
 
@@ -633,11 +671,8 @@ if (mode === '--mark-adapted') {
   if (entries.problems.length) die(`宿主入口核对不符，adapted_for 不写：\n  ${entries.problems.join('\n  ')}`, 2);
   const f = await followUp();
   if (f.check.status !== 'PASS') die(`知识不能按当前协议加载，适配还没做完：\n  ${f.check.problems.join('\n  ')}`, 2);
-  if (f.items.知识?.length && f.check.review.status !== 'valid') {
-    die(`本次有 ${f.items.知识.length} 条知识演进要适配，知识独审证据不成立（${f.check.review.status}）：\n  `
-      + `${f.check.review.problems.join('\n  ')}\n  按 reference/knowledge-review.md 发起与收回审查；`
-      + '机制已经装好，知识适配未完成，adapted_for 不写', 2);
-  }
+  const rGap = reviewGap(f);
+  if (rGap) die(`${rGap}\n  机制已经装好，知识适配未完成，adapted_for 不写`, 2);
   const adGap = adapterGap(f.adapters);
   if (adGap) die(`${adGap}；适配未完成，adapted_for 不写`, 2);
   writeAdaptedFor();
@@ -705,6 +740,10 @@ if (mode === '--apply' || mode === '--prepare-init') {
     dirty.forEach(p => console.error(`  ${p}`));
     die('先提交或暂存自己的改动再升级——本命令不替你动工作区（不 stash、不提交）', 2);
   }
+  const ignoredDrafts = opt('--source-base') && existsSync(join(TDIR, 'base')) ? unownedIgnoredInBase(extRel) : [];
+  if (ignoredDrafts.length) die(`停：旧 base/ 下含 ${ignoredDrafts.length} 处被忽略的人工/未归属文件，拒绝覆盖：\n  ${ignoredDrafts.join('\n  ')}\n  请移出或删除后再导入。目标一个字节未写`, 2);
+  const keyConflicts = manifestConflicts(parseYaml(PKG_MANIFEST_TEXT) ?? {}, tgtDoc, owned);
+  if (keyConflicts.length) die(`停：根 manifest 有 ${keyConflicts.length} 处同键异主冲突，保留目标原件：\n  ${keyConflicts.join('\n  ')}\n  请调整业务键或路径后再升级。目标一个字节未写`, 2);
   if (modifiedOwn.length) {
     console.error(`[adapt-scan] 停：旧包同名路径下发现 ${modifiedOwn.length} 处非受支持旧版原件（疑似已改为业务代码），保留文件与登记：`);
     modifiedOwn.forEach(p => console.error(`  ${extRel}/${p}`));

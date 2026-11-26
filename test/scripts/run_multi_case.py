@@ -464,11 +464,21 @@ def install_framework_under_test(template: Path, *, strict: bool | None = None) 
     adapters = list(dict.fromkeys([*config.get("materialized_adapters", []), *cfg["materialized_adapters"]]))
     # 核对 template（从已提交 demo 复制而来）的 Framework、本地补丁与受影响子代理是否与固定输入逐字节一致
     manifest_file = framework / "RELEASE-MANIFEST.json"
+    sidecar_file = framework / "RELEASE-MANIFEST.sha256"
     rel_manifest_blob = _git_out("cat-file", "blob", f"{cfg['release_commit']}:{cfg['framework_path']}/RELEASE-MANIFEST.json")
+    rel_sidecar_blob = _git_out("cat-file", "blob", f"{cfg['release_commit']}:{cfg['framework_path']}/RELEASE-MANIFEST.sha256")
     drift_reasons: list[str] = []
     manifest = json.loads(rel_manifest_blob.stdout.decode("utf-8"))
     if not manifest_file.is_file() or manifest_file.read_bytes() != rel_manifest_blob.stdout:
         drift_reasons.append("framework/RELEASE-MANIFEST.json 与固定发布提交不一致")
+    want_manifest_sha = hashlib.sha256(rel_manifest_blob.stdout).hexdigest()
+    if not sidecar_file.is_file():
+        drift_reasons.append("framework/RELEASE-MANIFEST.sha256 缺失")
+    else:
+        got_sidecar = sidecar_file.read_bytes()
+        got_tokens = got_sidecar.decode("utf-8", "replace").split()
+        if got_sidecar != rel_sidecar_blob.stdout or not got_tokens or got_tokens[0] != want_manifest_sha:
+            drift_reasons.append("framework/RELEASE-MANIFEST.sha256 与固定发布清单摘要不符")
     if adapters != config.get("materialized_adapters"):
         drift_reasons.append(f"framework.config.json materialized_adapters={config.get('materialized_adapters')} 未包含 {adapters}")
     with tempfile.TemporaryDirectory(prefix="fw-patch-check-") as ptmp:

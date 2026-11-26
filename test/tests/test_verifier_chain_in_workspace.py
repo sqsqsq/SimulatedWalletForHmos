@@ -559,6 +559,22 @@ class StrictCandidateAssemblyRejectsDrift(unittest.TestCase):
             self.assertEqual(mutated, readme.read_bytes(), "严格模式遇漂移却静默覆盖恢复了 README.md")
             readme.write_bytes(orig_readme)
 
+            # 2b) S36 R5：仅改坏或删除 RELEASE-MANIFEST.sha256 侧车 → 写前直停并指明实际路径，绝不静默覆盖恢复
+            sidecar = tpl / "framework" / "RELEASE-MANIFEST.sha256"
+            orig_sidecar = sidecar.read_bytes()
+            bad_sidecar = b"0" * 64 + b"  RELEASE-MANIFEST.json\n"
+            sidecar.write_bytes(bad_sidecar)
+            with self.assertRaises(SystemExit) as cm_sc:
+                runner.install_framework_under_test(tpl, strict=True)
+            self.assertIn("framework/RELEASE-MANIFEST.sha256", str(cm_sc.exception))
+            self.assertEqual(bad_sidecar, sidecar.read_bytes(), "严格模式遇侧车漂移却静默恢复了 RELEASE-MANIFEST.sha256")
+            sidecar.unlink()
+            with self.assertRaises(SystemExit) as cm_sc_miss:
+                runner.install_framework_under_test(tpl, strict=True)
+            self.assertIn("framework/RELEASE-MANIFEST.sha256", str(cm_sc_miss.exception))
+            self.assertFalse(sidecar.exists(), "严格模式缺侧车却写回恢复了 RELEASE-MANIFEST.sha256")
+            sidecar.write_bytes(orig_sidecar)
+
             # 3) 缺失 adaptation.yaml → 停止并指出 adaptation.yaml，不回退到 install_extension 合成安装
             adapt_yaml = tpl / "doc" / "extensions" / "adaptation.yaml"
             adapt_yaml.unlink()

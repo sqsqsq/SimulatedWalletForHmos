@@ -20,7 +20,7 @@ description: /story 需求流程编排——init 取材、导入并确认材料�
 | `archive <AR>` | 「需求系统 Token」+「命令入口 · 归档」 |
 | `restore <AR>` | 「需求系统 Token」+「命令入口 · 恢复」 |
 | `update <编号>` | 「命令入口 · 更新」；要从需求系统取新内容时先读「需求系统 Token」 |
-| `adapt [<目标工程>]` | 改读 [../story-adaptation/SKILL.md](../story-adaptation/SKILL.md)：把本扩展装到或升级到另一个工程，与需求流程无关 |
+| `adapt` | 改读 [../story-adaptation/SKILL.md](../story-adaptation/SKILL.md)：在当前业务工程内就地安装、升级、知识适配与校验，与需求流程无关 |
 | `stats` | 改读 [../story-stats/SKILL.md](../story-stats/SKILL.md)：本仓的使用情况统计，与需求流程无关 |
 | `help` | 只输出下面这张表 |
 
@@ -30,7 +30,7 @@ description: /story 需求流程编排——init 取材、导入并确认材料�
 | 2 | `/story archive <AR>` | `AR/story.md` 作正文；系统要求或本单已有交付请求时再加设计参考 `blueprint/component-blueprint.review.md`，逐件上传并读回（自动备份；任一缺失或未过门禁即拒绝） |
 | 3 | `/story restore <AR>` | （可选）用备份回退 archive 的覆盖 |
 | 4 | `/story update <编号>` | 上游材料、评审意见或人的新决定变了之后，据它更新已有产物 |
-| — | `/story adapt [<目标工程>]` | 把 Story Extension 装到或升级到另一个工程 |
+| — | `/story adapt` | 在当前业务工程内就地安装、升级与适配 Story Extension |
 | — | `/story stats` | 统计本仓需求流程的使用情况 |
 | — | `/story help` | 输出本表 |
 
