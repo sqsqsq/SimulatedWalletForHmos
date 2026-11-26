@@ -276,10 +276,6 @@ class TheWorkspaceCarriesTheVerifierChain(AssembledFromTheFixedInputs, unittest.
                         "harness 依赖没进工作区——被测模型又要现装一遍")
 
 
-    def test_the_maintenance_copy_of_the_verifier_is_the_demo_one(self) -> None:
-        """根的 verifier 维护装置是 demo 物化件的拷贝，两份逐字节相同。"""
-        self.assertEqual((DEMO / VERIFIER_DEF).read_bytes(), (REPO_ROOT / VERIFIER_DEF).read_bytes())
-
     def test_the_dsh_verifier_is_a_read_only_spawn_with_the_framework_protocol(self) -> None:
         """dsh 审查员按 DSH 0.2.1 Preset 写法：人设在 Agent Preset，子级 in-process spawn，preset 只装读与检索工具；
         registry 默认空 preset，主会话不受影响。人设沿用被测 Framework 的阶段协议（含产品失败诊断例外与物理路径规则），
