@@ -15,7 +15,7 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, writeFileSync,
+  copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -24,7 +24,7 @@ import { KNOWLEDGE_SKILL_ENTRY } from '../../../hooks/shared/knowledge.mjs';
 import { shellArg } from '../../story/scripts/core/story/drafts.mjs';
 import { candidateProblems, entryCheck, entryMaterialize, entryPlan } from './entries.mjs';
 
-const MODES = ['--prepare-init', '--apply', '--check', '--mark-adapted', '--status'];
+const MODES = ['--prepare-init', '--check-base', '--apply', '--check', '--mark-adapted', '--status'];
 
 const ADAPTERS = 'adapters';
 const LEGACY_ADAPTERS = 'skills/story/scripts/adapters';
@@ -109,9 +109,10 @@ const sha16 = text => createHash('sha256').update(text, 'utf8').digest('hex').sl
 const bizSkillsOf = doc => (Array.isArray(doc?.provides?.skills) ? doc.provides.skills : [])
   .filter(s => typeof s === 'string' && !PKG_SKILLS.includes(s) && s !== 'story-knowledge');
 
+const legacyPreimages = () => new Set(JSON.parse(read(join(BASE_DIR, 'skills', 'story-adaptation', 'contracts', 'legacy-preimages.json'))).digests ?? []);
+
 function legacyState(tgtDoc, bizRefs) {
-  const preFile = join(BASE_DIR, 'skills', 'story-adaptation', 'contracts', 'legacy-preimages.json');
-  const pre = new Set(existsSync(preFile) ? (JSON.parse(read(preFile)).digests ?? []) : []);
+  const pre = legacyPreimages();
   const owned = storyOwnedSet(tgtDoc), bizDirs = bizSkillsOf(tgtDoc).map(s => `skills/${s}/`), retireOwn = [], modifiedOwn = [], unknownLegacy = [];
   for (const relPath of LEGACY_DIRS.flatMap(d => walk(join(TDIR, d)).map(p => `${d}/${p}`))) {
     if (relPath.startsWith(`${LEGACY_ADAPTERS}/`)) { retireOwn.push(relPath); continue; }
@@ -132,20 +133,22 @@ function manifestConflicts(pkg, tgt, owned) {
   return out;
 }
 
-function unownedIgnoredInBase(extRel) {
-  const r = git(TARGET, ['-c', 'core.quotepath=false', 'status', '--porcelain', '--ignored=matching', '-uall', '--', `${extRel}/base`]);
-  const exMf = join(TDIR, 'base', 'examples', '.manifest.json'), prefix = `${extRel}/base/`;
-  let exp = null;
-  if (existsSync(exMf)) { try { exp = JSON.parse(read(exMf))?.files ?? null; } catch { exp = null; } }
-  const items = !r.ok ? [] : r.out.split(/\r?\n/).filter(l => l.startsWith('!! ')).flatMap((l) => {
-    const p = l.slice(3).trim().replace(/^"(.*)"$/, '$1');
-    return p.endsWith('/') ? walk(join(TARGET, ...p.slice(0, -1).split('/')), TARGET, new Set(), true) : [p];
-  });
-  return items.filter((relPath) => {
-    const sub = relPath.startsWith(prefix) ? relPath.slice(prefix.length) : '';
-    if (!sub || sub.includes('__pycache__/') || /\.(?:pyc|pyo)$/.test(sub) || (sub === 'examples/.manifest.json' && exp)) return false;
-    return !(sub.startsWith('examples/') && exp?.[sub.slice(9)] === `sha256:${createHash('sha256').update(lf(read(join(TDIR, 'base', ...sub.split('/')))), 'utf8').digest('hex')}`);
-  });
+function checkBaseReplace(extRel) {
+  const dirty = dirtyPaths(TARGET).filter(p => p === `${extRel}/base` || p.startsWith(`${extRel}/base/`));
+  if (dirty.length) die(`停：目标 ${extRel}/base/ 有 ${dirty.length} 处未提交改动，拒绝覆盖：\n  ${dirty.join('\n  ')}`, 2);
+  const root = join(TDIR, 'base', 'examples'), pre = legacyPreimages(), bad = [];
+  const scan = (dir) => {
+    const st = lstatSync(dir);
+    if (st.isSymbolicLink() || !st.isDirectory()) { bad.push(`${extRel}/${rel(TDIR, dir)}`); return; }
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const abs = join(dir, e.name), r = rel(TDIR, abs);
+      if (e.isSymbolicLink() || (!e.isFile() && !e.isDirectory())) bad.push(`${extRel}/${r}`);
+      else if (e.isDirectory()) scan(abs);
+      else if (!pre.has(sha16(`${r}\0${lf(read(abs))}`))) bad.push(`${extRel}/${r}`);
+    }
+  };
+  try { lstatSync(root); scan(root); } catch (e) { if (e?.code !== 'ENOENT') die(`旧 base/examples 枚举或读取失败（${e.message}）：挂起覆盖，目标一个字节未写`, 2); }
+  if (bad.length) die(`停：旧 base/examples/ 含 ${bad.length} 处未归属或已改动文件，拒绝覆盖：\n  ${bad.join('\n  ')}\n  请移出或删除后再导入。目标一个字节未写`, 2);
 }
 
 /** 合成运行时唯一根 manifest：按真实所有权合并本包机制，保留目标身份、业务 knowledge 与业务自定义登记，同步退出被接替的旧技能绑定。 */
@@ -388,7 +391,7 @@ function dirtyPaths(root) {
   const info = repoInfo(root);
   if (!info.ok) return [];
   const r = git(info.gitTop, ['status', '--porcelain', '-uall']);
-  if (!r.ok) return [];
+  if (!r.ok) die(`git 状态检查失败（${r.err}）：挂起覆盖，目标一个字节未写`, 2);
   const all = r.out.split(/\r?\n/).filter(Boolean)
     .map(l => l.slice(3).split(' -> ').pop().replace(/^"|"$/g, ''));
   if (!info.prefix) return all;
@@ -448,6 +451,7 @@ const TDIR = join(TARGET, ...extDir(TARGET).split('/'));
 const BASE_DIR = opt('--source-base') ? resolve(opt('--source-base')) : (opt('--target') ? join(TDIR, 'base') : SCRIPT_BASE);
 const pkgManifest = join(BASE_DIR, 'package-manifest.yaml');
 if (!existsSync(pkgManifest)) die(`机制包缺少 package-manifest.yaml：${pkgManifest}`, 2, 'package');
+if (mode === '--check-base') { if (!repoInfo(TARGET).ok) die(`目标不在 git 仓库内：${TARGET}`, 2); checkBaseReplace(extDir(TARGET)); process.exit(0); }
 
 const harness = join(TARGET, 'framework', 'harness');
 const yamlPkg = join(harness, 'node_modules', 'yaml');
@@ -604,9 +608,9 @@ function writeAdaptedFor() {
 }
 
 function reviewGap(f) {
-  const r = f.check.review;
-  if (!r || r.status === 'valid' || (r.status === 'missing' && !f.items.知识?.length)) return null;
-  return `知识独审未通过（${r.status}）：${r.problems.join('；')}——按 reference/knowledge-review.md 对受影响知识按新摘要重审`;
+  if (f.check.status !== 'PASS' || f.check.review?.status === 'valid') return null;
+  const r = f.check.review ?? { status: 'missing', problems: ['缺少独立审查结果'] };
+  return `知识独审未通过（${r.status}）：${(r.problems ?? []).join('；')}——先用 --status 获取当前摘要 ${f.check.digest ?? ''}，按 reference/knowledge-review.md 交独立审查`;
 }
 
 async function printFollowUp() {
@@ -627,7 +631,7 @@ async function printFollowUp() {
           ? '无游标但已有正式知识可读：走 knowledge-adaptation.md「无游标已有知识」，从基线核覆盖并保留有效原文与编号，不自行推测游标'
           : '无游标且已有知识登记但加载失败：先按上面错误修好已有知识或登记并保住现稿，不派首次重写')
       : (!kItems.length && rGap
-        ? `已有知识已改动或原独审失效：保留游标 ${f.since}，按 reference/knowledge-review.md 对受影响知识按新摘要重审`
+        ? `已有知识缺少有效独审报告或原独审已失效：保留游标 ${f.since}，先用 --status 获取当前摘要并按 reference/knowledge-review.md 交独立审查`
         : `已适配 ${f.since}，只看晚于游标的变更：走 knowledge-adaptation.md「已有知识的升级作者」定向修订`);
     console.log(`[adapt-scan] 下一步（条目是待判断的适配主题，不表示目标仓已采用）：${branch}；按块摆出来，停一次问人「现在做这些适配吗」；`
       + '选稍后就不写任何东西；选中的知识（含独审）与对接适配交回后跑 --mark-adapted 记 adapted_for');
@@ -726,9 +730,6 @@ if (mode === '--apply' || mode === '--prepare-init') {
   const legacyFiles = prep ? [] : legacyOwn.map(p => `${extRel}/${p}`);
   const adapterPlan = prep ? { copy: [], conflicts: [] } : planAdapterMigration();
   const writeSurface = new Set(prep ? [...plan.retire] : [...legacyFiles, ...plan.pendingEntries, ...plan.retire, ...plan.pendingBridges]);
-  if (opt('--source-base') && existsSync(join(TDIR, 'base'))) {
-    for (const p of walk(join(TDIR, 'base'), join(TDIR, 'base'), new Set(), true)) writeSurface.add(`${extRel}/base/${p}`);
-  }
   if (existsSync(tgtManifest) && lf(currentManifest) !== lf(composedText)) writeSurface.add(`${extRel}/manifest.yaml`);
   if (TARGET_ADAPTATION.text !== null && existsSync(join(TDIR, ADAPTATION))) writeSurface.add(`${extRel}/${ADAPTATION}`);
   if (!prep && (missingGitignoreLines(TARGET).length || usageBlockedBy(TARGET).startsWith('.gitignore:'))) writeSurface.add('.gitignore');
@@ -740,8 +741,7 @@ if (mode === '--apply' || mode === '--prepare-init') {
     dirty.forEach(p => console.error(`  ${p}`));
     die('先提交或暂存自己的改动再升级——本命令不替你动工作区（不 stash、不提交）', 2);
   }
-  const ignoredDrafts = opt('--source-base') && existsSync(join(TDIR, 'base')) ? unownedIgnoredInBase(extRel) : [];
-  if (ignoredDrafts.length) die(`停：旧 base/ 下含 ${ignoredDrafts.length} 处被忽略的人工/未归属文件，拒绝覆盖：\n  ${ignoredDrafts.join('\n  ')}\n  请移出或删除后再导入。目标一个字节未写`, 2);
+  if (opt('--source-base')) checkBaseReplace(extRel);
   const keyConflicts = manifestConflicts(parseYaml(PKG_MANIFEST_TEXT) ?? {}, tgtDoc, owned);
   if (keyConflicts.length) die(`停：根 manifest 有 ${keyConflicts.length} 处同键异主冲突，保留目标原件：\n  ${keyConflicts.join('\n  ')}\n  请调整业务键或路径后再升级。目标一个字节未写`, 2);
   if (modifiedOwn.length) {
