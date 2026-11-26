@@ -482,7 +482,28 @@ packages:
         cumulative_version_estimate: {G: 1376, X: 1325}
         scope: "历史追认15，本轮额外认可45；S34/S35另准32/26，S36维护域。"
         source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
+      - release: "2.0.6"
+        date: "2026-11-25"
+        by: "维护设计者 Codex（用户授权）"
+        at_ref: "834a94d1"
+        approved_increment_g: 102
+        planned_retirement_x: 21
+        actual_batch: {G: 62, X: 26}
+        pending_confirmation_g: 30
+        cumulative_version_estimate: {G: 1478, X: 1346}
+        scope: "历史追认 G71，本轮追加认可 G17，S38/S39 另准 G14/X21。"
+        source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
     confirmations:
+      - band: ">150%"
+        by: "维护设计者 Codex（受用户委托）"
+        date: "2026-11-25"
+        at_ref: "834a94d1"
+        actual_invested_g: 10128
+        confirmed_overrun_g: 88
+        pending_confirmation_g: 30
+        scope: "本轮G62/X26认可G49，S36/S37通过，旧G17与本轮G7和G6待核。"
+        reason: "包R238.3%；核真实收口树、人工稿前后字节、缺报告改稿游标、宿主与清理，限定返修。"
+        source: "doc/plan/2.0.6/2026-11-23-目录调整与适配/01-计量基线与投入.md"
       - band: ">150%"
         by: "维护设计者 Codex（受用户委托）"
         date: "2026-11-25"

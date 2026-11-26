@@ -18,9 +18,11 @@
 - Maison 作者仓在 11-23 的 `db29eb82` 改为按 profile、workflow、evidence policy 决定是否独核，运行时派发。单阶段根据 NEXT 走 `--execute-verifier`，绑定本轮模型、request/subject 和报告；缺模型或运输时保留待核义务。该变更在已查的上游 main `f9c41f63` 中，未进入本项目固定分发。实际运行未打补丁的新旧 resolver，新版在上述两种输入下均 enabled。源码的模型绑定表已列 OpenCode 和 deepseek-harness；本次未在两宿主跑新版完整 request/报告闭环。[上游变更](https://github.com/sqsqsq/agent-maison/commit/db29eb822c88f93fe748ff265dcfaa0eba14c27c) · [阶段执行合同](https://github.com/sqsqsq/agent-maison/blob/f9c41f63/skills/reference/agents-entry-detail.md#独立阶段核验) · [前台模型来源](https://github.com/sqsqsq/agent-maison/blob/f9c41f63/skills/reference/stage-verifier-model.md)
 - 上游针对已退役的 Claude／CodeAgent／Codex 受管 verifier 有 UPDATE 清理。项目自行引入的 OpenCode、dsh 定制仍要由本项目核所有权并撤掉，不能假设上游会替项目删除所有本地文件。通用阶段独核、宿主运输与模型绑定应由 Framework 维护；本仓承担 Story 任务与验收语义。
 
-## 给 Framework 作者的确认内容（供用户转交）
+## 给 Framework 作者的交付请求（供用户转交）
 
-> 我们在 OpenCode 和 DSH interactive 上集成 Story Extension。现用分发对应源码 fd5adea9，以前要本地补 verifier 角色和 DSH overlay 才能执行阶段独核。我看到 db29eb82 已把阶段独核收回运行时。请确认哪个正式发行件已含此变更，以及 OpenCode、DSH interactive 单独进入 Spec/Plan 时，推荐用哪个 adapter 和公开入口取得独立结果；我们想移除本地 verifier 补丁。另有自定义的独立读稿任务，需要隔离上下文、读取指定材料、只写指定报告并返回完整回复。若已有推荐的宿主原生或 Framework 公共接法，请指到现有合同；阶段接口只收已签 request 也请说明，我们会沿宿主独立读者通路。Story 的审稿内容、业务键和收件规则由 Extension 自己维护。
+11 月 25 日现场核定：本项目远端 main 与测试 pin 均为 f8946531，其清单指向 fd5adea9（11 月 17 日构建）。Git 祖先关系确认 db29eb82 已进作者仓 main@f9c41f63，未进 fd5adea9；本项目这份分发也无新版的阶段独核执行器。作者仓公开 Releases 中可查的 v3.0.0、v2.4.0 的资产文件清单均无该执行器。其他交付渠道若已有更新构建，由作者给出其身份即可。
+
+> 我们需要让 OpenCode 和 DSH 的交互式 Spec/Plan 使用 Framework 自带的阶段独立核验，以撤下项目自维护的 verifier 补丁。作者仓 main 已含 db29eb82；我们从本项目 main 同步到的最新 Framework 分发 f8946531，其 RELEASE-MANIFEST.json 仍是 source_commit=fd5adea9，尚未包含这项改动。请提供包含 db29eb82 的已验证正式发行包（或已有包的获取位置）及 source_commit。我们会同步到本项目 main、demo 和测试 pin，在两种宿主分别验请求、独立执行和报告回流，通过后删除对应的本地 verifier 定制。
 
 ## 清理触发与验收
 
