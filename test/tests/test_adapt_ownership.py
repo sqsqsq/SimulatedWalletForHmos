@@ -427,7 +427,7 @@ class TheUpgradeRecordKeepsTheOldSiteBoundary(unittest.TestCase):
 
 
 class TheAdaptedVersionIsWrittenByTheScript(AdaptCase):
-    """`--mark-adapted` 核入口/知识/独审、清理 base/examples/（保留 base/.gitignore）并最后写 adapted_for。"""
+    """`--mark-adapted` 核入口/知识/独审与对接后最后写 adapted_for。"""
 
     def mark(self) -> subprocess.CompletedProcess:
         return self.adapt("--mark-adapted")
@@ -449,8 +449,8 @@ class TheAdaptedVersionIsWrittenByTheScript(AdaptCase):
         self.assertEqual(0, proc.returncode, self.out(proc))
         adaptation = (self.ext / "adaptation.yaml").read_text(encoding="utf-8")
         self.assertIn(f'adapted_for: "{PKG_VERSION}"', adaptation)
-        self.assertFalse((self.base / "examples").exists(), "完成后应清理 base/examples/")
-        self.assertTrue((self.base / ".gitignore").is_file(), "清理后必须保留 base/.gitignore")
+        self.assertFalse((self.base / "examples").exists(), "无样例包不应出现 base/examples/")
+        self.assertFalse((self.base / ".gitignore").exists(), "无样例包不应出现 base/.gitignore")
         self.assertEqual(0, self.adapt("--check").returncode, self.out(self.adapt("--check")))
 
     def test_knowledge_due_for_adaptation_needs_matching_independent_evidence(self) -> None:
@@ -608,18 +608,17 @@ class AFreshInstallRunsOutOfTheBox(AdaptCase):
         self.commit("首次装好")
         self.assertEqual(2, self.adapt("--mark-adapted").returncode, "首装未独审却记成已适配")
         self.write_review()
-        # 独审已过但真实对接未就位：--mark-adapted 必须阻止、保留样例与游标
+        # 独审已过但真实对接未就位：--mark-adapted 必须阻止并保住游标
         no_ad = self.adapt("--mark-adapted")
         self.assertEqual(2, no_ad.returncode, self.out(no_ad))
         self.assertIn("对接层未就位", self.out(no_ad))
-        self.assertTrue((self.base / "examples").is_dir(), "缺真实对接时不应清理 base/examples/")
         self.assertNotIn("adapted_for", (self.ext / "adaptation.yaml").read_text(encoding="utf-8"))
         self.place_real_adapters()
         marked = self.adapt("--mark-adapted")
         self.assertEqual(0, marked.returncode, self.out(marked))
         self.assertIn(f'adapted_for: "{PKG_VERSION}"', (self.ext / "adaptation.yaml").read_text(encoding="utf-8"))
-        self.assertFalse((self.base / "examples").exists(), "首装完成应清理 base/examples/")
-        self.assertTrue((self.base / ".gitignore").is_file(), "首装清理后必须保留 base/.gitignore")
+        self.assertFalse((self.base / "examples").exists(), "无样例包不应出现 base/examples/")
+        self.assertFalse((self.base / ".gitignore").exists(), "无样例包不应出现 base/.gitignore")
         self.assertEqual(0, self.adapt("--check").returncode)
 
 

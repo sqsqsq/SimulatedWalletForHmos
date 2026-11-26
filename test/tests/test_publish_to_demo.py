@@ -100,7 +100,8 @@ class TheSourceSetIsWhatIsOnDisk(PublishCase):
         self.assertTrue((ext / "base" / "hooks" / "shared" / "new-probe.mjs").is_file(), "未跟踪的新文件没进来")
         self.assertIn("还没提交的一行", (ext / "base" / "skills" / "story" / "SKILL.md").read_text(encoding="utf-8"))
         self.assertTrue((ext / "base" / "rules" / ".keep").is_file(), "普通隐藏文件被当成运行态丢了")
-        self.assertTrue((ext / "base" / ".gitignore").is_file(), "base/.gitignore 没进来")
+        self.assertFalse((ext / "base" / ".gitignore").exists(), "已退出的 base/.gitignore 不应存在")
+        self.assertFalse((ext / "base" / "examples").exists(), "已退出的 base/examples 不应存在")
         for rel in ("base/node_modules", "base/.adapt-1.9.8", "adapt", "base/skills/story/scripts/core/__pycache__", "base/hooks/stale.pyc"):
             self.assertFalse((ext / rel).exists(), f"运行态 {rel} 进了目标")
 

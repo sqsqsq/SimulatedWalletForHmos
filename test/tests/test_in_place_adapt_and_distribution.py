@@ -114,10 +114,9 @@ class S10DistributionAndFrameworkContractTests(unittest.TestCase):
     def test_external_base_package_excludes_demo_knowledge_and_standin_adapters(self) -> None:
         packed_root = self.root / "external-release"
         files = pub.pack_external_base(DEV_SOURCE, packed_root)
-        self.assertIn(".gitignore", files)
-        self.assertEqual("/examples/\n", (packed_root / "base" / ".gitignore").read_text(encoding="utf-8"))
+        self.assertNotIn(".gitignore", files, "已退出的 base/.gitignore 漏进外网包")
         self.assertIn("package-manifest.yaml", files)
-        self.assertTrue(any(f.startswith("examples/knowledge/") for f in files), "外网包缺 base/examples/knowledge/")
+        self.assertFalse(any(f == "examples" or f.startswith("examples/") for f in files), "已退出的 examples/ 漏进外网包")
         self.assertFalse(any(f.startswith("knowledge/") for f in files), "demo 知识漏进外网 base 顶层")
         self.assertFalse(any("adapters/" in f for f in files), "替身 adapters 漏进外网 base 包")
         self.assertFalse((DEV_SOURCE / "manifest.yaml").exists(), "旧顶层 extensions/manifest.yaml 应已退出")
@@ -298,7 +297,10 @@ process.stdout.write(JSON.stringify(res));
         applied = subprocess.run(["node", str(scan), "--apply"], cwd=str(pay), capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(0, applied.returncode, applied.stdout + applied.stderr)
         self.assertTrue((pay / "doc/extensions/manifest.yaml").is_file())
-        self.assertTrue((pay / "doc/extensions/base/examples/knowledge").is_dir(), "首装 --apply 后样例应仍供模型参考")
+        self.assertFalse((pay / "doc/extensions/base/examples").exists(), "无样例包不应含 base/examples")
+        self.assertIn("机制已安装", applied.stdout)
+        self.assertIn("知识待写", applied.stdout)
+        self.assertIn("首次安装作者", applied.stdout)
         self.assertIn("doc/extensions/base/skills/story/SKILL.md", (pay / ".codex/skills/story/SKILL.md").read_text(encoding="utf-8"))
 
         # 写目标知识与独立审查报告 → 缺真实对接时 --check 与 --mark-adapted 均拦住并保住样例与游标
@@ -308,7 +310,7 @@ process.stdout.write(JSON.stringify(res));
         self.assertIn("story.js", chk_missing.stdout + chk_missing.stderr)
         mark_missing = subprocess.run(["node", str(scan), "--mark-adapted"], cwd=str(pay), capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(2, mark_missing.returncode, mark_missing.stdout + mark_missing.stderr)
-        self.assertTrue((pay / "doc/extensions/base/examples").is_dir(), "缺真实对接时不应清理样例")
+        self.assertFalse((pay / "doc/extensions/base/examples").exists())
         # 补齐真实业务对接实现 → 跑 --check 与 --mark-adapted（清样例、保留 .gitignore、最后写 adapted_for）
         ad_dir = pay / "doc/extensions/adapters"
         ad_dir.mkdir(parents=True, exist_ok=True)
@@ -324,8 +326,8 @@ process.stdout.write(JSON.stringify(res));
 
         marked = subprocess.run(["node", str(scan), "--mark-adapted"], cwd=str(pay), capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(0, marked.returncode, marked.stdout + marked.stderr)
-        self.assertFalse((pay / "doc/extensions/base/examples").exists(), "适配完成后未清理 base/examples/")
-        self.assertTrue((pay / "doc/extensions/base/.gitignore").is_file(), "清理 base/examples/ 时误删了 base/.gitignore")
+        self.assertFalse((pay / "doc/extensions/base/examples").exists(), "无样例包不应出现 base/examples/")
+        self.assertFalse((pay / "doc/extensions/base/.gitignore").exists(), "无样例包不应出现 base/.gitignore")
         adapt_after = yaml.safe_load((pay / "doc/extensions/adaptation.yaml").read_text(encoding="utf-8"))
         self.assertEqual("2.0.6", adapt_after["adapted_for"])
 
@@ -419,7 +421,7 @@ process.stdout.write(JSON.stringify(res));
                       (proj / ".codex/skills/story/SKILL.md").read_text(encoding="utf-8"))
         # 2.0.5 -> 2.0.6 无新演进条目且知识可读：样例已清理、.gitignore 保留、adapted_for 升至 2.0.6
         self.assertFalse((ext / "base/examples").exists())
-        self.assertTrue((ext / "base/.gitignore").is_file())
+        self.assertFalse((ext / "base/.gitignore").exists())
         self.assertEqual("2.0.6", yaml.safe_load((ext / "adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"])
 
     def test_retired_package_flag_is_refused(self) -> None:
@@ -532,23 +534,24 @@ process.stdout.write(JSON.stringify(res));
         ]
         return subprocess.run(cmd, cwd=str(harness), env=clean_env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
 
-    def test_s27_pack_rejects_missing_or_tampered_examples(self) -> None:
-        """S27 R3：打包缺约定样例或字节与 .manifest.json 不符时必须失败，绝不宣告成功。"""
-        broken = self.root / "broken-src" / "base"
-        shutil.copytree(DEV_SOURCE / "base", broken)
-        (broken / "examples" / "knowledge" / "facts" / "component-profile.md").unlink()
+    def test_s33_pack_rejects_reintroduced_examples_or_base_gitignore(self) -> None:
+        """S33：外网无样例包若重新混入 base/examples/ 或 base/.gitignore，打包必须拒绝且不输出。"""
+        with_ex = self.root / "with-ex-src" / "base"
+        shutil.copytree(DEV_SOURCE / "base", with_ex)
+        (with_ex / "examples" / "knowledge").mkdir(parents=True)
+        (with_ex / "examples" / "knowledge" / "a.md").write_text("# stale\n", encoding="utf-8")
         with self.assertRaises(pub.InputError) as cm:
-            pub.pack_external_base(broken.parent, self.root / "out-missing")
-        self.assertIn("缺少约定样例文件", str(cm.exception))
-        self.assertFalse((self.root / "out-missing" / "base").exists())
+            pub.pack_external_base(with_ex.parent, self.root / "out-ex")
+        self.assertIn("examples/", str(cm.exception))
+        self.assertFalse((self.root / "out-ex" / "base").exists())
 
-        tampered = self.root / "tampered-src" / "base"
-        shutil.copytree(DEV_SOURCE / "base", tampered)
-        f = tampered / "examples" / "knowledge" / "facts" / "component-profile.md"
-        f.write_text(f.read_text(encoding="utf-8") + "\n# tampered\n", encoding="utf-8")
+        with_gi = self.root / "with-gi-src" / "base"
+        shutil.copytree(DEV_SOURCE / "base", with_gi)
+        (with_gi / ".gitignore").write_text("/examples/\n", encoding="utf-8")
         with self.assertRaises(pub.InputError) as cm2:
-            pub.pack_external_base(tampered.parent, self.root / "out-tampered")
-        self.assertIn("字节摘要与 .manifest.json 不符", str(cm2.exception))
+            pub.pack_external_base(with_gi.parent, self.root / "out-gi")
+        self.assertIn(".gitignore", str(cm2.exception))
+        self.assertFalse((self.root / "out-gi" / "base").exists())
 
     def test_s27_s28_legacy_205_first_init_update_preserves_biz_hook_partial_adapters_and_reaches_adapt(self) -> None:
         """S27 R4 + S28 R5/R6b：真实 2.0.5 旧仓（旧桥 + 业务自定义 hook + 新根已有 story.js、旧根独有 token.js）经导入预置后，
@@ -728,41 +731,42 @@ process.stdout.write(JSON.stringify(mod.default({ feature: '_global', phase: 'do
         self.assertTrue((cext / "skills/story/scripts/adapters/story.js").is_file(), "冲突时误删了旧文件")
         self.assertEqual("2.0.5", yaml.safe_load((cext / "adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"])
 
-        eproj = self.root / "examples-protect-proj"
-        make_consumer(eproj, "ExamplesProtectApp", ["codex"])
+        # S33：合法目标自带的 <ext>/examples/ 与根 .gitignore 不受破坏；安装后作者/独审读面就位且不含已退样例指引
+        eproj = self.root / "target-assets-protect-proj"
+        make_consumer(eproj, "TargetAssetsApp", ["codex"])
         eext = eproj / "doc" / "extensions"
+        (eext / "examples").mkdir(parents=True)
+        (eext / "examples/biz-demo.md").write_text("# target own example\n", encoding="utf-8")
+        (eproj / ".gitignore").write_text("# target custom rule\ncustom-build/\n", encoding="utf-8")
         pub.pack_external_base(DEV_SOURCE, eext)
         (eext / "adapters").mkdir(parents=True)
         (eext / "adapters/story.js").write_text("// real story\n", encoding="utf-8")
         (eext / "adapters/token.js").write_text("// real token\n", encoding="utf-8")
         init_commit(eproj)
         escan = eext / "base/skills/story-adaptation/scripts/adapt-scan.mjs"
-        self.assertEqual(0, subprocess.run(["node", str(escan), "--apply"], cwd=str(eproj), capture_output=True).returncode)
+        ap_res = subprocess.run(["node", str(escan), "--apply"], cwd=str(eproj), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(0, ap_res.returncode, ap_res.stdout + ap_res.stderr)
+        self.assertIn("机制已安装", ap_res.stdout)
+        self.assertIn("知识待写", ap_res.stdout)
+        self.assertIn("首次安装作者", ap_res.stdout)
+        # 验证已安装的 S33 作者/独审读面完整且无 demo 专名
+        adapt_doc = (eext / "base/skills/story-adaptation/reference/knowledge-adaptation.md").read_text(encoding="utf-8")
+        review_doc = (eext / "base/skills/story-adaptation/reference/knowledge-review.md").read_text(encoding="utf-8")
+        topics_doc = (eext / "base/skills/story-adaptation/reference/knowledge-topics.md").read_text(encoding="utf-8")
+        self.assertIn("先核实安装脚本给出的游标、已有知识和加载问题", adapt_doc)
+        self.assertIn("从脚本给出的已适配版本继续", adapt_doc)
+        self.assertIn("拿本次正常需求，先从目标仓给出你的业务判断和源位置", review_doc)
+        self.assertIn("## 12. 流程编排", topics_doc)
+        self.assertIn("## 13. 页面交互", topics_doc)
+        for leak in ("WalletMain", "CommUI", "base/examples/knowledge", "10KB"):
+            self.assertNotIn(leak, adapt_doc + review_doc + topics_doc)
         write_sample_knowledge_and_review(eproj, escan)
-
-        user_draft = eext / "base/examples/user-draft.md"
-        user_draft.write_text("# my unsaved notes\n", encoding="utf-8")
-        m_blocked = subprocess.run(["node", str(escan), "--mark-adapted"], cwd=str(eproj), capture_output=True, text=True, encoding="utf-8")
-        self.assertEqual(1, m_blocked.returncode, m_blocked.stdout + m_blocked.stderr)
-        self.assertIn("user-draft.md", m_blocked.stdout + m_blocked.stderr)
-        self.assertTrue(user_draft.is_file(), "清理时误删了用户新增文件")
-        self.assertNotIn("adapted_for", yaml.safe_load((eext / "adaptation.yaml").read_text(encoding="utf-8")) or {})
-
-        user_draft.unlink()
-        sample = eext / "base/examples/knowledge/facts/component-profile.md"
-        orig_sample = sample.read_bytes()
-        sample.write_text(orig_sample.decode("utf-8") + "\n# user edit\n", encoding="utf-8")
-        m_edited = subprocess.run(["node", str(escan), "--mark-adapted"], cwd=str(eproj), capture_output=True, text=True, encoding="utf-8")
-        self.assertEqual(1, m_edited.returncode, m_edited.stdout + m_edited.stderr)
-        self.assertIn("component-profile.md", m_edited.stdout + m_edited.stderr)
-        self.assertIn("# user edit", sample.read_text(encoding="utf-8"))
-        self.assertNotIn("adapted_for", yaml.safe_load((eext / "adaptation.yaml").read_text(encoding="utf-8")) or {})
-
-        sample.write_bytes(orig_sample)
         m_ok = subprocess.run(["node", str(escan), "--mark-adapted"], cwd=str(eproj), capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(0, m_ok.returncode, m_ok.stdout + m_ok.stderr)
+        self.assertEqual("# target own example\n", (eext / "examples/biz-demo.md").read_text(encoding="utf-8"))
+        self.assertIn("custom-build/", (eproj / ".gitignore").read_text(encoding="utf-8"))
         self.assertFalse((eext / "base/examples").exists())
-        self.assertTrue((eext / "base/.gitignore").is_file())
+        self.assertFalse((eext / "base/.gitignore").exists())
         self.assertEqual("2.0.6", yaml.safe_load((eext / "adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"])
 
     def test_s29_import_preflight_real_205_bindings_inner_hooks_and_standin_file_gate(self) -> None:
@@ -875,8 +879,8 @@ req('./scripts/utils/instance-skill-bridge.ts').emitInstanceSkillBridge({
         init_commit(p3)
         scan3 = e3 / "base/skills/story-adaptation/scripts/adapt-scan.mjs"
         self.assertEqual(0, subprocess.run(["node", str(scan3), "--apply"], cwd=str(p3), capture_output=True).returncode)
-        # 缺两件：--apply 未自动清样例、未升游标，--check 退 1，--mark-adapted 退 2
-        self.assertTrue((e3 / "base/examples").is_dir())
+        # 缺两件：--apply 未升游标，--check 退 1，--mark-adapted 退 2
+        self.assertFalse((e3 / "base/examples").exists())
         self.assertEqual("2.0.5", yaml.safe_load((e3 / "adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"])
         self.assertEqual(1, subprocess.run(["node", str(scan3), "--check"], cwd=str(p3), capture_output=True).returncode)
         self.assertEqual(2, subprocess.run(["node", str(scan3), "--mark-adapted"], cwd=str(p3), capture_output=True).returncode)

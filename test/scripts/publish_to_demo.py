@@ -2,7 +2,7 @@
 
     python test/scripts/publish_to_demo.py --source <扩展源码目录> --target <消费工程目录> [--dry-run]
 
-2.0.6 目录布局：`extensions/base/` 为外网交付机制包（含 `package-manifest.yaml`、`.gitignore`、`examples/knowledge/`），
+2.0.6 目录布局：`extensions/base/` 为外网交付机制包（含 `package-manifest.yaml` 与通用机制，不含业务成品样例或 `base/.gitignore`），
 测试用 demo 示范知识与替身 adapters 位于 `test/fixtures/demo-extension/`（不进外网 `base/` 包）。
 消费工程安装后形成：
   doc/extensions/base/              通用机制包
@@ -115,58 +115,28 @@ def _lf_sha256(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
 
 
-def verify_external_base_examples(base: Path) -> dict[str, str]:
-    """核验外网 base 包内可追踪的样例清单与字节摘要，以及 .gitignore 和零替身边界。"""
+def verify_external_base(base: Path) -> None:
+    """核验外网无样例 base 包边界：零 examples/、零 base/.gitignore、零 demo knowledge/、零替身 adapters。"""
     problems: list[str] = []
-    gitignore = base / ".gitignore"
-    if not gitignore.is_file() or "/examples/" not in gitignore.read_text(encoding="utf-8"):
-        problems.append(f"机制包缺少保护 /examples/ 的 .gitignore：{base}")
+    if (base / "examples").exists():
+        problems.append(f"外网 base 包不应含已退出的成品样例目录 examples/：{base / 'examples'}")
+    if (base / ".gitignore").exists():
+        problems.append(f"外网 base 包不应含已退出的 .gitignore：{base / '.gitignore'}")
     if (base / "knowledge").exists():
         problems.append(f"外网 base 包顶层不应含业务/demo knowledge/：{base / 'knowledge'}")
     for rel in enumerate_source(base):
         if "adapters/" in rel:
             problems.append(f"外网 base 包不应含替身 adapters：{rel}")
-    examples = base / "examples"
-    mf_path = examples / ".manifest.json"
-    if not mf_path.is_file():
-        problems.append(f"外网 base 包缺少可追踪样例清单 examples/.manifest.json：{base}")
-        raise InputError(problems)
-    try:
-        manifest = json.loads(mf_path.read_text(encoding="utf-8"))
-        expected = manifest.get("files") if isinstance(manifest, dict) else None
-    except (OSError, json.JSONDecodeError) as exc:
-        raise InputError([*problems, f"examples/.manifest.json 读取失败：{exc}"]) from exc
-    if not isinstance(expected, dict) or not expected:
-        raise InputError([*problems, "examples/.manifest.json 缺少有效的 files 映射"])
-    for kind in ("knowledge/facts/", "knowledge/constraints/", "knowledge/design-patterns/"):
-        if not any(k.startswith(kind) for k in expected):
-            problems.append(f"examples/.manifest.json 缺少 {kind} 样例")
-    actual = sorted(
-        p.relative_to(examples).as_posix()
-        for p in examples.rglob("*")
-        if p.is_file() and p.name != ".manifest.json"
-    )
-    missing = [k for k in expected if k not in actual]
-    extra = [p for p in actual if p not in expected]
-    if missing:
-        problems.append(f"外网 base 包缺少约定样例文件（共 {len(missing)} 份）：{', '.join(missing[:5])}")
-    if extra:
-        problems.append(f"examples/ 含未登记文件：{', '.join(extra[:5])}")
-    for rel, want in expected.items():
-        f = examples / rel
-        if f.is_file() and _lf_sha256(f) != want:
-            problems.append(f"样例文件字节摘要与 .manifest.json 不符：{rel}")
     if problems:
         raise InputError(problems)
-    return dict(expected)
 
 
 def pack_external_base(source: Path, dest_root: Path) -> list[str]:
-    """显式按外网发行范围导出 `base/` 目录（含 `.gitignore` 与受清点核验的 `examples/knowledge/`，不含 demo 知识或替身 adapters）。"""
+    """显式按外网无样例发行范围导出 `base/` 目录（不含 examples/、base/.gitignore、demo 知识或替身 adapters）。"""
     base = package_base_dir(source)
     if base is None:
         raise InputError([f"源缺少 base/package-manifest.yaml：{source}"])
-    verify_external_base_examples(base)
+    verify_external_base(base)
     dest_base = Path(dest_root) / "base"
     if dest_base.exists():
         shutil.rmtree(dest_base)
@@ -195,7 +165,7 @@ def import_external_base(source: Path, target: Path, *, prepare_init: bool = Tru
         except InputError as exc:
             return {"files": [], "prepared": False, "returncode": 2, "stdout": "", "stderr": f"[import] {exc}"}
         staged_base = stage_root / "base"
-        # 1) 目标已有 base/ 时，先核其未提交/未跟踪改动与 examples/ 人工文件（写前阻断，零字节改写）
+        # 1) 目标已有 base/ 时，先核其未提交/未跟踪改动（写前阻断，零字节改写）
         existing_base = ext_root / "base"
         if existing_base.is_dir():
             st = subprocess.run(["git", "-C", str(target), "-c", "core.quotepath=false",
@@ -204,18 +174,6 @@ def import_external_base(source: Path, target: Path, *, prepare_init: bool = Tru
             if st.returncode == 0 and st.stdout.strip():
                 return {"files": [], "prepared": False, "returncode": 2, "stdout": "",
                         "stderr": f"[import] 停：目标 {ext_dir}/base/ 存在未提交或未跟踪改动，导入前请先处理：\n{st.stdout.strip()}"}
-            ex_dir = existing_base / "examples"
-            if ex_dir.is_dir():
-                mf_file = ex_dir / ".manifest.json"
-                expected = (json.loads(mf_file.read_text(encoding="utf-8")).get("files") if mf_file.is_file() else None) or {}
-                kept = []
-                for f in sorted(p for p in ex_dir.rglob("*") if p.is_file() and p.name != ".manifest.json"):
-                    rel = f.relative_to(ex_dir).as_posix()
-                    if rel not in expected or _lf_sha256(f) != expected[rel]:
-                        kept.append(f"{ext_dir}/base/examples/{rel}")
-                if kept:
-                    return {"files": [], "prepared": False, "returncode": 2, "stdout": "",
-                            "stderr": f"[import] 停：目标 {ext_dir}/base/examples/ 含未归属或已改动文件，拒绝覆盖：{', '.join(kept)}"}
         # 2) 用隔离暂存区中的新版 adapt-scan.mjs 在写入前跑完整 --prepare-init --dry-run 预检
         if prepare_init:
             shutil.copy2(cfg_path, stage_root / "framework.config.json")
