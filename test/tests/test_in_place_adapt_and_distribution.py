@@ -1026,16 +1026,18 @@ const loaded = loadInstanceExtensions(root, 'doc/extensions', { frameworkRoot: f
 console.log(JSON.stringify({
   manifestVersion: loaded.manifestVersion,
   errors: loaded.errors,
+  skills: loaded.skills ?? [],
   capabilities: Object.keys(loaded.extensionCapabilities ?? {}),
   mcpActions: Object.keys(loaded.mcpActions ?? {}),
   specPostCheck: loaded.hooks?.spec?.post_check ?? [],
+  phaseRuleOverlayPaths: loaded.phaseRuleOverlayPaths ?? {},
   phaseBindings: loaded.phaseBindings ?? {},
 }));
 """
         r = subprocess.run(["node", "-e", script, str(proj)], check=True, capture_output=True, text=True, encoding="utf-8")
         return json.loads(r.stdout.strip().splitlines()[-1])
 
-    def _seed_real_205_repo(self, proj: Path) -> Path:
+    def _seed_real_205_repo(self, proj: Path, rev: str = "552f8c90") -> Path:
         import io
         import tarfile
         proj.mkdir(parents=True)
@@ -1047,7 +1049,7 @@ console.log(JSON.stringify({
         (proj / ".gitignore").write_text("doc/features/**/AR/story-src/drafts/\n", encoding="utf-8")
         ext = proj / "doc" / "extensions"
         arc = subprocess.run(
-            ["git", "-C", str(REPO_ROOT), "archive", "552f8c90", "--", "extensions"],
+            ["git", "-C", str(REPO_ROOT), "archive", rev, "--", "extensions"],
             check=True, capture_output=True,
         )
         with tarfile.open(fileobj=io.BytesIO(arc.stdout), mode="r:*") as tf:
@@ -1156,6 +1158,111 @@ console.log(JSON.stringify({
         self.assertFalse((ext_unk / "base").exists(), "被拦截时不应解包 base/")
         self.assertEqual(mf_unk_before, (ext_unk / "manifest.yaml").read_text(encoding="utf-8"))
         self.assertTrue(unk_file.is_file())
+
+    def test_s34_real_205_closure_tree_business_skill_overlay_conflict_and_ignored_draft(self) -> None:
+        """S34 R1/R2/R3：2.0.5 收口树 f6d3ed44 (2fa9e13f) 原字节可升、业务 Skill (skills/business-receipts/SKILL.md) 保全、
+        同键异主 phase_rules_overlays.spec 写前拦停、7b117923 旧 base/examples/ 下被忽略手稿写前拦停且纯旧样例可升。"""
+        import io, tarfile
+
+        # 1) R1 + R2a：真实 2.0.5 收口树 f6d3ed44 + 业务 Skill + 业务 capability/mcp_actions/hook
+        p_ok = self.root / "s34-f6d3-ok"
+        ext = self._seed_real_205_repo(p_ok, rev="f6d3ed44")
+        biz_sk = ext / "skills/business-receipts/SKILL.md"
+        biz_sk.parent.mkdir(parents=True, exist_ok=True)
+        biz_sk_text = "---\nname: business-receipts\ndescription: 业务回执校验\n---\n# Business Receipts\n"
+        biz_sk.write_text(biz_sk_text, encoding="utf-8")
+        mf = yaml.safe_load((ext / "manifest.yaml").read_text(encoding="utf-8"))
+        mf["provides"]["skills"].append("business-receipts")
+        mf["phase_bindings"]["spec"]["before_phase_work"].append({"kind": "skill", "ref": "business-receipts"})
+        (ext / "manifest.yaml").write_text(yaml.safe_dump(mf, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        init_commit(p_ok)
+
+        before = self._load_extension_via_native_loader(p_ok)
+        self.assertEqual([], before["errors"], before)
+        self.assertIn("business-receipts", before["skills"])
+
+        imp = pub.import_external_base(DEV_SOURCE, p_ok, prepare_init=True)
+        self.assertTrue(imp["prepared"], imp["stdout"] + imp["stderr"])
+        r_init = self._run_live_init(p_ok, "codex,claude")
+        self.assertEqual(0, r_init.returncode, r_init.stdout + r_init.stderr)
+        after_init = self._load_extension_via_native_loader(p_ok)
+        self.assertEqual([], after_init["errors"], after_init)
+        self.assertIn("business-receipts", after_init["skills"])
+        self.assertIn("biz-reconciliation", after_init["capabilities"])
+        self.assertIn("biz-receipt", after_init["mcpActions"])
+
+        scan = ext / "base/skills/story-adaptation/scripts/adapt-scan.mjs"
+        r_apply = subprocess.run(["node", str(scan), "--apply"], cwd=str(p_ok), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(0, r_apply.returncode, r_apply.stdout + r_apply.stderr)
+        after_apply = self._load_extension_via_native_loader(p_ok)
+        self.assertEqual([], after_apply["errors"], after_apply)
+        self.assertIn("business-receipts", after_apply["skills"])
+        self.assertEqual(biz_sk_text, biz_sk.read_text(encoding="utf-8"))
+        self.assertTrue((ext / "hooks/business-observe.mjs").is_file())
+        self.assertFalse((ext / "hooks/spec/post_check.mjs").exists())
+        self.assertEqual(0, subprocess.run(["node", str(scan), "--check"], cwd=str(p_ok), capture_output=True).returncode)
+
+        # 2) R1 负例：f6d3ed44 上改写同名旧 hook → 写前拦停
+        p_mod = self.root / "s34-f6d3-mod"
+        ext_mod = self._seed_real_205_repo(p_mod, rev="f6d3ed44")
+        (ext_mod / "hooks/spec/post_check.mjs").write_text("// custom on f6d3ed44\n", encoding="utf-8")
+        init_commit(p_mod)
+        imp_mod = pub.import_external_base(DEV_SOURCE, p_mod, prepare_init=True)
+        self.assertEqual(2, imp_mod["returncode"], imp_mod)
+        self.assertFalse((ext_mod / "base").exists())
+
+        # 3) R2b：同键异主 phase_rules_overlays.spec → 写前报出双方路径、零写入
+        p_ov = self.root / "s34-overlay-conflict"
+        ext_ov = self._seed_real_205_repo(p_ov, rev="f6d3ed44")
+        biz_ov = ext_ov / "business/custom-spec.overlay.yaml"
+        biz_ov.write_text("semantic_checks: {}\n", encoding="utf-8")
+        mf_ov = yaml.safe_load((ext_ov / "manifest.yaml").read_text(encoding="utf-8"))
+        mf_ov["provides"]["phase_rules_overlays"]["spec"] = "business/custom-spec.overlay.yaml"
+        mf_ov_raw = yaml.safe_dump(mf_ov, sort_keys=False, allow_unicode=True)
+        (ext_ov / "manifest.yaml").write_text(mf_ov_raw, encoding="utf-8")
+        init_commit(p_ov)
+        imp_ov = pub.import_external_base(DEV_SOURCE, p_ov, prepare_init=True)
+        self.assertEqual(2, imp_ov["returncode"], imp_ov)
+        self.assertIn("business/custom-spec.overlay.yaml", imp_ov["stderr"])
+        self.assertIn("base/rules/spec-rules.overlay.yaml", imp_ov["stderr"])
+        self.assertFalse((ext_ov / "base").exists())
+        self.assertEqual(mf_ov_raw, (ext_ov / "manifest.yaml").read_text(encoding="utf-8"))
+
+        # 4) R3：7b117923 旧 base/（含 .gitignore 忽略 /examples/）放入本项目手稿 → 写前拦停保字节；移除手稿留纯旧样例 → 正常升级
+        p_tr = self.root / "s34-transition-draft"
+        make_consumer(p_tr, "TransitionBiz", ["codex"])
+        ext_tr = p_tr / "doc/extensions"
+        arc = subprocess.run(["git", "-C", str(REPO_ROOT), "archive", "7b117923", "--", "extensions/base"], check=True, capture_output=True)
+        with tarfile.open(fileobj=io.BytesIO(arc.stdout), mode="r:*") as tf:
+            for m in tf.getmembers():
+                if not m.name.startswith("extensions/base/"):
+                    continue
+                rel = m.name[len("extensions/"):]
+                dst = ext_tr / rel
+                if m.isdir():
+                    dst.mkdir(parents=True, exist_ok=True)
+                elif m.isfile():
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    dst.write_bytes(tf.extractfile(m).read())
+        init_commit(p_tr)
+        draft = ext_tr / "base/examples/local-draft.md"
+        draft_body = "# my project notes inside ignored examples\n"
+        draft.write_text(draft_body, encoding="utf-8")
+        # 确认普通 git status 为空（已被旧 base/.gitignore 忽略）
+        st = subprocess.run(["git", "-C", str(p_tr), "status", "--porcelain"], capture_output=True, text=True, check=True)
+        self.assertEqual("", st.stdout.strip())
+        # 导入新包必须写前拦停并保住 local-draft.md
+        imp_tr_blk = pub.import_external_base(DEV_SOURCE, p_tr, prepare_init=True)
+        self.assertEqual(2, imp_tr_blk["returncode"], imp_tr_blk)
+        self.assertIn("local-draft.md", imp_tr_blk["stderr"])
+        self.assertTrue(draft.is_file())
+        self.assertEqual(draft_body, draft.read_text(encoding="utf-8"))
+        # 移出人工手稿、保留未改动旧包样例 → 导入成功并退出旧 examples/ 与 base/.gitignore
+        draft.unlink()
+        imp_tr_ok = pub.import_external_base(DEV_SOURCE, p_tr, prepare_init=True)
+        self.assertTrue(imp_tr_ok["prepared"], imp_tr_ok["stdout"] + imp_tr_ok["stderr"])
+        self.assertFalse((ext_tr / "base/examples").exists())
+        self.assertFalse((ext_tr / "base/.gitignore").exists())
 
 if __name__ == "__main__":
     unittest.main()
