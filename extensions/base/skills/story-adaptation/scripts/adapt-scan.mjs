@@ -603,27 +603,39 @@ function writeAdaptedFor() {
   if (!existsSync(file) || read(file) !== next) writeFileSync(file, next, 'utf8');
 }
 
+function reviewGap(f) {
+  const r = f.check.review;
+  if (!r || r.status === 'valid' || (r.status === 'missing' && !f.items.知识?.length)) return null;
+  return `知识独审未通过（${r.status}）：${r.problems.join('；')}——按 reference/knowledge-review.md 对受影响知识按新摘要重审`;
+}
+
 async function printFollowUp() {
   const f = await followUp();
-  console.log(`[adapt-scan] 按版本跟进：${JSON.stringify(f)}`);
-  const adGap = adapterGap(f.adapters);
-  const kItems = f.items.知识 ?? [];
-  const kFiles = f.check.files ?? [];
-  const kState = f.check.status === 'PASS' && !kItems.length && kFiles.length ? '知识可用' : '知识待写';
-  console.log(`[adapt-scan] 状态：机制已安装（${PKG_VERSION}） / ${kState}（激活 ${kFiles.length} 份，校验 ${f.check.status}） / 对接 ${f.adapters.status}`);
-  if (Object.values(f.items).some(list => list.length) || f.check.status !== 'PASS' || adGap) {
+  const adGap = adapterGap(f.adapters), rGap = reviewGap(f), kItems = f.items.知识 ?? [], kFiles = f.check.files ?? [];
+  const regBiz = (existsSync(tgtManifest) ? (parseYaml(read(tgtManifest))?.provides?.knowledge ?? []) : [])
+    .filter(x => { const p = typeof x === 'string' ? x.trim() : String(x?.path ?? '').trim(); return p && p !== KNOWLEDGE_SKILL_ENTRY && p !== 'skills/story-knowledge/SKILL.md'; });
+  const kState = f.check.status === 'PASS' && !kItems.length && !rGap && kFiles.length ? '知识可用' : (regBiz.length && f.check.status !== 'PASS' ? '知识加载失败' : '知识待写');
+  console.log(`[adapt-scan] 状态：机制已安装（${PKG_VERSION}） / ${kState}（登记 ${regBiz.length} 份，可读 ${kFiles.length} 份，校验 ${f.check.status}） / 对接 ${f.adapters.status}`);
+  if (Object.values(f.items).some(list => list.length) || f.check.status !== 'PASS' || adGap || rGap) {
+    if (f.check.status !== 'PASS') console.log(`[adapt-scan] 知识加载失败：${f.check.problems.join('；')}`);
+    if (rGap) console.log(`[adapt-scan] ${rGap}`);
     if (adGap) console.log(`[adapt-scan] 尚欠对接层：${adGap}`);
     const branch = f.since === '0'
-      ? (kFiles.length
-        ? '无游标但已有正式知识：走 knowledge-adaptation.md「无游标已有知识」分支，从基线核覆盖并保留有效原文与编号，不自行推测游标'
-        : '首次安装且正式知识为空：先从仓内一个常规业务操作起手，走 knowledge-adaptation.md「首次安装作者」与 knowledge-topics.md 取证起草（上面演进条目作查漏清单）')
-      : `已适配 ${f.since}，只看晚于游标的变更：走 knowledge-adaptation.md「已有知识的升级作者」定向修订`;
+      ? (!regBiz.length
+        ? '首次安装且正式知识为空：先从仓内一个常规业务操作起手，走 knowledge-adaptation.md「首次安装作者」与 knowledge-topics.md 取证起草（下方演进条目作查漏清单）'
+        : f.check.status === 'PASS'
+          ? '无游标但已有正式知识可读：走 knowledge-adaptation.md「无游标已有知识」，从基线核覆盖并保留有效原文与编号，不自行推测游标'
+          : '无游标且已有知识登记但加载失败：先按上面错误修好已有知识或登记并保住现稿，不派首次重写')
+      : (!kItems.length && rGap
+        ? `已有知识已改动或原独审失效：保留游标 ${f.since}，按 reference/knowledge-review.md 对受影响知识按新摘要重审`
+        : `已适配 ${f.since}，只看晚于游标的变更：走 knowledge-adaptation.md「已有知识的升级作者」定向修订`);
     console.log(`[adapt-scan] 下一步（条目是待判断的适配主题，不表示目标仓已采用）：${branch}；按块摆出来，停一次问人「现在做这些适配吗」；`
       + '选稍后就不写任何东西；选中的知识（含独审）与对接适配交回后跑 --mark-adapted 记 adapted_for');
-    return true;
+  } else {
+    writeAdaptedFor();
+    console.log(`[adapt-scan] 目标已按包的版本适配，入口、知识与对接（${f.adapters.status}）已核，adapted_for 记为 ${PKG_VERSION}`);
   }
-  writeAdaptedFor();
-  console.log(`[adapt-scan] 目标已按包的版本适配，入口、知识与对接（${f.adapters.status}）已核，adapted_for 记为 ${PKG_VERSION}`);
+  console.log(`[adapt-scan] 按版本跟进：${JSON.stringify(f)}`);
   return true;
 }
 
@@ -659,11 +671,8 @@ if (mode === '--mark-adapted') {
   if (entries.problems.length) die(`宿主入口核对不符，adapted_for 不写：\n  ${entries.problems.join('\n  ')}`, 2);
   const f = await followUp();
   if (f.check.status !== 'PASS') die(`知识不能按当前协议加载，适配还没做完：\n  ${f.check.problems.join('\n  ')}`, 2);
-  if (f.items.知识?.length && f.check.review.status !== 'valid') {
-    die(`本次有 ${f.items.知识.length} 条知识演进要适配，知识独审证据不成立（${f.check.review.status}）：\n  `
-      + `${f.check.review.problems.join('\n  ')}\n  按 reference/knowledge-review.md 发起与收回审查；`
-      + '机制已经装好，知识适配未完成，adapted_for 不写', 2);
-  }
+  const rGap = reviewGap(f);
+  if (rGap) die(`${rGap}\n  机制已经装好，知识适配未完成，adapted_for 不写`, 2);
   const adGap = adapterGap(f.adapters);
   if (adGap) die(`${adGap}；适配未完成，adapted_for 不写`, 2);
   writeAdaptedFor();

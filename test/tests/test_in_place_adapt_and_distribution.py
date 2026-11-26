@@ -1264,5 +1264,87 @@ console.log(JSON.stringify({
         self.assertFalse((ext_tr / "base/examples").exists())
         self.assertFalse((ext_tr / "base/.gitignore").exists())
 
+    def test_s35_first_screen_routing_broken_nocursor_and_stale_review_gate(self) -> None:
+        """S35 R4：Story 主入口去跨仓文案；--apply 首屏先输出情景与方法再输出跟进 JSON；无游标坏登记保现稿不派首次重写；
+        2.0.5->2.0.6 无新演进条目但改了知识正文使独审 stale 时，--apply 与 --mark-adapted 均保旧游标，重审后通过。"""
+        story_skill = (DEV_SOURCE / "base/skills/story/SKILL.md").read_text(encoding="utf-8")
+        self.assertNotIn("另一个工程", story_skill)
+        self.assertIn("当前业务工程", story_skill)
+
+        # 1) 首次空仓：首屏先输出 状态/下一步，后输出 按版本跟进 JSON
+        p = self.root / "s35-flow"
+        make_consumer(p, "S35Biz", ["codex"])
+        ext = p / "doc/extensions"
+        pub.pack_external_base(DEV_SOURCE, ext)
+        (ext / "adapters").mkdir(parents=True)
+        (ext / "adapters/story.js").write_text("// real story\n", encoding="utf-8")
+        (ext / "adapters/token.js").write_text("// real token\n", encoding="utf-8")
+        init_commit(p)
+        scan = ext / "base/skills/story-adaptation/scripts/adapt-scan.mjs"
+        r_fresh = subprocess.run(["node", str(scan), "--apply"], cwd=str(p), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(0, r_fresh.returncode, r_fresh.stdout + r_fresh.stderr)
+        self.assertLess(r_fresh.stdout.index("[adapt-scan] 状态："), r_fresh.stdout.index("[adapt-scan] 按版本跟进："))
+        self.assertLess(r_fresh.stdout.index("[adapt-scan] 下一步"), r_fresh.stdout.index("[adapt-scan] 按版本跟进："))
+        self.assertIn("首次安装且正式知识为空", r_fresh.stdout)
+
+        # 2) 合法正本 + 有效独审 + 游标 2.0.5（无 2.0.6 知识演进条目）→ 合法快路通过并升 2.0.6
+        kf = write_sample_knowledge_and_review(p, scan)
+        (ext / "adaptation.yaml").write_text('adapted_for: "2.0.5"\n', encoding="utf-8")
+        run_git(p, "add", "-A")
+        run_git(p, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "valid 205")
+        r_fast = subprocess.run(["node", str(scan), "--apply"], cwd=str(p), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(0, r_fast.returncode, r_fast.stdout + r_fast.stderr)
+        self.assertEqual("2.0.6", yaml.safe_load((ext / "adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"])
+
+        # 3) 仅改知识一条业务结论（格式仍合法）且退游标回 2.0.5（0 条新演进）→ --status 报 stale，--apply 与 --mark-adapted 均保 2.0.5
+        (ext / "adaptation.yaml").write_text('adapted_for: "2.0.5"\n', encoding="utf-8")
+        kf.write_text(kf.read_text(encoding="utf-8") + "\n- 业务结论已修订：新增边界。\n", encoding="utf-8")
+        run_git(p, "add", "-A")
+        run_git(p, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "edit knowledge")
+        st_stale = json.loads(subprocess.run(["node", str(scan), "--status"], cwd=str(p), capture_output=True, text=True, encoding="utf-8").stdout)
+        self.assertEqual("stale", st_stale["knowledge"]["review"]["status"])
+        r_stale_apply = subprocess.run(["node", str(scan), "--apply"], cwd=str(p), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(0, r_stale_apply.returncode, r_stale_apply.stdout + r_stale_apply.stderr)
+        self.assertIn("stale", r_stale_apply.stdout)
+        self.assertEqual("2.0.5", yaml.safe_load((ext / "adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"], "--apply 放过了 stale 报告")
+        r_stale_mark = subprocess.run(["node", str(scan), "--mark-adapted"], cwd=str(p), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(2, r_stale_mark.returncode, r_stale_mark.stdout + r_stale_mark.stderr)
+        self.assertEqual("2.0.5", yaml.safe_load((ext / "adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"], "--mark-adapted 放过了 stale 报告")
+
+        # 4) 按新摘要重写独审报告后 → --mark-adapted 与 --apply 均通过并升 2.0.6
+        new_digest = st_stale["knowledge"]["digest"]
+        rev_file = ext / ".adapt/knowledge-review.md"
+        rev_file.write_text(
+            "```yaml\nknowledge_review:\n"
+            f"  digest: {new_digest}\n"
+            "  executor: independent-review-s35\n"
+            "  files:\n"
+            "    - path: knowledge/facts/component-profile.md\n"
+            "      granularity: {verdict: PASS, evidence: ok}\n"
+            "      fact_use: {verdict: PASS, evidence: ok}\n"
+            "      duplication: {verdict: PASS, evidence: ok}\n"
+            "      coding_boundary: {verdict: PASS, evidence: ok}\n"
+            "  blocking: []\n"
+            "  unreviewed: []\n"
+            "```\n",
+            encoding="utf-8",
+        )
+        r_mark_ok = subprocess.run(["node", str(scan), "--mark-adapted"], cwd=str(p), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(0, r_mark_ok.returncode, r_mark_ok.stdout + r_mark_ok.stderr)
+        self.assertEqual("2.0.6", yaml.safe_load((ext / "adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"])
+
+        # 5) 无游标 + 已有知识登记但正文坏（缺 form）→ 保现稿且不派首次重写
+        (ext / "adaptation.yaml").write_text("{}\n", encoding="utf-8")
+        broken_body = kf.read_text(encoding="utf-8").replace("form: facets", "shape: facets")
+        kf.write_text(broken_body, encoding="utf-8")
+        run_git(p, "add", "-A")
+        run_git(p, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "broken nocursor")
+        r_broken = subprocess.run(["node", str(scan), "--apply"], cwd=str(p), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(0, r_broken.returncode, r_broken.stdout + r_broken.stderr)
+        self.assertIn("知识加载失败", r_broken.stdout)
+        self.assertIn("不派首次重写", r_broken.stdout)
+        self.assertNotIn("首次安装且正式知识为空", r_broken.stdout)
+        self.assertEqual(broken_body, kf.read_text(encoding="utf-8"))
+
 if __name__ == "__main__":
     unittest.main()
