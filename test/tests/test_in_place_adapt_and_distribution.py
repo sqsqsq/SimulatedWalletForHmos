@@ -382,6 +382,25 @@ process.stdout.write(JSON.stringify(res));
         )
         (ext / "adaptation.yaml").write_text('adapted_for: "2.0.5"\n', encoding="utf-8")
         (proj / "doc/usage.json").write_text('{"schema": 1, "requirements": {}}\n', encoding="utf-8")
+        kf_digest = "sha256:" + hashlib.sha256(
+            ("knowledge/facts/biz-profile.md\0" + kf_text.replace("\r\n", "\n") + "\0").encode("utf-8")
+        ).hexdigest()[:16]
+        (ext / ".adapt").mkdir(parents=True, exist_ok=True)
+        (ext / ".adapt/knowledge-review.md").write_text(
+            "```yaml\nknowledge_review:\n"
+            f'  digest: "{kf_digest}"\n'
+            "  executor: independent-reviewer-legacy\n"
+            "  files:\n"
+            "    - path: knowledge/facts/biz-profile.md\n"
+            "      granularity: {verdict: PASS, evidence: ok}\n"
+            "      fact_use: {verdict: PASS, evidence: ok}\n"
+            "      duplication: {verdict: PASS, evidence: ok}\n"
+            "      coding_boundary: {verdict: PASS, evidence: ok}\n"
+            "  blocking: []\n"
+            "  unreviewed: []\n"
+            "```\n",
+            encoding="utf-8",
+        )
         # 渲染旧布局宿主入口
         entries_src = DEV_SOURCE / "base/skills/story-adaptation/scripts/entries.mjs"
         subprocess.run(["node", str(entries_src), "--project-root", str(proj), "--action", "materialize"],
@@ -601,6 +620,25 @@ process.stdout.write(JSON.stringify(res));
         )
         (ext / "adaptation.yaml").write_text('adapted_for: "2.0.5"\n', encoding="utf-8")
         (proj / "doc/usage.json").write_text('{"schema": 1, "requirements": {}}\n', encoding="utf-8")
+        kf_digest = "sha256:" + hashlib.sha256(
+            ("knowledge/facts/biz-profile.md\0" + kf_text.replace("\r\n", "\n") + "\0").encode("utf-8")
+        ).hexdigest()[:16]
+        (ext / ".adapt").mkdir(parents=True, exist_ok=True)
+        (ext / ".adapt/knowledge-review.md").write_text(
+            "```yaml\nknowledge_review:\n"
+            f'  digest: "{kf_digest}"\n'
+            "  executor: independent-reviewer-205\n"
+            "  files:\n"
+            "    - path: knowledge/facts/biz-profile.md\n"
+            "      granularity: {verdict: PASS, evidence: ok}\n"
+            "      fact_use: {verdict: PASS, evidence: ok}\n"
+            "      duplication: {verdict: PASS, evidence: ok}\n"
+            "      coding_boundary: {verdict: PASS, evidence: ok}\n"
+            "  blocking: []\n"
+            "  unreviewed: []\n"
+            "```\n",
+            encoding="utf-8",
+        )
 
         old_bridge_script = """
 const [root] = process.argv.slice(1);
@@ -876,6 +914,11 @@ req('./scripts/utils/instance-skill-bridge.ts').emitInstanceSkillBridge({
         e3 = p3 / "doc" / "extensions"
         pub.pack_external_base(DEV_SOURCE, e3)
         (e3 / "adaptation.yaml").write_text('adapters: stand-in\nadapted_for: "2.0.5"\n', encoding="utf-8")
+        (e3 / ".adapt").mkdir(parents=True, exist_ok=True)
+        (e3 / ".adapt/knowledge-review.md").write_text(
+            "```yaml\nknowledge_review:\n  digest: \"sha256:e3b0c44298fc1c14\"\n  executor: standin-reviewer\n  files: []\n  blocking: []\n  unreviewed: []\n```\n",
+            encoding="utf-8",
+        )
         init_commit(p3)
         scan3 = e3 / "base/skills/story-adaptation/scripts/adapt-scan.mjs"
         self.assertEqual(0, subprocess.run(["node", str(scan3), "--apply"], cwd=str(p3), capture_output=True).returncode)
@@ -1481,6 +1524,116 @@ req('./scripts/utils/instance-skill-bridge.ts').emitInstanceSkillBridge({
                     self.assertEqual(prep, r_ok["prepared"])
                     self.assertFalse((ext / "base/examples").exists())
                     self.assertFalse((ext / "base/.gitignore").exists())
+
+    def test_s39_missing_review_blocks_both_apply_and_mark_adapted_and_preserves_fast_path(self) -> None:
+        """S39 R4：已有可读知识在缺独审报告（missing）或 stale 时，无论演进条目数与游标版本（2.0.5/2.0.6），
+        --apply 与 --mark-adapted 从同一准备状态独立执行均不得宣告完成或升写/清空游标；已有当前有效报告或补审后均允许完成。"""
+
+        def seed_case(name: str, *, cursor: str, edit_body: bool, review_mode: str) -> tuple[Path, Path, str]:
+            proj = self.root / name
+            make_consumer(proj, f"S39{name}", ["codex"])
+            ext = proj / "doc/extensions"
+            pub.pack_external_base(DEV_SOURCE, ext)
+            (ext / "adapters").mkdir(parents=True)
+            (ext / "adapters/story.js").write_text("// real story\n", encoding="utf-8")
+            (ext / "adapters/token.js").write_text("// real token\n", encoding="utf-8")
+            init_commit(proj)
+            scan = ext / "base/skills/story-adaptation/scripts/adapt-scan.mjs"
+            self.assertEqual(0, subprocess.run(["node", str(scan), "--apply"], cwd=str(proj), capture_output=True).returncode)
+            kf = write_sample_knowledge_and_review(proj, scan)
+            if edit_body:
+                kf.write_text(kf.read_text(encoding="utf-8").replace("支付接入能力", "预约接入能力"), encoding="utf-8")
+            st = json.loads(subprocess.run(["node", str(scan), "--status"], cwd=str(proj), capture_output=True, text=True, encoding="utf-8", check=True).stdout)
+            cur_digest = st["knowledge"]["digest"]
+            rev = ext / ".adapt/knowledge-review.md"
+            if review_mode == "missing":
+                rev.unlink(missing_ok=True)
+            elif review_mode == "valid":
+                rev.write_text(
+                    "```yaml\nknowledge_review:\n"
+                    f'  digest: "{cur_digest}"\n'
+                    "  executor: independent-reviewer-s39\n"
+                    "  files:\n"
+                    "    - path: knowledge/facts/component-profile.md\n"
+                    "      granularity: {verdict: PASS, evidence: ok}\n"
+                    "      fact_use: {verdict: PASS, evidence: ok}\n"
+                    "      duplication: {verdict: PASS, evidence: ok}\n"
+                    "      coding_boundary: {verdict: PASS, evidence: ok}\n"
+                    "  blocking: []\n"
+                    "  unreviewed: []\n"
+                    "```\n",
+                    encoding="utf-8",
+                )
+            elif review_mode == "stale":
+                pass  # edit_body=True 已使旧报告摘要过期
+            (ext / "adaptation.yaml").write_text(f'adapted_for: "{cursor}"\n', encoding="utf-8")
+            run_git(proj, "add", "-A")
+            run_git(proj, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", f"seed {name}")
+            return proj, scan, cur_digest
+
+        # 1) 改稿无报告（missing）、游标 2.0.5（0 条新演进）→ --apply 与 --mark-adapted 独立运行均保 2.0.5
+        p1a, s1a, d1a = seed_case("s39-miss-205-apply", cursor="2.0.5", edit_body=True, review_mode="missing")
+        r1a = subprocess.run(["node", str(s1a), "--apply"], cwd=str(p1a), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(0, r1a.returncode, r1a.stdout + r1a.stderr)
+        self.assertIn("missing", r1a.stdout)
+        self.assertIn(d1a, r1a.stdout)
+        self.assertNotIn("目标已按包的版本适配", r1a.stdout)
+        self.assertEqual("2.0.5", yaml.safe_load((p1a / "doc/extensions/adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"])
+
+        p1m, s1m, d1m = seed_case("s39-miss-205-mark", cursor="2.0.5", edit_body=True, review_mode="missing")
+        r1m = subprocess.run(["node", str(s1m), "--mark-adapted"], cwd=str(p1m), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(2, r1m.returncode, r1m.stdout + r1m.stderr)
+        self.assertIn("missing", r1m.stderr)
+        self.assertIn(d1m, r1m.stderr)
+        self.assertEqual("2.0.5", yaml.safe_load((p1m / "doc/extensions/adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"])
+
+        # 2) 已处同版 2.0.6 但缺报告（missing）→ 无法证实完成，保留原游标 2.0.6 且不清旧游标
+        p2a, s2a, _ = seed_case("s39-miss-206-apply", cursor="2.0.6", edit_body=False, review_mode="missing")
+        r2a = subprocess.run(["node", str(s2a), "--apply"], cwd=str(p2a), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(0, r2a.returncode, r2a.stdout + r2a.stderr)
+        self.assertIn("missing", r2a.stdout)
+        self.assertNotIn("目标已按包的版本适配", r2a.stdout)
+        self.assertEqual("2.0.6", yaml.safe_load((p2a / "doc/extensions/adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"])
+
+        p2m, s2m, _ = seed_case("s39-miss-206-mark", cursor="2.0.6", edit_body=False, review_mode="missing")
+        r2m = subprocess.run(["node", str(s2m), "--mark-adapted"], cwd=str(p2m), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(2, r2m.returncode, r2m.stdout + r2m.stderr)
+        self.assertEqual("2.0.6", yaml.safe_load((p2m / "doc/extensions/adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"])
+
+        # 3) 有旧报告但改稿致 stale → --apply 与 --mark-adapted 独立运行均保 2.0.5
+        p3a, s3a, _ = seed_case("s39-stale-apply", cursor="2.0.5", edit_body=True, review_mode="stale")
+        r3a = subprocess.run(["node", str(s3a), "--apply"], cwd=str(p3a), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(0, r3a.returncode, r3a.stdout + r3a.stderr)
+        self.assertIn("stale", r3a.stdout)
+        self.assertEqual("2.0.5", yaml.safe_load((p3a / "doc/extensions/adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"])
+
+        p3m, s3m, _ = seed_case("s39-stale-mark", cursor="2.0.5", edit_body=True, review_mode="stale")
+        r3m = subprocess.run(["node", str(s3m), "--mark-adapted"], cwd=str(p3m), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(2, r3m.returncode, r3m.stdout + r3m.stderr)
+        self.assertEqual("2.0.5", yaml.safe_load((p3m / "doc/extensions/adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"])
+
+        # 4) 当前摘要对应有效报告且知识未变（快路）→ 独立运行 --apply 与 --mark-adapted 均升 2.0.6
+        p4a, s4a, _ = seed_case("s39-fast-apply", cursor="2.0.5", edit_body=False, review_mode="valid")
+        r4a = subprocess.run(["node", str(s4a), "--apply"], cwd=str(p4a), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(0, r4a.returncode, r4a.stdout + r4a.stderr)
+        self.assertIn("目标已按包的版本适配", r4a.stdout)
+        self.assertEqual("2.0.6", yaml.safe_load((p4a / "doc/extensions/adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"])
+
+        p4m, s4m, _ = seed_case("s39-fast-mark", cursor="2.0.5", edit_body=False, review_mode="valid")
+        r4m = subprocess.run(["node", str(s4m), "--mark-adapted"], cwd=str(p4m), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(0, r4m.returncode, r4m.stdout + r4m.stderr)
+        self.assertEqual("2.0.6", yaml.safe_load((p4m / "doc/extensions/adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"])
+
+        # 5) 改稿后补齐当前摘要有效独审报告 → 独立运行 --apply 与 --mark-adapted 均升 2.0.6
+        p5a, s5a, _ = seed_case("s39-recheck-apply", cursor="2.0.5", edit_body=True, review_mode="valid")
+        r5a = subprocess.run(["node", str(s5a), "--apply"], cwd=str(p5a), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(0, r5a.returncode, r5a.stdout + r5a.stderr)
+        self.assertEqual("2.0.6", yaml.safe_load((p5a / "doc/extensions/adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"])
+
+        p5m, s5m, _ = seed_case("s39-recheck-mark", cursor="2.0.5", edit_body=True, review_mode="valid")
+        r5m = subprocess.run(["node", str(s5m), "--mark-adapted"], cwd=str(p5m), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(0, r5m.returncode, r5m.stdout + r5m.stderr)
+        self.assertEqual("2.0.6", yaml.safe_load((p5m / "doc/extensions/adaptation.yaml").read_text(encoding="utf-8"))["adapted_for"])
 
 if __name__ == "__main__":
     unittest.main()

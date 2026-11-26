@@ -608,9 +608,9 @@ function writeAdaptedFor() {
 }
 
 function reviewGap(f) {
-  const r = f.check.review;
-  if (!r || r.status === 'valid' || (r.status === 'missing' && !f.items.知识?.length)) return null;
-  return `知识独审未通过（${r.status}）：${r.problems.join('；')}——按 reference/knowledge-review.md 对受影响知识按新摘要重审`;
+  if (f.check.status !== 'PASS' || f.check.review?.status === 'valid') return null;
+  const r = f.check.review ?? { status: 'missing', problems: ['缺少独立审查结果'] };
+  return `知识独审未通过（${r.status}）：${(r.problems ?? []).join('；')}——先用 --status 获取当前摘要 ${f.check.digest ?? ''}，按 reference/knowledge-review.md 交独立审查`;
 }
 
 async function printFollowUp() {
@@ -631,7 +631,7 @@ async function printFollowUp() {
           ? '无游标但已有正式知识可读：走 knowledge-adaptation.md「无游标已有知识」，从基线核覆盖并保留有效原文与编号，不自行推测游标'
           : '无游标且已有知识登记但加载失败：先按上面错误修好已有知识或登记并保住现稿，不派首次重写')
       : (!kItems.length && rGap
-        ? `已有知识已改动或原独审失效：保留游标 ${f.since}，按 reference/knowledge-review.md 对受影响知识按新摘要重审`
+        ? `已有知识缺少有效独审报告或原独审已失效：保留游标 ${f.since}，先用 --status 获取当前摘要并按 reference/knowledge-review.md 交独立审查`
         : `已适配 ${f.since}，只看晚于游标的变更：走 knowledge-adaptation.md「已有知识的升级作者」定向修订`);
     console.log(`[adapt-scan] 下一步（条目是待判断的适配主题，不表示目标仓已采用）：${branch}；按块摆出来，停一次问人「现在做这些适配吗」；`
       + '选稍后就不写任何东西；选中的知识（含独审）与对接适配交回后跑 --mark-adapted 记 adapted_for');

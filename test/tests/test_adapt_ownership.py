@@ -362,6 +362,7 @@ class TheUpgradeFollowsTheVersionRecord(AdaptCase):
         self.assertIn("停一次问人", proc.stdout)
 
     def test_nothing_to_adapt_is_one_sentence_and_records_the_version(self) -> None:
+        self.write_review()
         self.set_adapted(PKG_VERSION)
         proc = self.adapt("--apply")
         self.assertEqual(0, proc.returncode, self.out(proc))
@@ -482,6 +483,12 @@ class TheAdaptedVersionIsWrittenByTheScript(AdaptCase):
     def test_a_mechanism_only_upgrade_needs_no_review(self) -> None:
         latest = change_versions(PKG_EXT, "知识")[-1]
         self.set_manifest_line("adapted_for", latest)
+        # S39：缺独审报告时即使零新增知识演进条目也不得放行
+        missing = self.mark()
+        self.assertEqual(2, missing.returncode, self.out(missing))
+        self.assertIn("知识适配未完成", self.out(missing))
+        # 已有当前有效报告且知识未变 → 快路无需重新派审
+        self.write_review()
         proc = self.mark()
         self.assertEqual(0, proc.returncode, self.out(proc))
 
