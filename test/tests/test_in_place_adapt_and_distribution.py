@@ -356,11 +356,11 @@ process.stdout.write(JSON.stringify(res));
         proj = self.root / "legacy-proj"
         make_consumer(proj, "LegacyBiz", ["codex", "claude"])
         ext = proj / "doc" / "extensions"
-        # 造旧混装布局（无 base/，旧 hooks/skills/rules + 业务 knowledge + 业务 adapters + 旧 manifest）
+        # 造旧混装布局（无 base/，真实未改旧 hooks/skills/rules + 业务 knowledge + 业务 adapters + 旧 manifest）
         (ext / "hooks/spec").mkdir(parents=True)
-        (ext / "hooks/spec/post_check.mjs").write_text("export default () => ({ ok: true });\n", encoding="utf-8")
+        shutil.copy2(DEV_SOURCE / "base/hooks/spec/post_check.mjs", ext / "hooks/spec/post_check.mjs")
         (ext / "rules").mkdir(parents=True)
-        (ext / "rules/spec-rules.overlay.yaml").write_text("semantic_checks: {}\n", encoding="utf-8")
+        shutil.copy2(DEV_SOURCE / "base/rules/spec-rules.overlay.yaml", ext / "rules/spec-rules.overlay.yaml")
         old_adapters = ext / "skills/story/scripts/adapters"
         old_adapters.mkdir(parents=True)
         biz_story = "// LegacyBiz real story adapter\nmodule.exports = { real: true };\n"
@@ -368,7 +368,7 @@ process.stdout.write(JSON.stringify(res));
         (old_adapters / "story.js").write_text(biz_story, encoding="utf-8")
         (old_adapters / "token.js").write_text(biz_token, encoding="utf-8")
         (ext / "skills/story").mkdir(parents=True, exist_ok=True)
-        (ext / "skills/story/SKILL.md").write_text("---\nname: story\ndescription: old\n---\n# old\n", encoding="utf-8")
+        shutil.copy2(DEV_SOURCE / "base/skills/story/SKILL.md", ext / "skills/story/SKILL.md")
         kf = ext / "knowledge/facts/biz-profile.md"
         kf.parent.mkdir(parents=True)
         kf_text = "---\nname: biz-profile\nkind: facts\nform: facets\napplies_when: 核本业务边界时。\n---\n\n## 定位\n\n- 业务事实。\n"
@@ -564,12 +564,18 @@ process.stdout.write(JSON.stringify(res));
 
         ext = proj / "doc" / "extensions"
         (ext / "hooks/spec").mkdir(parents=True)
-        (ext / "hooks/spec/post_check.mjs").write_text("export default () => ({ ok: true });\n", encoding="utf-8")
+        shutil.copy2(DEV_SOURCE / "base/hooks/spec/post_check.mjs", ext / "hooks/spec/post_check.mjs")
         (ext / "rules").mkdir(parents=True)
-        (ext / "rules/spec-rules.overlay.yaml").write_text("semantic_checks: {}\n", encoding="utf-8")
-        for sid in ("story", "story-adaptation", "story-knowledge", "story-stats"):
+        shutil.copy2(DEV_SOURCE / "base/rules/spec-rules.overlay.yaml", ext / "rules/spec-rules.overlay.yaml")
+        for sid in ("story", "story-adaptation", "story-stats"):
             (ext / f"skills/{sid}").mkdir(parents=True)
-            (ext / f"skills/{sid}/SKILL.md").write_text(f"---\nname: {sid}\ndescription: old 2.0.5\n---\n# {sid}\n", encoding="utf-8")
+            shutil.copy2(DEV_SOURCE / f"base/skills/{sid}/SKILL.md", ext / f"skills/{sid}/SKILL.md")
+        (ext / "skills/story-knowledge").mkdir(parents=True)
+        sk_205 = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "show", "552f8c90:extensions/skills/story-knowledge/SKILL.md"],
+            check=True, capture_output=True,
+        ).stdout
+        (ext / "skills/story-knowledge/SKILL.md").write_bytes(sk_205)
         old_ad = ext / "skills/story/scripts/adapters"
         old_ad.mkdir(parents=True)
         biz_story = "// new root real story.js\nmodule.exports = { v: 2 };\n"
@@ -995,6 +1001,150 @@ req('./scripts/utils/instance-skill-bridge.ts').emitInstanceSkillBridge({
         r_chk = subprocess.run(["node", str(scan), "--check"], cwd=str(p), capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(0, r_chk.returncode, r_chk.stdout + r_chk.stderr)
 
+
+    def _load_extension_via_native_loader(self, proj: Path) -> dict:
+        script = """
+const [root] = process.argv.slice(1);
+const path = require('node:path');
+const { createRequire } = require('node:module');
+const fw = path.join(root, 'framework');
+const req = createRequire(path.join(fw, 'harness', 'package.json'));
+req('ts-node').register({ project: path.join(fw, 'harness', 'tsconfig.json'), transpileOnly: true });
+const { loadInstanceExtensions } = req(path.join(fw, 'harness', 'extension-loader.ts'));
+const loaded = loadInstanceExtensions(root, 'doc/extensions', { frameworkRoot: fw });
+console.log(JSON.stringify({
+  manifestVersion: loaded.manifestVersion,
+  errors: loaded.errors,
+  capabilities: Object.keys(loaded.extensionCapabilities ?? {}),
+  mcpActions: Object.keys(loaded.mcpActions ?? {}),
+  specPostCheck: loaded.hooks?.spec?.post_check ?? [],
+  phaseBindings: loaded.phaseBindings ?? {},
+}));
+"""
+        r = subprocess.run(["node", "-e", script, str(proj)], check=True, capture_output=True, text=True, encoding="utf-8")
+        return json.loads(r.stdout.strip().splitlines()[-1])
+
+    def _seed_real_205_repo(self, proj: Path) -> Path:
+        import io
+        import tarfile
+        proj.mkdir(parents=True)
+        self._copy_real_framework(proj)
+        cfg = json.loads((DEMO / "framework.config.json").read_text(encoding="utf-8"))
+        cfg["project_name"] = "Biz205S31"
+        cfg["materialized_adapters"] = ["codex", "claude"]
+        (proj / "framework.config.json").write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        (proj / ".gitignore").write_text("doc/features/**/AR/story-src/drafts/\n", encoding="utf-8")
+        ext = proj / "doc" / "extensions"
+        arc = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "archive", "552f8c90", "--", "extensions"],
+            check=True, capture_output=True,
+        )
+        with tarfile.open(fileobj=io.BytesIO(arc.stdout), mode="r:*") as tf:
+            for m in tf.getmembers():
+                if not m.name.startswith("extensions/"):
+                    continue
+                rel = m.name[len("extensions/"):]
+                if not rel or rel.startswith("knowledge/"):
+                    continue
+                dst = ext / rel
+                if m.isdir():
+                    dst.mkdir(parents=True, exist_ok=True)
+                elif m.isfile():
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    dst.write_bytes(tf.extractfile(m).read())
+        (ext / "business").mkdir(parents=True, exist_ok=True)
+        (ext / "business/provider.mjs").write_text("export default () => ({ ok: true });\n", encoding="utf-8")
+        (ext / "hooks/business-observe.mjs").write_text("export default () => ({ ok: true });\n", encoding="utf-8")
+        kf = ext / "knowledge/facts/biz-profile.md"
+        kf.parent.mkdir(parents=True, exist_ok=True)
+        kf.write_text("---\nname: biz-profile\nkind: facts\nform: facets\napplies_when: 核对业务边界时。\n---\n\n## 定位\n\n- 真实 2.0.5 业务事实。\n", encoding="utf-8")
+        mf_205 = yaml.safe_load((ext / "manifest.yaml").read_text(encoding="utf-8"))
+        mf_205["name"] = "biz-205-s31"
+        mf_205["provides"]["knowledge"] = ["knowledge/facts/biz-profile.md"]
+        mf_205["provides"]["hooks"]["spec"]["post_check"].append("hooks/business-observe.mjs")
+        mf_205["provides"]["capabilities"] = {
+            "biz-reconciliation": {"provider": "business/provider.mjs", "severity": "WARN"}
+        }
+        mf_205["provides"]["mcp_actions"] = {
+            "biz-receipt": {
+                "tool": "receipt_lookup",
+                "usage": "Read local business receipt",
+                "required": False,
+                "severity": "MAJOR",
+                "produces": ["doc/features/receipt.json"],
+            }
+        }
+        (ext / "manifest.yaml").write_text(yaml.safe_dump(mf_205, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        (ext / "adaptation.yaml").write_text('adapted_for: "2.0.5"\n', encoding="utf-8")
+        (proj / "doc/usage.json").write_text('{"schema": 1, "requirements": {}}\n', encoding="utf-8")
+        return ext
+
+    def test_s31_preserves_capabilities_mcp_actions_and_blocks_modified_or_unknown_legacy_before_write(self) -> None:
+        """S31 R1/R2：真实 2.0.5 原件带 capabilities/mcp_actions/业务 hook，导入前、init 后、apply 后均经原生 loader 核通过；
+        同名旧文件改为业务字节或旧目录含已提交未知文件时，在写入任何字节前拦截。"""
+        # 1) 正常真实 2.0.5 含 capabilities + mcp_actions + hooks/business-observe.mjs
+        p_ok = self.root / "s31-ok"
+        ext = self._seed_real_205_repo(p_ok)
+        init_commit(p_ok)
+        before = self._load_extension_via_native_loader(p_ok)
+        self.assertEqual([], before["errors"], before)
+        self.assertIn("biz-reconciliation", before["capabilities"])
+        self.assertIn("biz-receipt", before["mcpActions"])
+
+        imp = pub.import_external_base(DEV_SOURCE, p_ok, prepare_init=True)
+        self.assertTrue(imp["prepared"], imp["stdout"] + imp["stderr"])
+        r_init = self._run_live_init(p_ok, "codex,claude")
+        self.assertEqual(0, r_init.returncode, r_init.stdout + r_init.stderr)
+        after_init = self._load_extension_via_native_loader(p_ok)
+        self.assertEqual([], after_init["errors"], after_init)
+        self.assertIn("biz-reconciliation", after_init["capabilities"])
+        self.assertIn("biz-receipt", after_init["mcpActions"])
+        self.assertTrue(any(p.replace("\\", "/").endswith("hooks/business-observe.mjs") for p in after_init["specPostCheck"]), after_init)
+        self.assertNotIn('"kind": "skill", "ref": "story-knowledge"', json.dumps(after_init["phaseBindings"]))
+
+        scan = ext / "base/skills/story-adaptation/scripts/adapt-scan.mjs"
+        r_apply = subprocess.run(["node", str(scan), "--apply"], cwd=str(p_ok), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(0, r_apply.returncode, r_apply.stdout + r_apply.stderr)
+        after_apply = self._load_extension_via_native_loader(p_ok)
+        self.assertEqual([], after_apply["errors"], after_apply)
+        self.assertIn("biz-reconciliation", after_apply["capabilities"])
+        self.assertIn("biz-receipt", after_apply["mcpActions"])
+        self.assertTrue((ext / "business/provider.mjs").is_file())
+        self.assertTrue((ext / "hooks/business-observe.mjs").is_file())
+        self.assertFalse((ext / "hooks/spec/post_check.mjs").exists())
+        self.assertFalse((ext / "skills").exists())
+        self.assertFalse((ext / "rules").exists())
+        self.assertEqual(0, subprocess.run(["node", str(scan), "--check"], cwd=str(p_ok), capture_output=True).returncode)
+
+        # 2) 单差异 A：旧包同名路径 hooks/spec/post_check.mjs 被提交改为业务字节 → 写前拦截，零写入
+        p_mod = self.root / "s31-modified-own"
+        ext_mod = self._seed_real_205_repo(p_mod)
+        custom_bytes = "// committed business override\nexport default () => ({ ok: true });\n"
+        (ext_mod / "hooks/spec/post_check.mjs").write_text(custom_bytes, encoding="utf-8")
+        mf_before = (ext_mod / "manifest.yaml").read_text(encoding="utf-8")
+        init_commit(p_mod)
+        imp_mod = pub.import_external_base(DEV_SOURCE, p_mod, prepare_init=True)
+        self.assertFalse(imp_mod["prepared"], imp_mod)
+        self.assertEqual(2, imp_mod["returncode"], imp_mod)
+        self.assertIn("hooks/spec/post_check.mjs", imp_mod["stderr"])
+        self.assertFalse((ext_mod / "base").exists(), "被拦截时不应解包 base/")
+        self.assertEqual(mf_before, (ext_mod / "manifest.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(custom_bytes, (ext_mod / "hooks/spec/post_check.mjs").read_text(encoding="utf-8"))
+
+        # 3) 单差异 B：旧目录下存在已提交但未在 manifest 登记的未知文件 → 写前拦截，零写入
+        p_unk = self.root / "s31-unknown-legacy"
+        ext_unk = self._seed_real_205_repo(p_unk)
+        unk_file = ext_unk / "hooks/spec/untracked-draft.mjs"
+        unk_file.write_text("// committed unknown helper\n", encoding="utf-8")
+        mf_unk_before = (ext_unk / "manifest.yaml").read_text(encoding="utf-8")
+        init_commit(p_unk)
+        imp_unk = pub.import_external_base(DEV_SOURCE, p_unk, prepare_init=True)
+        self.assertFalse(imp_unk["prepared"], imp_unk)
+        self.assertEqual(2, imp_unk["returncode"], imp_unk)
+        self.assertIn("hooks/spec/untracked-draft.mjs", imp_unk["stderr"])
+        self.assertFalse((ext_unk / "base").exists(), "被拦截时不应解包 base/")
+        self.assertEqual(mf_unk_before, (ext_unk / "manifest.yaml").read_text(encoding="utf-8"))
+        self.assertTrue(unk_file.is_file())
 
 if __name__ == "__main__":
     unittest.main()

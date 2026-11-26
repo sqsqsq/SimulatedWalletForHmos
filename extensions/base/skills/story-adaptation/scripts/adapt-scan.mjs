@@ -19,7 +19,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { parseYaml } from '../../../hooks/shared/yaml.mjs';
+import { parseYaml, stringifyYaml } from '../../../hooks/shared/yaml.mjs';
 import { KNOWLEDGE_SKILL_ENTRY } from '../../../hooks/shared/knowledge.mjs';
 import { shellArg } from '../../story/scripts/core/story/drafts.mjs';
 import { candidateProblems, entryCheck, entryMaterialize, entryPlan } from './entries.mjs';
@@ -99,9 +99,26 @@ function manifestRefs(doc) {
   const add = v => { if (typeof v === 'string' && v.trim()) refs.add(v.trim()); };
   for (const a of Object.values(doc?.provides?.skill_assets ?? {})) Object.values(a ?? {}).forEach(add);
   for (const e of Object.values(doc?.provides?.hooks ?? {})) for (const l of Object.values(e ?? {})) (l ?? []).forEach(add);
+  for (const c of Object.values(doc?.provides?.capabilities ?? {})) add(c?.provider);
   Object.values(doc?.provides?.phase_rules_overlays ?? {}).forEach(add);
   for (const s of Object.values(doc?.phase_bindings ?? {})) for (const l of Object.values(s ?? {})) (l ?? []).forEach(b => add(b?.ref));
   return refs;
+}
+
+const sha16 = text => createHash('sha256').update(text, 'utf8').digest('hex').slice(0, 16);
+
+function legacyState(tgtDoc, bizRefs) {
+  const preFile = join(BASE_DIR, 'skills', 'story-adaptation', 'contracts', 'legacy-preimages.json');
+  const pre = new Set(existsSync(preFile) ? (JSON.parse(read(preFile)).digests ?? []) : []);
+  const owned = storyOwnedSet(tgtDoc), retireOwn = [], modifiedOwn = [], unknownLegacy = [];
+  for (const relPath of LEGACY_DIRS.flatMap(d => walk(join(TDIR, d)).map(p => `${d}/${p}`))) {
+    if (relPath.startsWith(`${LEGACY_ADAPTERS}/`)) { retireOwn.push(relPath); continue; }
+    const body = lf(read(join(TDIR, ...relPath.split('/')))), cur = join(BASE_DIR, ...relPath.split('/'));
+    if (pre.has(sha16(`${relPath}\0${body}`)) || (existsSync(cur) && sha16(body) === sha16(lf(read(cur))))) retireOwn.push(relPath);
+    else if (owned.has(relPath)) modifiedOwn.push(relPath);
+    else if (!bizRefs.has(relPath)) unknownLegacy.push(relPath);
+  }
+  return { owned, retireOwn, modifiedOwn, unknownLegacy };
 }
 
 /** 合成运行时唯一根 manifest：按真实所有权合并本包机制，保留目标身份、业务 knowledge 与业务自定义登记，同步退出被接替的旧技能绑定。 */
@@ -110,7 +127,9 @@ function composeManifest(pkgText, tgtText, identity) {
   const tgt = tgtText ? (parseYaml(tgtText) ?? {}) : {};
   const owned = storyOwnedSet(tgt);
   const isStoryReg = p => owned.has(String(p ?? '').trim());
-  const isStoryBind = b => isStoryReg(b?.ref) || (b?.kind === 'skill' && PKG_SKILLS.includes(String(b?.ref ?? '')));
+  const isStoryBind = b => isStoryReg(b?.ref) || (b?.kind === 'skill' && (PKG_SKILLS.includes(String(b?.ref ?? '')) || b?.ref === 'story-knowledge'));
+  const bizSkills = (Array.isArray(tgt.provides?.skills) ? tgt.provides.skills : [])
+    .filter(s => typeof s === 'string' && !PKG_SKILLS.includes(s) && s !== 'story-knowledge');
   const name = typeof tgt.name === 'string' && tgt.name.trim() ? tgt.name.trim() : identity.name;
   const description = typeof tgt.description === 'string' && tgt.description.trim()
     ? tgt.description.trim() : identity.description;
@@ -157,6 +176,10 @@ function composeManifest(pkgText, tgtText, identity) {
     `description: ${description}`,
     'provides:',
   ];
+  if (bizSkills.length) {
+    out.push('  skills:');
+    for (const s of bizSkills) out.push(`    - ${yamlStr(s)}`);
+  }
   if (Object.keys(skillAssets).length) {
     out.push('  skill_assets:');
     for (const [sid, assets] of Object.entries(skillAssets)) {
@@ -191,6 +214,12 @@ function composeManifest(pkgText, tgtText, identity) {
     out.push('  phase_rules_overlays:');
     for (const [phase, p] of Object.entries(overlays)) out.push(`    ${phase}: ${p}`);
   }
+  const STD_PROV = new Set(['skills', 'bridges', 'skill_assets', 'knowledge', 'hooks', 'phase_rules_overlays']);
+  for (const [k, v] of Object.entries(tgt.provides ?? {})) {
+    if (!STD_PROV.has(k) && v !== undefined) {
+      for (const line of stringifyYaml({ [k]: v }).trimEnd().split(/\r?\n/)) out.push(`  ${line}`);
+    }
+  }
   if (Object.keys(bindings).length) {
     out.push('phase_bindings:');
     for (const [phase, slots] of Object.entries(bindings)) {
@@ -200,6 +229,10 @@ function composeManifest(pkgText, tgtText, identity) {
         for (const b of items ?? []) out.push(`      - {kind: ${b.kind}, ref: ${b.ref}}`);
       }
     }
+  }
+  const STD_TOP = new Set(['schema_version', 'name', 'version', 'description', 'provides', 'phase_bindings', 'adapters', 'adapted_for']);
+  for (const [k, v] of Object.entries(tgt)) {
+    if (!STD_TOP.has(k) && v !== undefined) out.push(stringifyYaml({ [k]: v }).trimEnd());
   }
   return `${out.join('\n')}\n`;
 }
@@ -685,9 +718,7 @@ if (mode === '--apply' || mode === '--prepare-init') {
   try { plan = entryPlan(TARGET, PKG_SKILLS, { includeEntries: !prep }); } catch (e) { die(`宿主入口核不了（${e.message}）`); }
 
   const extRel = extDir(TARGET);
-  const legacyAll = LEGACY_DIRS.flatMap(d => walk(join(TDIR, d)).map(p => `${d}/${p}`));
-  const legacyOwn = legacyAll.filter(p => owned.has(p) || p.startsWith(`${LEGACY_ADAPTERS}/`));
-  const unknownLegacy = legacyAll.filter(p => !owned.has(p) && !p.startsWith(`${LEGACY_ADAPTERS}/`) && !bizRefs.has(p));
+  const { retireOwn: legacyOwn, modifiedOwn, unknownLegacy } = legacyState(tgtDoc, bizRefs);
   const legacyFiles = prep ? [] : legacyOwn.map(p => `${extRel}/${p}`);
   const adapterPlan = prep ? { copy: [], conflicts: [] } : planAdapterMigration();
   const writeSurface = new Set(prep ? [...plan.retire] : [...legacyFiles, ...plan.pendingEntries, ...plan.retire, ...plan.pendingBridges]);
@@ -705,7 +736,12 @@ if (mode === '--apply' || mode === '--prepare-init') {
     dirty.forEach(p => console.error(`  ${p}`));
     die('先提交或暂存自己的改动再升级——本命令不替你动工作区（不 stash、不提交）', 2);
   }
-  if (!prep && unknownLegacy.length) {
+  if (modifiedOwn.length) {
+    console.error(`[adapt-scan] 停：旧包同名路径下发现 ${modifiedOwn.length} 处非受支持旧版原件（疑似已改为业务代码），保留文件与登记：`);
+    modifiedOwn.forEach(p => console.error(`  ${extRel}/${p}`));
+    die('请先将业务修改挪到自有路径并更新 manifest.yaml，或确认可弃后删除再升级。目标一个字节未写', 2);
+  }
+  if (unknownLegacy.length) {
     console.error(`[adapt-scan] 停：旧机制目录下发现 ${unknownLegacy.length} 处未归属且未在 manifest 登记的文件，保留不动：`);
     unknownLegacy.forEach(p => console.error(`  ${extRel}/${p}`));
     die('请确认去留（归属业务则登记或移至自有目录，无用则删除）再升级。目标一个字节未写', 2);
@@ -805,9 +841,10 @@ if (mode === '--apply' || mode === '--prepare-init') {
 // ── --check ───────────────────────────────────────────────────────────────
 const bad = [];
 if (!existsSync(join(BASE_DIR, '.gitignore'))) bad.push('① 机制包缺 base/.gitignore');
-const ownedForCheck = storyOwnedSet(existsSync(tgtManifest) ? (parseYaml(read(tgtManifest)) ?? {}) : {});
+const chkDoc = existsSync(tgtManifest) ? (parseYaml(read(tgtManifest)) ?? {}) : {};
+const chkLegacy = legacyState(chkDoc, manifestRefs(chkDoc));
 for (const d of LEGACY_DIRS) {
-  const left = walk(join(TDIR, d)).map(p => `${d}/${p}`).filter(p => ownedForCheck.has(p) || p.startsWith(`${LEGACY_ADAPTERS}/`));
+  const left = chkLegacy.retireOwn.filter(p => p.startsWith(`${d}/`));
   if (left.length) bad.push(`① 扩展根残留旧机制文件（${d}/ 共 ${left.length} 个，如 ${left[0]}）——跑 --apply 退出旧布局`);
 }
 const scriptsAt = join(BASE_DIR, 'skills', 'story', 'scripts');
