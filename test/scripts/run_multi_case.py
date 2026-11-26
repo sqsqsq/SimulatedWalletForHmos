@@ -238,16 +238,28 @@ def demo_check() -> str:
     return head.stdout.strip()
 
 
-def install_dev_source(template: Path) -> dict[str, Any]:
-    """核验 template 消费的是已提交且与开发源同源的 demo 候选（保护已适配游标与清理后的样例，禁止静默用未提交字节或不同 overlay 覆盖）。
+def _is_formal_repo_demo() -> bool:
+    """判断当前 DEMO_ROOT 是否指向仓内正式 demo（正式模板严格核对，不回退合成安装或覆盖修复）。"""
+    return DEMO_ROOT.resolve() == (REPO_ROOT / "demo").resolve()
 
-    仅对不含 `base/package-manifest.yaml` 的旧版合成测试夹具（如单测 fake_demo）保留原安装回退。
+
+def install_dev_source(template: Path, *, strict: bool | None = None) -> dict[str, Any]:
+    """核验 template 消费的是已提交且与开发源同源的 demo 候选（禁止静默覆盖或因缺身份件回退到合成安装）。
+
+    仅在显式非严格模式（或非仓内正式 demo 的单测合成夹具如 fake_demo）保留原安装回退。
     """
+    strict_mode = _is_formal_repo_demo() if strict is None else strict
     installed = template / "doc" / "extensions"
     demo_ext = DEMO_ROOT / "doc" / "extensions"
     pkg_file = installed / "base" / "package-manifest.yaml"
     adapt_file = installed / "adaptation.yaml"
-    if pkg_file.is_file() and adapt_file.is_file() and demo_ext.is_dir():
+    if strict_mode or (pkg_file.is_file() and adapt_file.is_file() and demo_ext.is_dir()):
+        if not pkg_file.is_file():
+            raise SystemExit(f"[multi] 正式候选缺少 doc/extensions/base/package-manifest.yaml（拒绝回退合成安装）：{pkg_file}")
+        if not adapt_file.is_file():
+            raise SystemExit(f"[multi] 正式候选缺少 doc/extensions/adaptation.yaml（拒绝回退合成安装）：{adapt_file}")
+        if not demo_ext.is_dir():
+            raise SystemExit(f"[multi] 正式候选缺少 demo 扩展目录：{demo_ext}")
         dev_base = publish_to_demo.package_base_dir(DEV_SOURCE)
         if dev_base is None:
             raise SystemExit(f"[multi] 开发源缺少 base/package-manifest.yaml：{DEV_SOURCE}")
@@ -257,9 +269,9 @@ def install_dev_source(template: Path) -> dict[str, Any]:
         if adapted_for != pkg_version:
             raise SystemExit(f"[multi] template 适配游标不符：adapted_for={adapted_for!r} != package={pkg_version!r}")
         if (installed / "base" / "examples").exists():
-            raise SystemExit("[multi] template 残留 base/examples/：已适配的 demo 候选应已清理包样例")
-        if not (installed / "base" / ".gitignore").is_file():
-            raise SystemExit("[multi] template 缺失 base/.gitignore")
+            raise SystemExit("[multi] template 残留已退出的 base/examples/")
+        if (installed / "base" / ".gitignore").exists():
+            raise SystemExit("[multi] template 残留已退出的 base/.gitignore")
         # 1) 核 template/doc/extensions 与已提交 demo/doc/extensions 逐字节一致（防不同 overlay 替换）
         demo_files = set(publish_to_demo.enumerate_source(demo_ext))
         tpl_files = set(publish_to_demo.enumerate_source(installed))
@@ -269,13 +281,12 @@ def install_dev_source(template: Path) -> dict[str, Any]:
         demo_diff = [rel for rel in sorted(demo_files) if (demo_ext / rel).read_bytes() != (installed / rel).read_bytes()]
         if demo_diff:
             raise SystemExit(f"[multi] template 与 demo/doc/extensions 字节不同：{demo_diff[:5]}")
-        # 2) 核 template/doc/extensions/base（剔除已清理 examples/）与 DEV_SOURCE/base 逐字节同源（防未同步开发字节）
-        dev_rel = {rel for rel in publish_to_demo.enumerate_source(dev_base)
-                   if not (rel == "examples" or rel.startswith("examples/"))}
+        # 2) 核 template/doc/extensions/base 与无样例 DEV_SOURCE/base 逐字节同源（防未同步开发字节）
+        dev_rel = set(publish_to_demo.enumerate_source(dev_base))
         tpl_base = installed / "base"
         tpl_base_rel = set(publish_to_demo.enumerate_source(tpl_base))
         if dev_rel != tpl_base_rel:
-            raise SystemExit(f"[multi] demo/template 的 base 与开发源不同源（禁止静默替换，先按 S30 同步 demo）："
+            raise SystemExit(f"[multi] demo/template 的 base 与开发源不同源（禁止静默替换，先同步 demo）："
                              f"多出 {sorted(tpl_base_rel - dev_rel)[:5]}、缺少 {sorted(dev_rel - tpl_base_rel)[:5]}")
         base_diff = [rel for rel in sorted(dev_rel)
                      if (dev_base / rel).read_bytes().replace(b"\r\n", b"\n") != (tpl_base / rel).read_bytes().replace(b"\r\n", b"\n")]
@@ -296,7 +307,7 @@ def install_dev_source(template: Path) -> dict[str, Any]:
                              f"{(chk_tpl.stdout + chk_tpl.stderr).strip()[:600]}")
         return {
             "status": "verified_demo_candidate", "source_version": pkg_version,
-            "adapted_for": adapted_for, "base_examples_cleaned": True,
+            "adapted_for": adapted_for, "base_examples_cleaned": True, "base_examples_absent": True,
             "demo_template_equal": True, "base_matches_dev_source": True, "changed": 0,
         }
 
@@ -431,12 +442,13 @@ def _write_framework_release(framework: Path, cfg: dict[str, Any]) -> list[str]:
     return removed
 
 
-def install_framework_under_test(template: Path) -> dict[str, Any]:
-    """在 template 里装被测 Framework：换固定发布树 → 核并应用本地宿主补丁 → 配置纳入要物化的 adapter → 原生 UPDATE 物化。
+def install_framework_under_test(template: Path, *, strict: bool | None = None) -> dict[str, Any]:
+    """核验（严格模式）或装配（非严格测试夹具）template 里的被测 Framework。
 
-    只写 template。补丁以 framework 子树为根、不得越出；git 只当补丁工具用（不找外层仓、不转换换行）。
-    依赖声明与 template 已带的不同就停，按维护环境准备另装，不在这里联网装依赖。
+    正式候选（strict=True，即仓内 demo）只核对固定发布树 + 本地补丁 + adapter/子代理物化逐字节一致，
+    任何单文件漂移均在写前直接停止并报出精确路径与原因，禁止静默覆盖修复。
     """
+    strict_mode = _is_formal_repo_demo() if strict is None else strict
     cfg = load_framework_under_test()
     framework = template / "framework"
     pkg = _git_out("cat-file", "blob", f"{cfg['release_commit']}:{cfg['framework_path']}/harness/package.json")
@@ -450,63 +462,79 @@ def install_framework_under_test(template: Path) -> dict[str, Any]:
     config_path = template / "framework.config.json"
     config = json.loads(config_path.read_text(encoding="utf-8"))
     adapters = list(dict.fromkeys([*config.get("materialized_adapters", []), *cfg["materialized_adapters"]]))
-    # 若 template（从已提交 demo 复制而来）的 Framework、本地补丁与受影响子代理均已逐字节一致，直接核验通过，不重复覆盖或重跑 init
+    # 核对 template（从已提交 demo 复制而来）的 Framework、本地补丁与受影响子代理是否与固定输入逐字节一致
     manifest_file = framework / "RELEASE-MANIFEST.json"
     rel_manifest_blob = _git_out("cat-file", "blob", f"{cfg['release_commit']}:{cfg['framework_path']}/RELEASE-MANIFEST.json")
-    if (manifest_file.is_file() and manifest_file.read_bytes() == rel_manifest_blob.stdout
-            and adapters == config.get("materialized_adapters")):
-        manifest = json.loads(rel_manifest_blob.stdout.decode("utf-8"))
-        # 独立核对补丁文件与未补丁发布文件均逐字节同源
-        with tempfile.TemporaryDirectory(prefix="fw-patch-check-") as ptmp:
-            proot = Path(ptmp)
+    drift_reasons: list[str] = []
+    manifest = json.loads(rel_manifest_blob.stdout.decode("utf-8"))
+    if not manifest_file.is_file() or manifest_file.read_bytes() != rel_manifest_blob.stdout:
+        drift_reasons.append("framework/RELEASE-MANIFEST.json 与固定发布提交不一致")
+    if adapters != config.get("materialized_adapters"):
+        drift_reasons.append(f"framework.config.json materialized_adapters={config.get('materialized_adapters')} 未包含 {adapters}")
+    with tempfile.TemporaryDirectory(prefix="fw-patch-check-") as ptmp:
+        proot = Path(ptmp)
+        for rel in patched:
+            blob = _git_out("cat-file", "blob", f"{cfg['release_commit']}:{cfg['framework_path']}/{rel}")
+            if blob.returncode == 0:
+                (proot / "framework" / rel).parent.mkdir(parents=True, exist_ok=True)
+                (proot / "framework" / rel).write_bytes(blob.stdout)
+        proot.mkdir(parents=True, exist_ok=True)
+        chk_p = _git_out("apply", "--directory=framework", str(cfg["patch_path"]), cwd=proot,
+                         env={**os.environ, "GIT_CEILING_DIRECTORIES": str(proot.parent)})
+        if chk_p.returncode != 0:
+            drift_reasons.append(f"本地补丁无法应用到固定发布树：{chk_p.stderr.decode('utf-8', 'replace').strip()[:200]}")
+        else:
             for rel in patched:
-                blob = _git_out("cat-file", "blob", f"{cfg['release_commit']}:{cfg['framework_path']}/{rel}")
-                if blob.returncode == 0:
-                    (proot / "framework" / rel).parent.mkdir(parents=True, exist_ok=True)
-                    (proot / "framework" / rel).write_bytes(blob.stdout)
-            proot.mkdir(parents=True, exist_ok=True)
-            chk_p = _git_out("apply", "--directory=framework", str(cfg["patch_path"]), cwd=proot,
-                             env={**os.environ, "GIT_CEILING_DIRECTORIES": str(proot.parent)})
-            patch_ok = chk_p.returncode == 0 and all(
-                (framework / rel).is_file() and (framework / rel).read_bytes() == (proot / "framework" / rel).read_bytes()
-                for rel in patched
-            )
-        patched_set = set(patched)
-        unpatched_ok = patch_ok and all(
-            (framework / f["path"]).is_file()
-            and hashlib.sha256((framework / f["path"]).read_bytes()).hexdigest() == f["sha256"]
-            for f in manifest["files"] if f["path"] not in patched_set
+                tf = framework / rel
+                if not tf.is_file() or tf.read_bytes() != (proot / "framework" / rel).read_bytes():
+                    drift_reasons.append(f"framework/{rel} 与固定发布树+本地补丁不一致")
+    patched_set = set(patched)
+    expected_fw_files = {f["path"] for f in manifest["files"]} | patched_set | {"RELEASE-MANIFEST.json", "RELEASE-MANIFEST.sha256"}
+    for f in manifest["files"]:
+        if f["path"] in patched_set:
+            continue
+        tf = framework / f["path"]
+        if not tf.is_file():
+            drift_reasons.append(f"framework/{f['path']} 缺失")
+        elif hashlib.sha256(tf.read_bytes()).hexdigest() != f["sha256"]:
+            drift_reasons.append(f"framework/{f['path']} 字节摘要漂移")
+    for dirpath, _dirs, files in os.walk(framework):
+        for name in files:
+            rel = (Path(dirpath) / name).relative_to(framework).as_posix()
+            if not rel.startswith(FRAMEWORK_RUNTIME_KEEP) and rel not in expected_fw_files:
+                drift_reasons.append(f"framework/{rel} 不在固定发布清单或本地补丁内")
+    adapter_root = framework / "agents"
+    patched_adapters = sorted({rel.split("/")[1] for rel in patched
+                               if rel.startswith("agents/") and (adapter_root / rel.split("/")[1] / "adapter.yaml").is_file()})
+    materialized: dict[str, str] = {}
+    for name in patched_adapters:
+        spec = yaml.safe_load((adapter_root / name / "adapter.yaml").read_text(encoding="utf-8"))
+        sub = spec.get("subagents") or (spec.get("commands") or {}).get("subagents")
+        if not sub:
+            continue
+        source_dir = adapter_root / name / sub["template_dir"]
+        for source in sorted(p for p in source_dir.rglob("*") if p.is_file()):
+            target = template / sub["target_dir"] / source.relative_to(source_dir)
+            rel_t = target.relative_to(template).as_posix()
+            if not target.is_file() or target.read_bytes() != source.read_bytes():
+                drift_reasons.append(f"{rel_t} 与补丁模板不同源")
+            else:
+                materialized[rel_t] = hashlib.sha256(target.read_bytes()).hexdigest()
+    if not drift_reasons:
+        return {
+            "mode": "verified_demo_framework",
+            "release_commit": cfg["release_commit"], "tree_oid": cfg["tree_oid"],
+            "version": manifest.get("version"), "source_commit": manifest.get("source_commit"),
+            "built_at": manifest.get("built_at"),
+            "local_patch": cfg["local_patch"], "local_patch_sha256": cfg["patch_sha256"], "patched_files": patched,
+            "materialized_adapters": adapters, "subagents": materialized,
+            "removed_outside_release": [], "init_run_log": None,
+        }
+    if strict_mode:
+        raise SystemExit(
+            f"[multi] 正式候选的 demo Framework 与固定发布树/补丁存在 {len(drift_reasons)} 处漂移（禁止静默覆盖修复）："
+            + "；".join(drift_reasons[:10])
         )
-        if unpatched_ok:
-            adapter_root = framework / "agents"
-            patched_adapters = sorted({rel.split("/")[1] for rel in patched
-                                       if rel.startswith("agents/") and (adapter_root / rel.split("/")[1] / "adapter.yaml").is_file()})
-            materialized: dict[str, str] = {}
-            subs_ok = True
-            for name in patched_adapters:
-                spec = yaml.safe_load((adapter_root / name / "adapter.yaml").read_text(encoding="utf-8"))
-                sub = spec.get("subagents") or (spec.get("commands") or {}).get("subagents")
-                if not sub:
-                    continue
-                source_dir = adapter_root / name / sub["template_dir"]
-                for source in sorted(p for p in source_dir.rglob("*") if p.is_file()):
-                    target = template / sub["target_dir"] / source.relative_to(source_dir)
-                    if not target.is_file() or target.read_bytes() != source.read_bytes():
-                        subs_ok = False
-                        break
-                    materialized[target.relative_to(template).as_posix()] = hashlib.sha256(target.read_bytes()).hexdigest()
-                if not subs_ok:
-                    break
-            if subs_ok:
-                return {
-                    "mode": "verified_demo_framework",
-                    "release_commit": cfg["release_commit"], "tree_oid": cfg["tree_oid"],
-                    "version": manifest.get("version"), "source_commit": manifest.get("source_commit"),
-                    "built_at": manifest.get("built_at"),
-                    "local_patch": cfg["local_patch"], "local_patch_sha256": cfg["patch_sha256"], "patched_files": patched,
-                    "materialized_adapters": adapters, "subagents": materialized,
-                    "removed_outside_release": [], "init_run_log": None,
-                }
     removed_outside_release = _write_framework_release(framework, cfg)
     env = {**os.environ, "GIT_CEILING_DIRECTORIES": str(template.parent)}
     for action in (["--check"], []):

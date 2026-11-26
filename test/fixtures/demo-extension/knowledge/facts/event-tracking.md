@@ -51,7 +51,7 @@ applies_when: 需求要观察业务流程质量、定位问题或明确要求运
 
 ## 4. SDK 行为事实
 
-- **Chart**：`WalletHAManager.chartBuilder(eventID, funcID, subFuncID)` 链式设字段后 `.report()`；`WalletEventID` = `FuncID_SubFuncID`（如 `Wallet_COMMON_001_002`），平台类型 STATISTIC。按身份、分类、内码、外码计数；可读描述经基类的 `setWalletEventDesc` 设，构造时不设。`report()` 不写本地日志。
+- **Chart**：`WalletHAManager.chartBuilder(eventID, funcID, subFuncID)` 链式设字段后 `.report()`；`hiAppEvent.write` 的 `name` 为 `eventID`（如 `Wallet_COMMON`），参数 `WalletEventID` = `FuncID_SubFuncID`（如 `001_002`，不含 `eventID` 前缀，见 `WalletHAReportForChartCBuilder.ets`），平台类型 STATISTIC。按身份、分类、内码、外码计数；可读描述经基类的 `setWalletEventDesc` 设，构造时不设。`report()` 不写本地日志。
 - **VOC**：`vocBuilder(walletEventID, walletEventDesc).report()`：事件名固定 `Wallet_COMMON`、类型 BEHAVIOR，`WalletEventID` 由调用方给，`FuncID` 固定 `VOC`，内容就是那段描述。`logAndReport` / `logErrorAndReport` / `logDebugAndReport` 用同一段描述先写本地日志、再发一条 VOC。
 - **发送**：经 `CommFunc/src/main/ets/index.ets` 导出；不阻塞业务，失败只记本地日志，不做业务去重。
 - **现有定义**：模板枚举 `WalletHAEventID.ets` 只有 `Wallet_COMMON`；仓内没有流程、步骤、内码登记，业务代码里也没有 Chart 或 VOC 调用。

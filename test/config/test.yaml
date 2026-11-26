@@ -73,7 +73,7 @@ startup:
 gates:
   # 需求交付门（消费工程里装好的扩展，`check --deliver` 只读）：成文依据当前、独立审查可消费，加 story.md 的确定性判据。
   # 施工单位各阶段的门禁是 framework 自己的 harness，按终点观测到的施工单位逐个跑。
-  story_build: doc/extensions/skills/story/scripts/core/story-build.mjs
+  story_build: doc/extensions/base/skills/story/scripts/core/story-build.mjs
 
 output:
   # 相对维护仓根解析，与运行时 cwd 无关。

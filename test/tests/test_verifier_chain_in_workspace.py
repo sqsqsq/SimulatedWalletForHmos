@@ -192,8 +192,8 @@ class AssembledFromTheFixedInputs:
             with self.subTest(dev_base=rel):
                 self.assertEqual((dev_base / rel).read_bytes().replace(b"\r\n", b"\n"),
                                  (tpl_ext / "base" / rel).read_bytes().replace(b"\r\n", b"\n"))
-        self.assertFalse((tpl_ext / "base/examples").exists(), "template 复活了已清理的 base/examples/")
-        self.assertTrue((tpl_ext / "base/.gitignore").is_file(), "template 缺失 base/.gitignore")
+        self.assertFalse((tpl_ext / "base/examples").exists(), "template 残留已退出的 base/examples/")
+        self.assertFalse((tpl_ext / "base/.gitignore").exists(), "template 残留已退出的 base/.gitignore")
         pkg_ver = str(yaml.safe_load((tpl_ext / "base/package-manifest.yaml").read_text(encoding="utf-8"))["version"])
         ad = yaml.safe_load((tpl_ext / "adaptation.yaml").read_text(encoding="utf-8"))
         self.assertEqual(pkg_ver, ad.get("adapted_for"), "template 丢失了已适配游标 adapted_for")
@@ -201,7 +201,7 @@ class AssembledFromTheFixedInputs:
         ident = boundary["identity"]
         self.assertEqual(ident["demo_installed"]["digest"], ident["template_extension"]["digest"])
         self.assertNotEqual(ident["distribution_package"]["digest"], ident["template_extension"]["digest"],
-                            "发行包身份（含 examples/）与已安装态身份（已清 examples/）应分开记录")
+                            "发行包身份（纯 base/）与已安装态身份（含 knowledge/adapters/manifest/adaptation）应分开记录")
 
     def test_the_assembly_leaves_demo_untouched_and_records_its_inputs(self) -> None:
         self.assertEqual(self.demo_before, self.demo_after, "装配前后 demo 的提交或工作区变了")
@@ -536,6 +536,40 @@ class TheVerifierCallTextNamesTheDedicatedRole(unittest.TestCase):
                 text = (root / rel).read_text(encoding="utf-8")
                 self.assertNotIn("Task(subagent_type=verifier)", text)
                 self.assertIn("host_verifier_role", text)
+
+
+class StrictCandidateAssemblyRejectsDrift(unittest.TestCase):
+    """S32 R4：正式候选严格核对单文件 Framework 漂移与缺失适配身份，发现偏差即写前停并点出路径，绝不静默覆盖或回退合成安装。"""
+
+    def test_rejects_single_file_framework_drift_and_missing_adaptation_without_overwrite(self) -> None:
+        runner = load_runner()
+        with tempfile.TemporaryDirectory(prefix="s32-r4-strict-") as td:
+            tpl = Path(td) / "template"
+            runner._copy_workspace_tree(DEMO, tpl)
+            # 1) 合法一致候选通过严格核对
+            fw_ok = runner.install_framework_under_test(tpl, strict=True)
+            self.assertEqual("verified_demo_framework", fw_ok["mode"])
+            dev_ok = runner.install_dev_source(tpl, strict=True)
+            self.assertEqual("verified_demo_candidate", dev_ok["status"])
+
+            # 2) 单文件 Framework 漂移（修改 README.md 1 字节）→ 停止并指出 framework/README.md，不覆盖恢复
+            readme = tpl / "framework" / "README.md"
+            orig_readme = readme.read_bytes()
+            mutated = orig_readme + b"\n<!-- drift -->\n"
+            readme.write_bytes(mutated)
+            with self.assertRaises(SystemExit) as cm_fw:
+                runner.install_framework_under_test(tpl, strict=True)
+            self.assertIn("framework/README.md", str(cm_fw.exception))
+            self.assertEqual(mutated, readme.read_bytes(), "严格模式遇漂移却静默覆盖恢复了 README.md")
+            readme.write_bytes(orig_readme)
+
+            # 3) 缺失 adaptation.yaml → 停止并指出 adaptation.yaml，不回退到 install_extension 合成安装
+            adapt_yaml = tpl / "doc" / "extensions" / "adaptation.yaml"
+            adapt_yaml.unlink()
+            with self.assertRaises(SystemExit) as cm_dev:
+                runner.install_dev_source(tpl, strict=True)
+            self.assertIn("adaptation.yaml", str(cm_dev.exception))
+            self.assertFalse(adapt_yaml.exists(), "严格模式缺 adaptation.yaml 却回退合成写回文件")
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 /**
- * story adapt —— 在已解包 `<ext>/base/` 的业务工程内就地安装、升级、校验、清理样例与记版本。
+ * story adapt —— 在已解包 `<ext>/base/` 的业务工程内就地安装、升级、校验与记版本。
  *
  * 所有权由目录表达：
- *   `<ext>/base/`              通用机制包（整目录替换；含 `package-manifest.yaml`、`.gitignore` 与首装临时 `examples/knowledge/`）
+ *   `<ext>/base/`              通用机制包（整目录替换；含 `package-manifest.yaml` 与通用机制，不含业务成品样例）
  *   `<ext>/adapters/`          业务侧对接实现，固定入口 `story.js`、`token.js`（脚本不覆盖）
  *   `<ext>/knowledge/`         业务侧知识（脚本不读不写；适配由模型按方法页从项目实际证据写）
  *   `<ext>/manifest.yaml`      运行时唯一清单：机制登记由 `base/package-manifest.yaml` 合并，`name`/`description`/业务 `provides.knowledge` 归目标
  *   `<ext>/adaptation.yaml`    目标的对接来源与已适配版本 `adapted_for`，归目标
  *
- * 用法：node doc/extensions/base/skills/story-adaptation/scripts/adapt-scan.mjs --apply|--check|--mark-adapted|--status|--cleanup-examples [--target <工程根>]
+ * 用法：node doc/extensions/base/skills/story-adaptation/scripts/adapt-scan.mjs --apply|--check|--mark-adapted|--status [--target <工程根>]
  * 退出：0 通过 / 1 核对不符或清理失败 / 2 参数或前置错误
  */
 import { spawnSync } from 'node:child_process';
@@ -19,12 +19,12 @@ import {
 } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { parseYaml } from '../../../hooks/shared/yaml.mjs';
+import { parseYaml, stringifyYaml } from '../../../hooks/shared/yaml.mjs';
 import { KNOWLEDGE_SKILL_ENTRY } from '../../../hooks/shared/knowledge.mjs';
 import { shellArg } from '../../story/scripts/core/story/drafts.mjs';
 import { candidateProblems, entryCheck, entryMaterialize, entryPlan } from './entries.mjs';
 
-const MODES = ['--prepare-init', '--apply', '--check', '--mark-adapted', '--status', '--cleanup-examples'];
+const MODES = ['--prepare-init', '--apply', '--check', '--mark-adapted', '--status'];
 
 const ADAPTERS = 'adapters';
 const LEGACY_ADAPTERS = 'skills/story/scripts/adapters';
@@ -99,9 +99,26 @@ function manifestRefs(doc) {
   const add = v => { if (typeof v === 'string' && v.trim()) refs.add(v.trim()); };
   for (const a of Object.values(doc?.provides?.skill_assets ?? {})) Object.values(a ?? {}).forEach(add);
   for (const e of Object.values(doc?.provides?.hooks ?? {})) for (const l of Object.values(e ?? {})) (l ?? []).forEach(add);
+  for (const c of Object.values(doc?.provides?.capabilities ?? {})) add(c?.provider);
   Object.values(doc?.provides?.phase_rules_overlays ?? {}).forEach(add);
   for (const s of Object.values(doc?.phase_bindings ?? {})) for (const l of Object.values(s ?? {})) (l ?? []).forEach(b => add(b?.ref));
   return refs;
+}
+
+const sha16 = text => createHash('sha256').update(text, 'utf8').digest('hex').slice(0, 16);
+
+function legacyState(tgtDoc, bizRefs) {
+  const preFile = join(BASE_DIR, 'skills', 'story-adaptation', 'contracts', 'legacy-preimages.json');
+  const pre = new Set(existsSync(preFile) ? (JSON.parse(read(preFile)).digests ?? []) : []);
+  const owned = storyOwnedSet(tgtDoc), retireOwn = [], modifiedOwn = [], unknownLegacy = [];
+  for (const relPath of LEGACY_DIRS.flatMap(d => walk(join(TDIR, d)).map(p => `${d}/${p}`))) {
+    if (relPath.startsWith(`${LEGACY_ADAPTERS}/`)) { retireOwn.push(relPath); continue; }
+    const body = lf(read(join(TDIR, ...relPath.split('/')))), cur = join(BASE_DIR, ...relPath.split('/'));
+    if (pre.has(sha16(`${relPath}\0${body}`)) || (existsSync(cur) && sha16(body) === sha16(lf(read(cur))))) retireOwn.push(relPath);
+    else if (owned.has(relPath)) modifiedOwn.push(relPath);
+    else if (!bizRefs.has(relPath)) unknownLegacy.push(relPath);
+  }
+  return { owned, retireOwn, modifiedOwn, unknownLegacy };
 }
 
 /** 合成运行时唯一根 manifest：按真实所有权合并本包机制，保留目标身份、业务 knowledge 与业务自定义登记，同步退出被接替的旧技能绑定。 */
@@ -110,7 +127,9 @@ function composeManifest(pkgText, tgtText, identity) {
   const tgt = tgtText ? (parseYaml(tgtText) ?? {}) : {};
   const owned = storyOwnedSet(tgt);
   const isStoryReg = p => owned.has(String(p ?? '').trim());
-  const isStoryBind = b => isStoryReg(b?.ref) || (b?.kind === 'skill' && PKG_SKILLS.includes(String(b?.ref ?? '')));
+  const isStoryBind = b => isStoryReg(b?.ref) || (b?.kind === 'skill' && (PKG_SKILLS.includes(String(b?.ref ?? '')) || b?.ref === 'story-knowledge'));
+  const bizSkills = (Array.isArray(tgt.provides?.skills) ? tgt.provides.skills : [])
+    .filter(s => typeof s === 'string' && !PKG_SKILLS.includes(s) && s !== 'story-knowledge');
   const name = typeof tgt.name === 'string' && tgt.name.trim() ? tgt.name.trim() : identity.name;
   const description = typeof tgt.description === 'string' && tgt.description.trim()
     ? tgt.description.trim() : identity.description;
@@ -157,6 +176,10 @@ function composeManifest(pkgText, tgtText, identity) {
     `description: ${description}`,
     'provides:',
   ];
+  if (bizSkills.length) {
+    out.push('  skills:');
+    for (const s of bizSkills) out.push(`    - ${yamlStr(s)}`);
+  }
   if (Object.keys(skillAssets).length) {
     out.push('  skill_assets:');
     for (const [sid, assets] of Object.entries(skillAssets)) {
@@ -191,6 +214,12 @@ function composeManifest(pkgText, tgtText, identity) {
     out.push('  phase_rules_overlays:');
     for (const [phase, p] of Object.entries(overlays)) out.push(`    ${phase}: ${p}`);
   }
+  const STD_PROV = new Set(['skills', 'bridges', 'skill_assets', 'knowledge', 'hooks', 'phase_rules_overlays']);
+  for (const [k, v] of Object.entries(tgt.provides ?? {})) {
+    if (!STD_PROV.has(k) && v !== undefined) {
+      for (const line of stringifyYaml({ [k]: v }).trimEnd().split(/\r?\n/)) out.push(`  ${line}`);
+    }
+  }
   if (Object.keys(bindings).length) {
     out.push('phase_bindings:');
     for (const [phase, slots] of Object.entries(bindings)) {
@@ -200,6 +229,10 @@ function composeManifest(pkgText, tgtText, identity) {
         for (const b of items ?? []) out.push(`      - {kind: ${b.kind}, ref: ${b.ref}}`);
       }
     }
+  }
+  const STD_TOP = new Set(['schema_version', 'name', 'version', 'description', 'provides', 'phase_bindings', 'adapters', 'adapted_for']);
+  for (const [k, v] of Object.entries(tgt)) {
+    if (!STD_TOP.has(k) && v !== undefined) out.push(stringifyYaml({ [k]: v }).trimEnd());
   }
   return `${out.join('\n')}\n`;
 }
@@ -375,30 +408,6 @@ function pruneEmpty(dir, dropPycache = false) {
   if (!readdirSync(dir).length) rmdirSync(dir);
 }
 
-function cleanupExamples() {
-  const examples = join(BASE_DIR, 'examples'), gitignore = join(BASE_DIR, '.gitignore');
-  if (!existsSync(examples)) return { ok: true, removed: false, gitignorePreserved: existsSync(gitignore) };
-  const mf = join(examples, '.manifest.json');
-  let expected = null;
-  if (existsSync(mf)) { try { expected = JSON.parse(read(mf))?.files; } catch { expected = null; } }
-  if (!expected || typeof expected !== 'object' || !Object.keys(expected).length) {
-    return { ok: false, removed: false, gitignorePreserved: existsSync(gitignore), error: 'base/examples/.manifest.json 缺失或无效，拒绝递归删除' };
-  }
-  const all = walk(examples, examples, new Set(['.manifest.json']), true);
-  const kept = all.flatMap((p) => {
-    const exp = expected[p];
-    if (!exp) return [`${p}（用户新增，不在发行样例清单内）`];
-    const got = `sha256:${createHash('sha256').update(lf(read(join(examples, ...p.split('/')))), 'utf8').digest('hex')}`;
-    return got === exp ? [] : [`${p}（内容已改动，与发行样例字节不符）`];
-  });
-  if (kept.length) return { ok: false, removed: false, gitignorePreserved: existsSync(gitignore), error: `保留非包/已改动文件，未删除：${kept.join('；')}` };
-  try { for (const p of all) rmSync(join(examples, ...p.split('/'))); rmSync(mf); pruneEmpty(examples); } catch (e) {
-    return { ok: false, removed: false, gitignorePreserved: existsSync(gitignore), error: String(e?.message ?? e) };
-  }
-  return { ok: !existsSync(examples), removed: true, gitignorePreserved: existsSync(gitignore),
-    error: existsSync(examples) ? `${rel(TARGET, examples)} 清理后仍存在` : undefined };
-}
-
 const SCRIPT_BASE = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 if (!mode) die(`缺模式：${MODES.join(' | ')}`);
 if (argv.includes('--package')) {
@@ -572,33 +581,30 @@ async function printFollowUp() {
   const f = await followUp();
   console.log(`[adapt-scan] 按版本跟进：${JSON.stringify(f)}`);
   const adGap = adapterGap(f.adapters);
+  const kItems = f.items.知识 ?? [];
+  const kFiles = f.check.files ?? [];
+  const kState = f.check.status === 'PASS' && !kItems.length && kFiles.length ? '知识可用' : '知识待写';
+  console.log(`[adapt-scan] 状态：机制已安装（${PKG_VERSION}） / ${kState}（激活 ${kFiles.length} 份，校验 ${f.check.status}） / 对接 ${f.adapters.status}`);
   if (Object.values(f.items).some(list => list.length) || f.check.status !== 'PASS' || adGap) {
     if (adGap) console.log(`[adapt-scan] 尚欠对接层：${adGap}`);
-    console.log('[adapt-scan] 有演进条目、知识不合协议或对接层未就位（条目是待判断的适配主题，不表示目标仓已采用）：按块摆出来，停一次问人「现在做这些适配吗」；'
-      + '选稍后就不写任何东西；选中的知识与对接适配都交回后跑 --mark-adapted（将核入口/知识/对接、清理 base/examples/ 并最后写 adapted_for）');
+    const branch = f.since === '0'
+      ? (kFiles.length
+        ? '无游标但已有正式知识：走 knowledge-adaptation.md「无游标已有知识」分支，从基线核覆盖并保留有效原文与编号，不自行推测游标'
+        : '首次安装且正式知识为空：先从仓内一个常规业务操作起手，走 knowledge-adaptation.md「首次安装作者」与 knowledge-topics.md 取证起草（上面演进条目作查漏清单）')
+      : `已适配 ${f.since}，只看晚于游标的变更：走 knowledge-adaptation.md「已有知识的升级作者」定向修订`;
+    console.log(`[adapt-scan] 下一步（条目是待判断的适配主题，不表示目标仓已采用）：${branch}；按块摆出来，停一次问人「现在做这些适配吗」；`
+      + '选稍后就不写任何东西；选中的知识（含独审）与对接适配交回后跑 --mark-adapted 记 adapted_for');
     return true;
   }
-  const cleaned = cleanupExamples();
-  if (!cleaned.ok || !cleaned.gitignorePreserved) {
-    console.error(`[adapt-scan] 清理 base/examples/ 失败（${cleaned.error ?? 'base/.gitignore 缺失'}）：不报适配完成，adapted_for 未写入`);
-    return false;
-  }
   writeAdaptedFor();
-  console.log(`[adapt-scan] 目标已按包的版本适配，入口、知识与对接（${f.adapters.status}）已核，样例已清理，adapted_for 记为 ${PKG_VERSION}`);
+  console.log(`[adapt-scan] 目标已按包的版本适配，入口、知识与对接（${f.adapters.status}）已核，adapted_for 记为 ${PKG_VERSION}`);
   return true;
-}
-
-if (mode === '--cleanup-examples') {
-  const cleaned = cleanupExamples();
-  if (!cleaned.ok) die(`清理 base/examples/ 失败：${cleaned.error}（不报适配完成）`, 1);
-  console.log(`[adapt-scan] ${cleaned.removed ? '已清理 base/examples/' : 'base/examples/ 已不存在（重入幂等）'}；base/.gitignore ${cleaned.gitignorePreserved ? '保留' : '缺失'}`);
-  process.exit(cleaned.gitignorePreserved ? 0 : 1);
 }
 
 if (mode === '--status') {
   const ident = key => (existsSync(tgtManifest) ? manifestValue(read(tgtManifest), key) : null);
   const out = {
-    mode: 'status', package: { version: PKG_VERSION, examplesPresent: existsSync(join(BASE_DIR, 'examples')) },
+    mode: 'status', package: { version: PKG_VERSION },
     target: {
       installed: existsSync(tgtManifest), state: STATE, version: INSTALLED,
       name: ident('name'), description: ident('description'),
@@ -633,13 +639,9 @@ if (mode === '--mark-adapted') {
       + '机制已经装好，知识适配未完成，adapted_for 不写', 2);
   }
   const adGap = adapterGap(f.adapters);
-  if (adGap) die(`${adGap}；适配未完成，不清理 base/examples/，adapted_for 不写`, 2);
-  const cleaned = cleanupExamples();
-  if (!cleaned.ok) die(`清理 base/examples/ 失败（${cleaned.error}）：不报适配完成，adapted_for 未写入`, 1);
-  if (!cleaned.gitignorePreserved) die('base/.gitignore 缺失：清理后必须保留 base/.gitignore，adapted_for 未写入', 1);
+  if (adGap) die(`${adGap}；适配未完成，adapted_for 不写`, 2);
   writeAdaptedFor();
-  console.log(`[adapt-scan] 宿主入口与目标知识读回通过，对接状态 ${f.adapters.status}（${f.adapters.dir}），`
-    + `${cleaned.removed ? '已清理' : '已确认清理'} base/examples/（保留 base/.gitignore），adapted_for 记为 ${PKG_VERSION}`);
+  console.log(`[adapt-scan] 宿主入口与目标知识读回通过，对接状态 ${f.adapters.status}（${f.adapters.dir}），adapted_for 记为 ${PKG_VERSION}`);
   process.exit(0);
 }
 
@@ -685,9 +687,7 @@ if (mode === '--apply' || mode === '--prepare-init') {
   try { plan = entryPlan(TARGET, PKG_SKILLS, { includeEntries: !prep }); } catch (e) { die(`宿主入口核不了（${e.message}）`); }
 
   const extRel = extDir(TARGET);
-  const legacyAll = LEGACY_DIRS.flatMap(d => walk(join(TDIR, d)).map(p => `${d}/${p}`));
-  const legacyOwn = legacyAll.filter(p => owned.has(p) || p.startsWith(`${LEGACY_ADAPTERS}/`));
-  const unknownLegacy = legacyAll.filter(p => !owned.has(p) && !p.startsWith(`${LEGACY_ADAPTERS}/`) && !bizRefs.has(p));
+  const { retireOwn: legacyOwn, modifiedOwn, unknownLegacy } = legacyState(tgtDoc, bizRefs);
   const legacyFiles = prep ? [] : legacyOwn.map(p => `${extRel}/${p}`);
   const adapterPlan = prep ? { copy: [], conflicts: [] } : planAdapterMigration();
   const writeSurface = new Set(prep ? [...plan.retire] : [...legacyFiles, ...plan.pendingEntries, ...plan.retire, ...plan.pendingBridges]);
@@ -705,7 +705,12 @@ if (mode === '--apply' || mode === '--prepare-init') {
     dirty.forEach(p => console.error(`  ${p}`));
     die('先提交或暂存自己的改动再升级——本命令不替你动工作区（不 stash、不提交）', 2);
   }
-  if (!prep && unknownLegacy.length) {
+  if (modifiedOwn.length) {
+    console.error(`[adapt-scan] 停：旧包同名路径下发现 ${modifiedOwn.length} 处非受支持旧版原件（疑似已改为业务代码），保留文件与登记：`);
+    modifiedOwn.forEach(p => console.error(`  ${extRel}/${p}`));
+    die('请先将业务修改挪到自有路径并更新 manifest.yaml，或确认可弃后删除再升级。目标一个字节未写', 2);
+  }
+  if (unknownLegacy.length) {
     console.error(`[adapt-scan] 停：旧机制目录下发现 ${unknownLegacy.length} 处未归属且未在 manifest 登记的文件，保留不动：`);
     unknownLegacy.forEach(p => console.error(`  ${extRel}/${p}`));
     die('请确认去留（归属业务则登记或移至自有目录，无用则删除）再升级。目标一个字节未写', 2);
@@ -804,10 +809,10 @@ if (mode === '--apply' || mode === '--prepare-init') {
 
 // ── --check ───────────────────────────────────────────────────────────────
 const bad = [];
-if (!existsSync(join(BASE_DIR, '.gitignore'))) bad.push('① 机制包缺 base/.gitignore');
-const ownedForCheck = storyOwnedSet(existsSync(tgtManifest) ? (parseYaml(read(tgtManifest)) ?? {}) : {});
+const chkDoc = existsSync(tgtManifest) ? (parseYaml(read(tgtManifest)) ?? {}) : {};
+const chkLegacy = legacyState(chkDoc, manifestRefs(chkDoc));
 for (const d of LEGACY_DIRS) {
-  const left = walk(join(TDIR, d)).map(p => `${d}/${p}`).filter(p => ownedForCheck.has(p) || p.startsWith(`${LEGACY_ADAPTERS}/`));
+  const left = chkLegacy.retireOwn.filter(p => p.startsWith(`${d}/`));
   if (left.length) bad.push(`① 扩展根残留旧机制文件（${d}/ 共 ${left.length} 个，如 ${left[0]}）——跑 --apply 退出旧布局`);
 }
 const scriptsAt = join(BASE_DIR, 'skills', 'story', 'scripts');
@@ -849,5 +854,4 @@ if (bad.length) {
   process.exit(1);
 }
 console.log(`[adapt-scan] 核对通过：base 布局与根 manifest 一致 / 宿主入口指向 base/skills / 使用记录合法 / `
-  + `知识可读（${kc.files.length} 份） / 对接层 ${ad.status}（${ad.dir}） / `
-  + `base/examples ${existsSync(join(BASE_DIR, 'examples')) ? '待清理（完成后跑 --mark-adapted）' : '已清理'}`);
+  + `知识可读（${kc.files.length} 份） / 对接层 ${ad.status}（${ad.dir}）`);

@@ -7,7 +7,7 @@ applies_when: 设计与编码要用到对外入口、页面导航、共享状态
 
 # 工程已有能力
 
-设计与编码用到下列能力时，用这里的项目实现。公共能力在 `05-SystemBase/CommFunc`，从它的 `src/main/ets/index.ets` 引入。
+设计与编码用到下列能力时，用这里的项目实现。公共工具能力在 `05-SystemBase/CommFunc`（`src/main/ets/index.ets`），共享 UI 组件与主题色在 `05-SystemBase/CommUI`（`src/main/ets/index.ets` 与 `resources/base/element/color.json`，见 §6）。
 
 ## 1. 对外入口与页面导航
 
@@ -36,7 +36,9 @@ applies_when: 设计与编码要用到对外入口、页面导航、共享状态
 
 ## 6. 资源
 
-- 公共文案与颜色先用所属模块与 Phone 的 `resources/base/element/` 已有键；多语言与深色资源放 Phone 的 `resources/zh_CN/`、`resources/dark/`。
+- 共享主题色先查 `05-SystemBase/CommUI/src/main/resources/base/element/color.json` 已有 `comm_*` 键（如 `comm_primary_blue`、`comm_text_primary`、`comm_text_secondary`、`comm_bg_page`、`comm_bg_card`、`comm_tab_unselected`）与 `CommColors`；共享 UI 组件从 `05-SystemBase/CommUI/src/main/ets/index.ets` 引入（如 `SectionCard`、`ActionListItem`、`showToast` 与 `Maison*` 系列；`02-Feature/WalletMain/oh-package.json5` 已声明 `@aspect/CommUI` 依赖，`02-Feature/WalletMain/src/main/ets/presentation/pages/AddCardEntryPage.ets` 已导入并使用 `SectionCard`）。
+- 页面私有文案与模块私有色值查所属业务模块自身资源目录（如 `02-Feature/WalletMain/src/main/resources/base/element/`）。
+- `01-Product/Phone` 是应用壳层入口，业务模块不依赖 `Phone`（依据：`doc/architecture.md` 分层依赖规则）；`Phone/src/main/resources/` 仅用于壳层入口资源及应用级多语言/深色目录（`resources/zh_CN/`、`resources/dark/`），业务共享色值与组件不从 `Phone` 查找。
 
 ## 7. 依赖变更（SDK / 组件 / TA）
 

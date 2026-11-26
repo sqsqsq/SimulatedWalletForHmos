@@ -50,15 +50,23 @@ function load() {
   }
 }
 
-/**
- * 解析 YAML 文本。
- * @throws 读取器不可用、或语法不可解析时抛错（**不返回空对象**）
- */
-export function parseYaml(text) {
+function ensureYaml() {
   load();
   if (!YAML) {
     throw Object.assign(new Error(`YAML 读取器不可用（环境依赖问题，不是文件内容写错，产物不用改）：${unavailable}`),
       { category: 'environment' });
   }
-  return YAML.parse(String(text ?? '')) ?? {};
+  return YAML;
+}
+
+/**
+ * 解析 YAML 文本。
+ * @throws 读取器不可用、或语法不可解析时抛错（**不返回空对象**）
+ */
+export function parseYaml(text) {
+  return ensureYaml().parse(String(text ?? '')) ?? {};
+}
+
+export function stringifyYaml(value) {
+  return ensureYaml().stringify(value, { lineWidth: 0 });
 }

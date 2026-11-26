@@ -30,7 +30,6 @@
 | 加载器核的结构 | 至少一个二级标题；正文没有「# 上篇 ·」 | 两个一级标题「# 上篇 · …」「# 下篇 · …」，各篇至少一个二级标题 | 表头含「编号」「约束」的条目表（§六） | 同 facts × halves，另核 `roles` 非空、`coordinator_role` 在 roles 里 |
 | 登记单元 | 面名 | 篇名（上篇 / 下篇） | 条目编号 | 单元、候选与信号 |
 | 下游怎么用 | 知识任务列面名，蓝图事实的 `provenance.source_ref` 记用了哪一面（`#面名`），审查回查 | 设计读上篇、事实记用了哪一篇；plan 与 coding 读下篇 | 蓝图规约适用性事实（相关域逐条；Story 附录·规约按它写）、设计对象与 plan 实体的 `must`（`source_ref` 指条目）、验收 `knowledge_refs`、探针 | 有候选信号时的蓝图模式适用性事实、设计对象与 plan 实体的 `pattern_roles`、coding 读下篇 |
-| Demo 示例 | `knowledge/facts/` 里 `form: facets` 的各份 | `knowledge/facts/` 里 `form: halves` 的那份 | `knowledge/constraints/` 里带「探针」列的那一份 | `knowledge/design-patterns/` 各份 |
 
 ## 三、谁写什么
 
