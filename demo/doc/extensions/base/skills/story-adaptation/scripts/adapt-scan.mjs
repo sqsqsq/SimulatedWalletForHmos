@@ -109,7 +109,7 @@ const sha16 = text => createHash('sha256').update(text, 'utf8').digest('hex').sl
 const bizSkillsOf = doc => (Array.isArray(doc?.provides?.skills) ? doc.provides.skills : [])
   .filter(s => typeof s === 'string' && !PKG_SKILLS.includes(s) && s !== 'story-knowledge');
 
-const legacyPreimages = () => new Set(JSON.parse(read(join(BASE_DIR, 'skills', 'story-adaptation', 'contracts', 'legacy-preimages.json'))).digests ?? []);
+const legacyPreimages = (strict = false) => { const f = join(BASE_DIR, 'skills', 'story-adaptation', 'contracts', 'legacy-preimages.json'); return existsSync(f) ? new Set(JSON.parse(read(f)).digests ?? []) : (strict ? die(`包缺少旧版前像清单：${f}`, 2, 'package') : new Set()); };
 
 function legacyState(tgtDoc, bizRefs) {
   const pre = legacyPreimages();
@@ -136,18 +136,18 @@ function manifestConflicts(pkg, tgt, owned) {
 function checkBaseReplace(extRel) {
   const dirty = dirtyPaths(TARGET).filter(p => p === `${extRel}/base` || p.startsWith(`${extRel}/base/`));
   if (dirty.length) die(`停：目标 ${extRel}/base/ 有 ${dirty.length} 处未提交改动，拒绝覆盖：\n  ${dirty.join('\n  ')}`, 2);
-  const root = join(TDIR, 'base', 'examples'), pre = legacyPreimages(), bad = [];
-  const scan = (dir) => {
+  const root = join(TDIR, 'base', 'examples'), bad = [];
+  const scan = (dir, pre) => {
     const st = lstatSync(dir);
     if (st.isSymbolicLink() || !st.isDirectory()) { bad.push(`${extRel}/${rel(TDIR, dir)}`); return; }
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       const abs = join(dir, e.name), r = rel(TDIR, abs);
       if (e.isSymbolicLink() || (!e.isFile() && !e.isDirectory())) bad.push(`${extRel}/${r}`);
-      else if (e.isDirectory()) scan(abs);
+      else if (e.isDirectory()) scan(abs, pre);
       else if (!pre.has(sha16(`${r}\0${lf(read(abs))}`))) bad.push(`${extRel}/${r}`);
     }
   };
-  try { lstatSync(root); scan(root); } catch (e) { if (e?.code !== 'ENOENT') die(`旧 base/examples 枚举或读取失败（${e.message}）：挂起覆盖，目标一个字节未写`, 2); }
+  try { lstatSync(root); scan(root, legacyPreimages(true)); } catch (e) { if (e?.code !== 'ENOENT') die(`旧 base/examples 枚举或读取失败（${e.message}）：挂起覆盖，目标一个字节未写`, 2); }
   if (bad.length) die(`停：旧 base/examples/ 含 ${bad.length} 处未归属或已改动文件，拒绝覆盖：\n  ${bad.join('\n  ')}\n  请移出或删除后再导入。目标一个字节未写`, 2);
 }
 
