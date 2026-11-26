@@ -907,6 +907,13 @@ req('./scripts/utils/instance-skill-bridge.ts').emitInstanceSkillBridge({
         # R1 补充：实际 init-orchestrate.ts 遇同名他属桥即使退出 0，stderr 与后续 --check 仍显式点出缺桥宿主与冲突来源
         p_init_col = self.root / "s29-live-init-collision"
         make_consumer(p_init_col, "S29InitCol", ["codex"])
+        # 隔离 framework 副本（不向共享只读 framework_under_test 写 init-orchestrate 报告，避免并行 xdist 污染）
+        fw_link = p_init_col / "framework"
+        if fw_link.is_symlink() or fw_link.is_junction():
+            fw_link.unlink()
+        elif fw_link.exists():
+            shutil.rmtree(fw_link)
+        self._copy_real_framework(p_init_col)
         ec = p_init_col / "doc/extensions"
         pub.pack_external_base(DEV_SOURCE, ec)
         init_commit(p_init_col)

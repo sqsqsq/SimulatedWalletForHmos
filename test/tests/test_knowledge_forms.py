@@ -282,13 +282,11 @@ class TheProtocolAndMethodPageAgree(unittest.TestCase):
 
     def test_the_method_page_gives_four_elements_for_four_cells(self) -> None:
         page = (EXT / "base" / "skills/story-adaptation/reference/knowledge-adaptation.md").read_text(encoding="utf-8")
-        table = page.split("## 四格怎么写", 1)[1].split("\n## ", 1)[0]
-        rows = [l for l in table.split("\n") if l.startswith("| ")]
-        self.assertEqual("| 格 | 何时用这个形态 | 到哪取证 | 照哪份示例 | 怎样走查 |", rows[0])
-        cells = {tuple(re.match(r"\| (\w+) × (\w+) \|", r).groups()) for r in rows[1:]}
+        section = page.split("## 四类成品的内容标准与拒收对照", 1)[1].split("\n## ", 1)[0]
+        cells = {tuple(m.groups()) for m in re.finditer(r"`(\w+) × (\w+)`", section)}
         self.assertEqual(FOUR_CELLS, cells)
-        for r in rows[1:]:
-            self.assertTrue(all(c.strip() for c in r.strip("|").split("|")), r)
+        self.assertNotIn("照哪份示例", page, "已退出的照样例指引残留")
+        self.assertNotIn("base/examples/", page, "已退出的包样例路径残留")
 
     def test_the_coding_page_and_the_upgrade_record_point_right(self) -> None:
         """升级要做的事只在 adapt 的演进记录里：没有另一份指南，extension 里也不描述目标仓内部。"""
